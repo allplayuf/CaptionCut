@@ -1,0 +1,173 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import type { ExportJobState } from "@/types";
+import { buildProjectSnapshot, useEditorStore } from "@/hooks/useEditorStore";
+import { formatTime, totalDuration } from "@/lib/video/timeline";
+import { CheckCircle2, Download, X } from "lucide-react";
+
+type Phase =
+  | { name: "idle" }
+  | { name: "running"; jobId: string; progress: number }
+  | { name: "done"; jobId: string }
+  | { name: "error"; message: string };
+
+export default function ExportModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const clips = useEditorStore((s) => s.clips);
+  const captions = useEditorStore((s) => s.captions);
+  const [phase, setPhase] = useState<Phase>({ name: "idle" });
+  const [lastOpen, setLastOpen] = useState(open);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const duration = totalDuration(clips);
+
+  // Reset to a fresh idle state each time the modal is reopened.
+  if (open !== lastOpen) {
+    setLastOpen(open);
+    if (open) setPhase({ name: "idle" });
+  }
+
+  useEffect(() => {
+    if (!open && pollRef.current) clearInterval(pollRef.current);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [open]);
+
+  if (!open) return null;
+
+  const startExport = async () => {
+    const snapshot = buildProjectSnapshot(useEditorStore.getState());
+    try {
+      const response = await fetch("/api/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          media: snapshot.media,
+          clips: snapshot.clips,
+          captions: snapshot.captions,
+          style: snapshot.style,
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Export failed to start.");
+
+      const jobId = (body as ExportJobState).id;
+      setPhase({ name: "running", jobId, progress: 0 });
+
+      pollRef.current = setInterval(async () => {
+        try {
+          const r = await fetch(`/api/export/${jobId}`);
+          const state = (await r.json()) as ExportJobState & { error?: string };
+          if (state.status === "done") {
+            if (pollRef.current) clearInterval(pollRef.current);
+            setPhase({ name: "done", jobId });
+          } else if (state.status === "error") {
+            if (pollRef.current) clearInterval(pollRef.current);
+            setPhase({ name: "error", message: state.error ?? "Export failed." });
+          } else {
+            setPhase({ name: "running", jobId, progress: state.progress ?? 0 });
+          }
+        } catch {
+          // transient poll failure — keep trying
+        }
+      }, 800);
+    } catch (err) {
+      setPhase({ name: "error", message: err instanceof Error ? err.message : "Export failed." });
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="w-[420px] rounded-2xl border border-white/10 bg-[#16161f] p-5 shadow-2xl">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-base font-bold text-zinc-100">Export TikTok Video</h2>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white/8 hover:text-zinc-200"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="mb-4 grid grid-cols-2 gap-2 text-xs">
+          <Spec label="Format" value="9:16 · 1080×1920" />
+          <Spec label="Codec" value="H.264 MP4 · 30fps" />
+          <Spec label="Duration" value={formatTime(duration)} />
+          <Spec label="Captions" value={captions.length > 0 ? `${captions.length} burned in` : "none"} />
+        </div>
+
+        {phase.name === "idle" && (
+          <>
+            {duration > 180 && (
+              <p className="mb-3 rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] leading-snug text-amber-300">
+                This video is over 3 minutes — rendering may take several minutes.
+              </p>
+            )}
+            <button
+              onClick={() => void startExport()}
+              className="w-full rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 py-2.5 text-sm font-bold text-white shadow-lg shadow-fuchsia-500/25 transition hover:brightness-110 active:scale-[0.98]"
+            >
+              Start export
+            </button>
+          </>
+        )}
+
+        {phase.name === "running" && (
+          <div>
+            <div className="mb-2 flex items-center justify-between text-xs text-zinc-400">
+              <span>Rendering…</span>
+              <span className="font-mono">{Math.round(phase.progress * 100)}%</span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 transition-all duration-500"
+                style={{ width: `${Math.max(2, Math.round(phase.progress * 100))}%` }}
+              />
+            </div>
+            <p className="mt-3 text-center text-[11px] text-zinc-500">
+              Trimming, cropping to 9:16 and burning captions in…
+            </p>
+          </div>
+        )}
+
+        {phase.name === "done" && (
+          <div className="flex flex-col items-center gap-3 py-2">
+            <CheckCircle2 size={36} className="text-emerald-400" />
+            <p className="text-sm font-medium text-zinc-200">Your video is ready!</p>
+            <a
+              href={`/api/export/${phase.jobId}/download`}
+              download
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 py-2.5 text-sm font-bold text-white shadow-lg shadow-fuchsia-500/25 transition hover:brightness-110"
+            >
+              <Download size={15} /> Download MP4
+            </a>
+          </div>
+        )}
+
+        {phase.name === "error" && (
+          <div>
+            <p className="mb-3 rounded-lg bg-rose-500/10 px-3 py-2 text-xs leading-snug text-rose-300">
+              {phase.message}
+            </p>
+            <button
+              onClick={() => void startExport()}
+              className="w-full rounded-xl bg-white/10 py-2 text-sm font-semibold text-zinc-200 transition hover:bg-white/15"
+            >
+              Try again
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Spec({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-white/5 px-3 py-2 ring-1 ring-white/8">
+      <p className="text-[10px] uppercase tracking-wider text-zinc-500">{label}</p>
+      <p className="mt-0.5 font-medium text-zinc-200">{value}</p>
+    </div>
+  );
+}

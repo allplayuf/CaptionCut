@@ -1,65 +1,107 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useEffect, useState } from "react";
+import type { Project, ProjectSummary } from "@/types";
+import { buildProjectSnapshot, useEditorStore } from "@/hooks/useEditorStore";
+import Header from "@/components/Header";
+import MediaPanel from "@/components/MediaPanel";
+import VideoPreview from "@/components/VideoPreview";
+import RightPanel from "@/components/RightPanel";
+import Timeline from "@/components/Timeline";
+import ExportModal from "@/components/ExportModal";
+import Toasts from "@/components/Toasts";
+
+export default function EditorPage() {
+  const [exportOpen, setExportOpen] = useState(false);
+  const revision = useEditorStore((s) => s.revision);
+
+  // Resume the most recently edited project on load.
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = (await (await fetch("/api/projects")).json()) as ProjectSummary[];
+        if (Array.isArray(list) && list.length > 0) {
+          const response = await fetch(`/api/projects/${list[0].id}`);
+          if (response.ok) {
+            useEditorStore.getState().loadProject((await response.json()) as Project);
+          }
+        }
+      } catch {
+        // starting fresh is fine
+      }
+    })();
+  }, []);
+
+  // Debounced autosave whenever project content changes.
+  useEffect(() => {
+    if (revision === 0) return;
+    const timer = setTimeout(() => {
+      const snapshot = buildProjectSnapshot(useEditorStore.getState());
+      fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(snapshot),
+      }).catch(() => {});
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [revision]);
+
+  // Keyboard shortcuts (ignored while typing in a field).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+      const s = useEditorStore.getState();
+      if (e.code === "Space") {
+        e.preventDefault();
+        s.setPlaying(!s.isPlaying);
+      } else if (e.key === "s" || e.key === "S") {
+        s.splitAtPlayhead();
+      } else if ((e.key === "Delete" || e.key === "Backspace") && s.selectedClipId) {
+        s.deleteClip(s.selectedClipId);
+      } else if (e.key === "ArrowLeft") {
+        s.setPlaying(false);
+        s.setCurrentTime(s.currentTime - (e.shiftKey ? 5 : 1));
+      } else if (e.key === "ArrowRight") {
+        s.setPlaying(false);
+        s.setCurrentTime(s.currentTime + (e.shiftKey ? 5 : 1));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+    <div className="flex h-screen flex-col bg-[#08080d] text-zinc-200">
+      <Header onExport={() => setExportOpen(true)} />
+
+      <div className="flex min-h-0 flex-1">
+        <aside className="w-60 shrink-0 border-r border-white/8 bg-[#0d0d14]">
+          <MediaPanel />
+        </aside>
+
+        <main className="min-w-0 flex-1 p-4">
+          <VideoPreview />
+        </main>
+
+        <aside className="w-80 shrink-0 border-l border-white/8 bg-[#0d0d14]">
+          <RightPanel />
+        </aside>
+      </div>
+
+      <div className="h-44 shrink-0">
+        <Timeline />
+      </div>
+
+      <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} />
+      <Toasts />
     </div>
   );
 }
