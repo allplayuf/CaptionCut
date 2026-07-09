@@ -1,26 +1,32 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { mediaUrl } from "@/lib/video/client";
 import { clipDuration, formatTime, timelineToSource, totalDuration } from "@/lib/video/timeline";
+import { mainClips, mainVideoTrack, zoomAt } from "@/lib/timeline/tracks";
 import CaptionOverlay from "./CaptionOverlay";
 import SafeZoneOverlay from "./SafeZoneOverlay";
+import { AudioTracks, TextOverlays, VisualOverlays } from "./preview/OverlayLayers";
 import { Eye, EyeOff, Pause, Play, SkipBack } from "lucide-react";
 
 /**
- * The 9:16 preview player. Plays through the virtual timeline (ordered,
+ * The 9:16 preview player. Plays through the main video track (ordered,
  * trimmed clips) using a single <video> element whose src/currentTime are kept
- * in sync with the store's timeline position.
+ * in sync with the store's timeline position, then composites the overlay
+ * tracks (b-roll, images, text, stickers), punch-zooms and audio tracks on top.
  */
 export default function VideoPreview() {
-  const clips = useEditorStore((s) => s.clips);
+  const tracks = useEditorStore((s) => s.tracks);
   const currentTime = useEditorStore((s) => s.currentTime);
   const isPlaying = useEditorStore((s) => s.isPlaying);
   const showSafeZones = useEditorStore((s) => s.showSafeZones);
   const setCurrentTime = useEditorStore((s) => s.setCurrentTime);
   const setPlaying = useEditorStore((s) => s.setPlaying);
   const toggleSafeZones = useEditorStore((s) => s.toggleSafeZones);
+
+  const clips = useMemo(() => mainClips(tracks), [tracks]);
+  const videoTrack = mainVideoTrack(tracks);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -71,6 +77,12 @@ export default function VideoPreview() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTime, activeMediaId, clips]);
 
+  // Main track mute follows the track control.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) video.muted = videoTrack.muted;
+  }, [videoTrack.muted]);
+
   // Playback loop: advance the timeline from the video's clock, hopping
   // across clip boundaries.
   useEffect(() => {
@@ -88,13 +100,14 @@ export default function VideoPreview() {
     const tick = () => {
       if (!playingRef.current) return;
       const state = useEditorStore.getState();
-      const posNow = timelineToSource(state.clips, state.currentTime);
+      const stateClips = mainClips(state.tracks);
+      const posNow = timelineToSource(stateClips, state.currentTime);
       if (!posNow) {
         state.setPlaying(false);
         return;
       }
       const { clip, clipTimelineStart } = posNow;
-      const total = totalDuration(state.clips);
+      const total = totalDuration(stateClips);
       let t = clipTimelineStart + (video.currentTime - clip.sourceStart);
 
       if (video.currentTime >= clip.sourceEnd - 0.02 || video.ended) {
@@ -106,7 +119,7 @@ export default function VideoPreview() {
           return;
         }
         t = clipEnd + 0.001;
-        const nextPos = timelineToSource(state.clips, t);
+        const nextPos = timelineToSource(stateClips, t);
         // Same-file boundary needs a manual seek; a file switch is handled by
         // the src-sync effect above.
         if (nextPos && nextPos.clip.mediaId === clip.mediaId) {
@@ -127,6 +140,9 @@ export default function VideoPreview() {
   const scale = frameWidth / 1080;
   const hasContent = clips.length > 0;
 
+  // Punch-in zoom from the effects track (applies to visual layers only).
+  const zoom = zoomAt(tracks, currentTime);
+
   const togglePlay = () => {
     if (!hasContent) return;
     if (!isPlaying && currentTime >= duration - 0.03) setCurrentTime(0);
@@ -141,13 +157,29 @@ export default function VideoPreview() {
           style={{ width: frameWidth, height: frameHeight }}
         >
           {hasContent ? (
-            <video
-              ref={videoRef}
-              className="h-full w-full object-cover"
-              playsInline
-              preload="auto"
-              onClick={togglePlay}
-            />
+            <>
+              {/* zoomable visual stack: main video + b-roll + images */}
+              <div
+                className="absolute inset-0"
+                style={{
+                  transform: `scale(${zoom.scale})`,
+                  transformOrigin: `${zoom.anchorX * 100}% ${zoom.anchorY * 100}%`,
+                  transition: "transform 130ms ease-out",
+                }}
+              >
+                <video
+                  ref={videoRef}
+                  className={`h-full w-full object-cover ${videoTrack.hidden ? "opacity-0" : ""}`}
+                  playsInline
+                  preload="auto"
+                  onClick={togglePlay}
+                />
+                <VisualOverlays scale={scale} />
+              </div>
+
+              <TextOverlays scale={scale} />
+              <AudioTracks />
+            </>
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-6 text-center">
               <div className="text-4xl">🎬</div>

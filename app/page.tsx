@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Project, ProjectSummary } from "@/types";
-import { buildProjectSnapshot, useEditorStore } from "@/hooks/useEditorStore";
+import { buildProjectSnapshot, stepFrame, useEditorStore } from "@/hooks/useEditorStore";
 import Header from "@/components/Header";
 import MediaPanel from "@/components/MediaPanel";
 import VideoPreview from "@/components/VideoPreview";
@@ -59,7 +59,16 @@ export default function EditorPage() {
         return;
       }
       const s = useEditorStore.getState();
-      if (e.code === "Space") {
+      const mod = e.ctrlKey || e.metaKey;
+
+      if (mod && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        if (e.shiftKey) s.redo();
+        else s.undo();
+      } else if (mod && (e.key === "y" || e.key === "Y")) {
+        e.preventDefault();
+        s.redo();
+      } else if (e.code === "Space") {
         e.preventDefault();
         s.setPlaying(!s.isPlaying);
       } else if (e.key === "s" || e.key === "S") {
@@ -67,11 +76,10 @@ export default function EditorPage() {
       } else if ((e.key === "Delete" || e.key === "Backspace") && s.selectedClipId) {
         s.deleteClip(s.selectedClipId);
       } else if (e.key === "ArrowLeft") {
-        s.setPlaying(false);
-        s.setCurrentTime(s.currentTime - (e.shiftKey ? 5 : 1));
+        // plain = 1s, shift = 1 frame
+        stepFrame(-1, e.shiftKey);
       } else if (e.key === "ArrowRight") {
-        s.setPlaying(false);
-        s.setCurrentTime(s.currentTime + (e.shiftKey ? 5 : 1));
+        stepFrame(1, e.shiftKey);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -96,7 +104,7 @@ export default function EditorPage() {
         </aside>
       </div>
 
-      <div className="h-44 shrink-0">
+      <div className="h-64 shrink-0">
         <Timeline />
       </div>
 

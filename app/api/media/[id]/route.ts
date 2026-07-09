@@ -13,11 +13,23 @@ const MIME_BY_EXT: Record<string, string> = {
   ".webm": "video/webm",
   ".mkv": "video/x-matroska",
   ".avi": "video/x-msvideo",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".ogg": "audio/ogg",
+  ".flac": "audio/flac",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".bmp": "image/bmp",
 };
 
 /**
- * Streams an uploaded video with HTTP Range support — required for smooth
- * <video> scrubbing in the browser.
+ * Streams an uploaded media file (video/audio/image) with HTTP Range support
+ * — required for smooth <video>/<audio> scrubbing in the browser.
  */
 export async function GET(
   request: NextRequest,

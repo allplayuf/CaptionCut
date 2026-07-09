@@ -3,12 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { Project, ProjectSummary } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
+import { tracksDuration } from "@/lib/timeline/tracks";
 import { ChevronDown, Clapperboard, Download, FilePlus2, Trash2 } from "lucide-react";
 
 export default function Header({ onExport }: { onExport: () => void }) {
   const projectName = useEditorStore((s) => s.projectName);
   const projectId = useEditorStore((s) => s.projectId);
-  const clips = useEditorStore((s) => s.clips);
+  const tracks = useEditorStore((s) => s.tracks);
   const setProjectName = useEditorStore((s) => s.setProjectName);
   const resetToNewProject = useEditorStore((s) => s.resetToNewProject);
   const loadProject = useEditorStore((s) => s.loadProject);
@@ -126,7 +127,7 @@ export default function Header({ onExport }: { onExport: () => void }) {
         </span>
         <button
           onClick={onExport}
-          disabled={clips.length === 0}
+          disabled={tracksDuration(tracks) <= 0}
           className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 px-4 py-1.5 text-sm font-bold text-white shadow-lg shadow-fuchsia-500/25 transition hover:brightness-110 active:scale-[0.98] disabled:opacity-40"
         >
           <Download size={15} /> Export

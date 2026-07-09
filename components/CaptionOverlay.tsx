@@ -74,20 +74,29 @@ export default function CaptionOverlay({ scale }: { scale: number }) {
 
   const activeWordIndex =
     style.highlightColor && active.words ? findActiveWordIndex(active, currentTime) : -1;
+  const hasEmphasis = active.words?.some((w) => w.emphasis) ?? false;
 
   return (
     <div style={containerStyle}>
       <span style={textStyle}>
-        {activeWordIndex >= 0 && active.words ? (
-          active.words.map((w, i) => (
-            <span
-              key={i}
-              style={i === activeWordIndex ? { color: style.highlightColor ?? undefined } : undefined}
-            >
-              {w.word}
-              {i < active.words!.length - 1 ? " " : ""}
-            </span>
-          ))
+        {active.words && (activeWordIndex >= 0 || hasEmphasis) ? (
+          active.words.map((w, i) => {
+            const wordStyle: CSSProperties = {};
+            if (w.emphasis) {
+              wordStyle.fontWeight = 900;
+              if (style.emphasisColor) wordStyle.color = style.emphasisColor;
+            }
+            // Spoken-word highlight wins over emphasis color.
+            if (i === activeWordIndex && style.highlightColor) {
+              wordStyle.color = style.highlightColor;
+            }
+            return (
+              <span key={i} style={wordStyle}>
+                {w.word}
+                {i < active.words!.length - 1 ? " " : ""}
+              </span>
+            );
+          })
         ) : (
           active.text
         )}

@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ExportJobState } from "@/types";
-import { buildProjectSnapshot, useEditorStore } from "@/hooks/useEditorStore";
-import { formatTime, totalDuration } from "@/lib/video/timeline";
+import type { ExportJobState, ExportPresetId } from "@/types";
+import { useEditorStore } from "@/hooks/useEditorStore";
+import { formatTime } from "@/lib/video/timeline";
+import { tracksDuration } from "@/lib/timeline/tracks";
+import { buildExportRequest } from "@/lib/export/request";
+import { EXPORT_PRESETS } from "@/lib/export/presets";
 import { CheckCircle2, Download, X } from "lucide-react";
 
 type Phase =
@@ -13,13 +16,18 @@ type Phase =
   | { name: "error"; message: string };
 
 export default function ExportModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const clips = useEditorStore((s) => s.clips);
+  const tracks = useEditorStore((s) => s.tracks);
   const captions = useEditorStore((s) => s.captions);
   const [phase, setPhase] = useState<Phase>({ name: "idle" });
+  const [presetId, setPresetId] = useState<ExportPresetId>("tiktok");
   const [lastOpen, setLastOpen] = useState(open);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const duration = totalDuration(clips);
+  const duration = tracksDuration(tracks);
+  const preset = EXPORT_PRESETS.find((p) => p.id === presetId) ?? EXPORT_PRESETS[0];
+  const overlayCount = tracks
+    .filter((t) => !["video", "caption"].includes(t.type) && !t.hidden)
+    .reduce((sum, t) => sum + t.clips.length, 0);
 
   // Reset to a fresh idle state each time the modal is reopened.
   if (open !== lastOpen) {
@@ -37,17 +45,19 @@ export default function ExportModal({ open, onClose }: { open: boolean; onClose:
   if (!open) return null;
 
   const startExport = async () => {
-    const snapshot = buildProjectSnapshot(useEditorStore.getState());
+    const s = useEditorStore.getState();
+    const payload = buildExportRequest({
+      media: s.media,
+      tracks: s.tracks,
+      captions: s.captions,
+      style: s.style,
+      presetId,
+    });
     try {
       const response = await fetch("/api/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          media: snapshot.media,
-          clips: snapshot.clips,
-          captions: snapshot.captions,
-          style: snapshot.style,
-        }),
+        body: JSON.stringify(payload),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Export failed to start.");
@@ -79,9 +89,9 @@ export default function ExportModal({ open, onClose }: { open: boolean; onClose:
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-      <div className="w-[420px] rounded-2xl border border-white/10 bg-[#16161f] p-5 shadow-2xl">
+      <div className="w-[440px] rounded-2xl border border-white/10 bg-[#16161f] p-5 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-bold text-zinc-100">Export TikTok Video</h2>
+          <h2 className="text-base font-bold text-zinc-100">Export Video</h2>
           <button
             onClick={onClose}
             className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white/8 hover:text-zinc-200"
@@ -90,11 +100,33 @@ export default function ExportModal({ open, onClose }: { open: boolean; onClose:
           </button>
         </div>
 
+        {phase.name === "idle" && (
+          <div className="mb-4 flex flex-col gap-1.5">
+            {EXPORT_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setPresetId(p.id)}
+                className={`rounded-xl px-3 py-2.5 text-left ring-1 transition ${
+                  p.id === presetId
+                    ? "bg-violet-500/15 ring-violet-400"
+                    : "bg-white/4 ring-white/10 hover:bg-white/8"
+                }`}
+              >
+                <p className="text-sm font-semibold text-zinc-100">{p.name}</p>
+                <p className="text-[11px] text-zinc-500">{p.description}</p>
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="mb-4 grid grid-cols-2 gap-2 text-xs">
-          <Spec label="Format" value="9:16 · 1080×1920" />
-          <Spec label="Codec" value="H.264 MP4 · 30fps" />
+          <Spec label="Format" value={`9:16 · ${preset.width}×${preset.height} · ${preset.fps}fps`} />
           <Spec label="Duration" value={formatTime(duration)} />
-          <Spec label="Captions" value={captions.length > 0 ? `${captions.length} burned in` : "none"} />
+          <Spec
+            label="Captions"
+            value={captions.length > 0 ? `${captions.length} burned in` : "none"}
+          />
+          <Spec label="Layers" value={overlayCount > 0 ? `${overlayCount} overlay clips` : "video only"} />
         </div>
 
         {phase.name === "idle" && (
@@ -126,7 +158,7 @@ export default function ExportModal({ open, onClose }: { open: boolean; onClose:
               />
             </div>
             <p className="mt-3 text-center text-[11px] text-zinc-500">
-              Trimming, cropping to 9:16 and burning captions in…
+              Cutting, zooming, mixing audio and burning captions in…
             </p>
           </div>
         )}

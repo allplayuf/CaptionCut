@@ -27,6 +27,12 @@ export async function POST(request: NextRequest) {
     clips: body.clips,
     captions: body.captions ?? [],
     style: body.style,
+    overlays: body.overlays ?? [],
+    audioClips: body.audioClips ?? [],
+    textOverlays: body.textOverlays ?? [],
+    zooms: body.zooms ?? [],
+    presetId: body.presetId,
+    mainAudioMuted: body.mainAudioMuted ?? false,
   });
   return NextResponse.json(state);
 }

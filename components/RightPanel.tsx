@@ -1,18 +1,20 @@
 "use client";
 
 import { useState } from "react";
+import AIPanel from "./AIPanel";
 import CaptionsPanel from "./CaptionsPanel";
 import StylePanel from "./StylePanel";
 
-/** Right sidebar: Captions / Style tabs. */
+/** Right sidebar: AI Edit / Captions / Style tabs. */
 export default function RightPanel() {
-  const [tab, setTab] = useState<"captions" | "style">("captions");
+  const [tab, setTab] = useState<"ai" | "captions" | "style">("ai");
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex border-b border-white/8">
         {(
           [
+            ["ai", "AI Edit"],
             ["captions", "Captions"],
             ["style", "Style"],
           ] as const
@@ -31,7 +33,7 @@ export default function RightPanel() {
         ))}
       </div>
       <div className="min-h-0 flex-1">
-        {tab === "captions" ? <CaptionsPanel /> : <StylePanel />}
+        {tab === "ai" ? <AIPanel /> : tab === "captions" ? <CaptionsPanel /> : <StylePanel />}
       </div>
     </div>
   );

@@ -1,21 +1,59 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { Track, TimelineClip } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { mediaUrl } from "@/lib/video/client";
 import { computePeaks, placeholderPeaks } from "@/lib/audio/waveform";
-import { clipDuration, clipStartTime, formatTime, totalDuration } from "@/lib/video/timeline";
-import { ArrowLeftRight, ChevronLeft, ChevronRight, Scissors, Trash2 } from "lucide-react";
+import { formatTime } from "@/lib/video/timeline";
+import { snapTargets, snapTime, tracksDuration } from "@/lib/timeline/tracks";
+import {
+  Eye,
+  EyeOff,
+  Lock,
+  LockOpen,
+  Redo2,
+  Scissors,
+  Search,
+  Smile,
+  Type,
+  Trash2,
+  Undo2,
+  Volume2,
+  VolumeX,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 
-const LANE_PADDING = 16;
+const HEADER_W = 116;
+const PAD = 12;
+const SNAP_PX = 8;
+
+const TRACK_HEIGHTS: Partial<Record<Track["type"], number>> = { video: 54 };
+const DEFAULT_TRACK_HEIGHT = 26;
+
+const TRACK_COLORS: Record<Track["type"], string> = {
+  video: "from-zinc-700/80 to-zinc-800/80",
+  broll: "from-sky-700/70 to-sky-900/70",
+  image: "from-teal-700/70 to-teal-900/70",
+  caption: "from-violet-600/60 to-violet-800/60",
+  text: "from-amber-600/70 to-amber-800/70",
+  sticker: "from-pink-600/70 to-pink-800/70",
+  music: "from-emerald-700/70 to-emerald-900/70",
+  sfx: "from-lime-700/70 to-lime-900/70",
+  voice: "from-cyan-700/70 to-cyan-900/70",
+  effects: "from-fuchsia-600/70 to-fuchsia-800/70",
+};
 
 export default function Timeline() {
-  const clips = useEditorStore((s) => s.clips);
+  const tracks = useEditorStore((s) => s.tracks);
   const media = useEditorStore((s) => s.media);
   const captions = useEditorStore((s) => s.captions);
   const currentTime = useEditorStore((s) => s.currentTime);
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const waveforms = useEditorStore((s) => s.waveforms);
+  const past = useEditorStore((s) => s.past);
+  const future = useEditorStore((s) => s.future);
 
   const setCurrentTime = useEditorStore((s) => s.setCurrentTime);
   const setPlaying = useEditorStore((s) => s.setPlaying);
@@ -23,206 +61,513 @@ export default function Timeline() {
   const selectCaption = useEditorStore((s) => s.selectCaption);
   const splitAtPlayhead = useEditorStore((s) => s.splitAtPlayhead);
   const deleteClip = useEditorStore((s) => s.deleteClip);
-  const moveClip = useEditorStore((s) => s.moveClip);
-  const trimClip = useEditorStore((s) => s.trimClip);
+  const moveTimelineClip = useEditorStore((s) => s.moveTimelineClip);
+  const trimTimelineClip = useEditorStore((s) => s.trimTimelineClip);
   const setWaveform = useEditorStore((s) => s.setWaveform);
+  const addTextClip = useEditorStore((s) => s.addTextClip);
+  const addStickerClip = useEditorStore((s) => s.addStickerClip);
+  const addZoomClip = useEditorStore((s) => s.addZoomClip);
+  const undo = useEditorStore((s) => s.undo);
+  const redo = useEditorStore((s) => s.redo);
 
-  const laneRef = useRef<HTMLDivElement>(null);
-  const [laneWidth, setLaneWidth] = useState(800);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [viewportW, setViewportW] = useState(800);
+  const [zoom, setZoom] = useState<number | null>(null); // px per second; null = fit
   const waveformStartedRef = useRef<Set<string>>(new Set());
 
-  const duration = Math.max(totalDuration(clips), 0.001);
-  const pxPerSec = (laneWidth - 2 * LANE_PADDING) / duration;
+  const duration = Math.max(tracksDuration(tracks), 0.001);
+  const fitPxPerSec = Math.max(8, (viewportW - 2 * PAD) / duration);
+  const pxPerSec = zoom ?? fitPxPerSec;
+  const contentW = duration * pxPerSec + 2 * PAD;
 
   useEffect(() => {
-    const el = laneRef.current;
+    const el = scrollRef.current;
     if (!el) return;
-    const observer = new ResizeObserver(() => setLaneWidth(el.getBoundingClientRect().width));
+    const observer = new ResizeObserver(() => setViewportW(el.getBoundingClientRect().width));
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
 
-  // Kick off waveform decoding for any media that hasn't been processed yet.
+  // Kick off waveform decoding for audible media on the timeline.
   useEffect(() => {
-    for (const clip of clips) {
-      const id = clip.mediaId;
-      if (waveforms[id] !== undefined || waveformStartedRef.current.has(id)) continue;
-      waveformStartedRef.current.add(id);
-      computePeaks(mediaUrl(id))
-        .then((peaks) => setWaveform(id, peaks))
-        .catch(() => setWaveform(id, null)); // placeholder pattern will be used
+    for (const track of tracks) {
+      if (!["video", "broll", "music", "sfx", "voice"].includes(track.type)) continue;
+      for (const clip of track.clips) {
+        const id = clip.assetId;
+        if (!id || waveforms[id] !== undefined || waveformStartedRef.current.has(id)) continue;
+        waveformStartedRef.current.add(id);
+        computePeaks(mediaUrl(id))
+          .then((peaks) => setWaveform(id, peaks))
+          .catch(() => setWaveform(id, null));
+      }
     }
-  }, [clips, waveforms, setWaveform]);
+  }, [tracks, waveforms, setWaveform]);
 
-  const timeFromEvent = (e: React.PointerEvent) => {
-    const rect = laneRef.current!.getBoundingClientRect();
-    const x = e.clientX - rect.left - LANE_PADDING;
+  /** Timeline seconds from a pointer event, in content coordinates. */
+  const timeFromEvent = (clientX: number) => {
+    const rect = contentRef.current!.getBoundingClientRect();
+    const x = clientX - rect.left - PAD;
     return Math.max(0, Math.min(duration, x / pxPerSec));
   };
 
   const onScrub = (e: React.PointerEvent) => {
-    if (clips.length === 0) return;
+    if (duration <= 0.001) return;
     setPlaying(false);
-    setCurrentTime(timeFromEvent(e));
-    const target = e.currentTarget;
-    target.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => {
-      const rect = laneRef.current!.getBoundingClientRect();
-      const x = ev.clientX - rect.left - LANE_PADDING;
-      setCurrentTime(Math.max(0, Math.min(duration, x / pxPerSec)));
-    };
+    setCurrentTime(timeFromEvent(e.clientX));
+    const move = (ev: PointerEvent) => setCurrentTime(timeFromEvent(ev.clientX));
     const up = () => {
-      target.removeEventListener("pointermove", move as EventListener);
-      target.removeEventListener("pointerup", up);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
     };
-    target.addEventListener("pointermove", move as EventListener);
-    target.addEventListener("pointerup", up);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
   };
 
   const ruler = useMemo(() => {
-    const steps = [0.5, 1, 2, 5, 10, 15, 30, 60];
+    const steps = [0.25, 0.5, 1, 2, 5, 10, 15, 30, 60];
     const step = steps.find((st) => st * pxPerSec >= 64) ?? 60;
     const marks: number[] = [];
     for (let t = 0; t <= duration + 0.001; t += step) marks.push(t);
     return { marks, step };
   }, [duration, pxPerSec]);
 
-  const selectedIndex = clips.findIndex((c) => c.id === selectedClipId);
-  const playheadX = LANE_PADDING + currentTime * pxPerSec;
+  // Visible tracks: main video always; others when they have clips.
+  const visibleTracks = tracks.filter((t) => t.type === "video" || t.clips.length > 0);
+  const playheadX = PAD + currentTime * pxPerSec;
+
+  const zoomBy = (factor: number) =>
+    setZoom(Math.max(fitPxPerSec * 0.5, Math.min(400, pxPerSec * factor)));
+
+  const onWheel = (e: React.WheelEvent) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    zoomBy(e.deltaY < 0 ? 1.2 : 1 / 1.2);
+  };
 
   return (
     <div className="flex h-full flex-col border-t border-white/8 bg-[#0d0d14]">
       {/* toolbar */}
-      <div className="flex items-center gap-1 px-4 py-1.5">
-        <ToolButton
-          onClick={splitAtPlayhead}
-          disabled={clips.length === 0}
-          title="Split clip at playhead (S)"
-        >
+      <div className="flex items-center gap-1 px-3 py-1">
+        <ToolButton onClick={undo} disabled={past.length === 0} title="Undo (Ctrl+Z)">
+          <Undo2 size={14} />
+        </ToolButton>
+        <ToolButton onClick={redo} disabled={future.length === 0} title="Redo (Ctrl+Shift+Z)">
+          <Redo2 size={14} />
+        </ToolButton>
+        <div className="mx-1 h-4 w-px bg-white/10" />
+        <ToolButton onClick={splitAtPlayhead} disabled={duration <= 0.001} title="Split at playhead (S)">
           <Scissors size={14} /> Split
         </ToolButton>
         <ToolButton
           onClick={() => selectedClipId && deleteClip(selectedClipId)}
           disabled={!selectedClipId}
-          title="Delete selected clip"
+          title="Delete selected clip (Del)"
         >
-          <Trash2 size={14} /> Delete
+          <Trash2 size={14} />
         </ToolButton>
         <div className="mx-1 h-4 w-px bg-white/10" />
-        <ToolButton
-          onClick={() => selectedClipId && moveClip(selectedClipId, -1)}
-          disabled={selectedIndex <= 0}
-          title="Move clip earlier"
-        >
-          <ChevronLeft size={14} />
+        <ToolButton onClick={() => addTextClip("Your text", undefined)} disabled={duration <= 0.001} title="Add text at playhead">
+          <Type size={14} /> Text
+        </ToolButton>
+        <ToolButton onClick={() => addStickerClip("🔥")} disabled={duration <= 0.001} title="Add sticker at playhead">
+          <Smile size={14} />
         </ToolButton>
         <ToolButton
-          onClick={() => selectedClipId && moveClip(selectedClipId, 1)}
-          disabled={selectedIndex < 0 || selectedIndex >= clips.length - 1}
-          title="Move clip later"
+          onClick={() =>
+            addZoomClip(useEditorStore.getState().currentTime, 2, {
+              kind: "zoom",
+              zoomScale: 1.15,
+              anchorX: 0.5,
+              anchorY: 0.45,
+            })
+          }
+          disabled={duration <= 0.001}
+          title="Add punch-in zoom at playhead"
         >
-          <ChevronRight size={14} />
+          <Search size={14} /> Zoom
         </ToolButton>
-        {selectedClipId && (
-          <span className="ml-1 flex items-center gap-1 text-[11px] text-zinc-500">
-            <ArrowLeftRight size={11} /> drag clip edges to trim
+        <div className="ml-auto flex items-center gap-1">
+          <ToolButton onClick={() => zoomBy(1 / 1.4)} title="Zoom timeline out (Ctrl+scroll)">
+            <ZoomOut size={14} />
+          </ToolButton>
+          <button
+            onClick={() => setZoom(null)}
+            className="rounded px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 transition hover:bg-white/10 hover:text-zinc-300"
+            title="Fit timeline to window"
+          >
+            Fit
+          </button>
+          <ToolButton onClick={() => zoomBy(1.4)} title="Zoom timeline in (Ctrl+scroll)">
+            <ZoomIn size={14} />
+          </ToolButton>
+          <span className="ml-2 font-mono text-[11px] tabular-nums text-zinc-500">
+            {formatTime(currentTime)} / {formatTime(duration)}
           </span>
-        )}
-        <div className="ml-auto font-mono text-[11px] tabular-nums text-zinc-500">
-          {clips.length} clip{clips.length === 1 ? "" : "s"} · {formatTime(duration)}
         </div>
       </div>
 
-      {/* lanes */}
-      <div ref={laneRef} className="relative min-h-0 flex-1 select-none">
-        {/* ruler */}
-        <div
-          className="absolute inset-x-0 top-0 h-5 cursor-col-resize text-[9px] text-zinc-600"
-          onPointerDown={onScrub}
-        >
-          {ruler.marks.map((t) => (
-            <div
-              key={t}
-              className="absolute top-0 h-full border-l border-white/10 pl-1 pt-0.5 font-mono"
-              style={{ left: LANE_PADDING + t * pxPerSec }}
-            >
-              {ruler.step < 1 ? formatTime(t) : formatTime(t).replace(/\.\d$/, "")}
-            </div>
+      {/* tracks */}
+      <div className="flex min-h-0 flex-1">
+        {/* headers */}
+        <div className="shrink-0 overflow-hidden border-r border-white/8" style={{ width: HEADER_W }}>
+          <div className="h-5" />
+          {visibleTracks.map((track) => (
+            <TrackHeader key={track.id} track={track} />
           ))}
+          <div className="flex items-center gap-1 px-2 text-[10px] font-medium text-violet-300/80" style={{ height: 24 }}>
+            Captions
+          </div>
         </div>
 
-        {/* clip lane */}
-        <div
-          className="absolute inset-x-0 top-6 bottom-8 cursor-col-resize"
-          onPointerDown={onScrub}
-        >
-          {clips.length === 0 && (
-            <div className="flex h-full items-center justify-center text-xs text-zinc-600">
-              Your clips will appear here
+        {/* scrollable lanes */}
+        <div ref={scrollRef} className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden select-none" onWheel={onWheel}>
+          <div ref={contentRef} className="relative" style={{ width: contentW }}>
+            {/* ruler */}
+            <div className="relative h-5 cursor-col-resize text-[9px] text-zinc-600" onPointerDown={onScrub}>
+              {ruler.marks.map((t) => (
+                <div
+                  key={t}
+                  className="absolute top-0 h-full border-l border-white/10 pl-1 pt-0.5 font-mono"
+                  style={{ left: PAD + t * pxPerSec }}
+                >
+                  {ruler.step < 1 ? formatTime(t) : formatTime(t).replace(/\.\d$/, "")}
+                </div>
+              ))}
             </div>
-          )}
-          {clips.map((clip, i) => {
-            const start = clipStartTime(clips, i);
-            const asset = media.find((m) => m.id === clip.mediaId);
-            const peaks =
-              waveforms[clip.mediaId] ?? placeholderPeaksCached(clip.mediaId);
-            const isSelected = clip.id === selectedClipId;
-            return (
-              <ClipBlock
-                key={clip.id}
-                left={LANE_PADDING + start * pxPerSec}
-                width={Math.max(8, clipDuration(clip) * pxPerSec)}
-                label={asset?.originalName ?? "clip"}
-                peaks={peaks}
-                peaksStart={asset ? clip.sourceStart / asset.duration : 0}
-                peaksEnd={asset ? clip.sourceEnd / asset.duration : 1}
-                selected={isSelected}
-                onSelect={() => selectClip(clip.id)}
-                onTrim={(edge, deltaPx) => {
-                  const deltaSec = deltaPx / pxPerSec;
-                  if (edge === "start") {
-                    trimClip(clip.id, { sourceStart: clip.sourceStart + deltaSec });
-                  } else {
-                    trimClip(clip.id, { sourceEnd: clip.sourceEnd + deltaSec });
-                  }
+
+            {/* lanes */}
+            {visibleTracks.map((track) => (
+              <TrackLane
+                key={track.id}
+                track={track}
+                media={media}
+                waveforms={waveforms}
+                pxPerSec={pxPerSec}
+                duration={duration}
+                selectedClipId={selectedClipId}
+                onScrub={onScrub}
+                onSelect={selectClip}
+                onMove={(clipId, newStart, dragged) => {
+                  const targets = snapTargets(tracks, captions, currentTime).filter(
+                    (t) => t !== dragged.startTime && t !== dragged.endTime
+                  );
+                  const dur = dragged.endTime - dragged.startTime;
+                  let start = snapTime(newStart, targets, SNAP_PX / pxPerSec);
+                  const endSnapped = snapTime(start + dur, targets, SNAP_PX / pxPerSec);
+                  if (endSnapped !== start + dur) start = endSnapped - dur;
+                  moveTimelineClip(clipId, start);
+                }}
+                onTrim={(clipId, edge, newTime) => {
+                  const targets = snapTargets(tracks, captions, currentTime);
+                  trimTimelineClip(clipId, edge, snapTime(newTime, targets, SNAP_PX / pxPerSec));
                 }}
               />
-            );
-          })}
-        </div>
+            ))}
 
-        {/* caption lane */}
-        <div className="absolute inset-x-0 bottom-1 h-6">
-          {captions.map((cap) => (
-            <button
-              key={cap.id}
-              className="absolute top-0 h-5 overflow-hidden rounded bg-violet-500/40 px-1 text-left text-[9px] leading-5 text-violet-100 ring-violet-300 transition hover:bg-violet-500/60 focus:outline-none focus:ring-1"
-              style={{
-                left: LANE_PADDING + cap.startTime * pxPerSec,
-                width: Math.max(6, (cap.endTime - cap.startTime) * pxPerSec),
-              }}
-              title={cap.text}
-              onClick={() => {
-                setPlaying(false);
-                setCurrentTime(cap.startTime + 0.001);
-                selectCaption(cap.id);
-              }}
-            >
-              {cap.text}
-            </button>
-          ))}
-        </div>
+            {/* captions lane */}
+            <div className="relative cursor-col-resize border-t border-white/5" style={{ height: 24 }} onPointerDown={onScrub}>
+              {captions.map((cap) => (
+                <button
+                  key={cap.id}
+                  className="absolute top-0.5 h-5 overflow-hidden rounded bg-violet-500/40 px-1 text-left text-[9px] leading-5 text-violet-100 ring-violet-300 transition hover:bg-violet-500/60 focus:outline-none focus:ring-1"
+                  style={{
+                    left: PAD + cap.startTime * pxPerSec,
+                    width: Math.max(6, (cap.endTime - cap.startTime) * pxPerSec),
+                  }}
+                  title={cap.text}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => {
+                    setPlaying(false);
+                    setCurrentTime(cap.startTime + 0.001);
+                    selectCaption(cap.id);
+                  }}
+                >
+                  {cap.text}
+                </button>
+              ))}
+            </div>
 
-        {/* playhead */}
-        {clips.length > 0 && (
-          <div
-            className="pointer-events-none absolute top-0 bottom-0 z-10 w-px bg-fuchsia-400"
-            style={{ left: playheadX }}
-          >
-            <div className="absolute -left-[5px] top-0 h-0 w-0 border-x-[5px] border-t-[7px] border-x-transparent border-t-fuchsia-400" />
+            {/* playhead */}
+            {duration > 0.001 && (
+              <div
+                className="pointer-events-none absolute top-0 bottom-0 z-10 w-px bg-fuchsia-400"
+                style={{ left: playheadX }}
+              >
+                <div className="absolute -left-[5px] top-0 h-0 w-0 border-x-[5px] border-t-[7px] border-x-transparent border-t-fuchsia-400" />
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- */
+
+function TrackHeader({ track }: { track: Track }) {
+  const toggleTrackLocked = useEditorStore((s) => s.toggleTrackLocked);
+  const toggleTrackMuted = useEditorStore((s) => s.toggleTrackMuted);
+  const toggleTrackHidden = useEditorStore((s) => s.toggleTrackHidden);
+  const height = TRACK_HEIGHTS[track.type] ?? DEFAULT_TRACK_HEIGHT;
+  const audible = ["video", "broll", "music", "sfx", "voice"].includes(track.type);
+  const visual = track.type !== "music" && track.type !== "sfx" && track.type !== "voice";
+
+  return (
+    <div className="flex items-center gap-0.5 border-t border-white/5 px-1.5" style={{ height }}>
+      <span className={`min-w-0 flex-1 truncate text-[10px] font-medium ${track.hidden ? "text-zinc-600" : "text-zinc-400"}`}>
+        {track.name}
+      </span>
+      <HeaderIcon
+        onClick={() => toggleTrackLocked(track.id)}
+        title={track.locked ? "Unlock track" : "Lock track"}
+        active={track.locked}
+      >
+        {track.locked ? <Lock size={11} /> : <LockOpen size={11} />}
+      </HeaderIcon>
+      {audible && (
+        <HeaderIcon
+          onClick={() => toggleTrackMuted(track.id)}
+          title={track.muted ? "Unmute track" : "Mute track"}
+          active={track.muted}
+        >
+          {track.muted ? <VolumeX size={11} /> : <Volume2 size={11} />}
+        </HeaderIcon>
+      )}
+      {visual && (
+        <HeaderIcon
+          onClick={() => toggleTrackHidden(track.id)}
+          title={track.hidden ? "Show track" : "Hide track"}
+          active={track.hidden}
+        >
+          {track.hidden ? <EyeOff size={11} /> : <Eye size={11} />}
+        </HeaderIcon>
+      )}
+    </div>
+  );
+}
+
+function HeaderIcon({
+  children,
+  onClick,
+  title,
+  active,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  title: string;
+  active: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={`rounded p-0.5 transition ${active ? "text-fuchsia-400" : "text-zinc-600 hover:text-zinc-300"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+interface TrackLaneProps {
+  track: Track;
+  media: { id: string; originalName: string; duration: number }[];
+  waveforms: Record<string, number[] | null>;
+  pxPerSec: number;
+  duration: number;
+  selectedClipId: string | null;
+  onScrub: (e: React.PointerEvent) => void;
+  onSelect: (id: string) => void;
+  onMove: (clipId: string, newStart: number, clip: TimelineClip) => void;
+  onTrim: (clipId: string, edge: "start" | "end", newTime: number) => void;
+}
+
+function TrackLane({
+  track,
+  media,
+  waveforms,
+  pxPerSec,
+  selectedClipId,
+  onScrub,
+  onSelect,
+  onMove,
+  onTrim,
+}: TrackLaneProps) {
+  const height = TRACK_HEIGHTS[track.type] ?? DEFAULT_TRACK_HEIGHT;
+  return (
+    <div
+      className={`relative cursor-col-resize border-t border-white/5 ${track.hidden ? "opacity-35" : ""}`}
+      style={{ height }}
+      onPointerDown={onScrub}
+    >
+      {track.clips.map((clip) => (
+        <ClipBlock
+          key={clip.id}
+          clip={clip}
+          track={track}
+          label={clipLabel(clip, media)}
+          peaks={
+            track.type === "video" && clip.assetId
+              ? waveforms[clip.assetId] ?? placeholderPeaksCached(clip.assetId)
+              : null
+          }
+          peaksRange={peaksRange(clip, media)}
+          pxPerSec={pxPerSec}
+          height={height}
+          selected={clip.id === selectedClipId}
+          onSelect={() => onSelect(clip.id)}
+          onMove={(newStart) => onMove(clip.id, newStart, clip)}
+          onTrim={(edge, newTime) => onTrim(clip.id, edge, newTime)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function clipLabel(clip: TimelineClip, media: { id: string; originalName: string }[]): string {
+  if (clip.type === "text" || clip.type === "sticker") return clip.text ?? "";
+  if (clip.type === "effects")
+    return clip.effect?.kind === "zoom" ? `zoom ×${(clip.effect.zoomScale ?? 1).toFixed(2)}` : clip.effect?.kind ?? "fx";
+  const asset = clip.assetId ? media.find((m) => m.id === clip.assetId) : undefined;
+  return asset?.originalName ?? "clip";
+}
+
+function peaksRange(clip: TimelineClip, media: { id: string; duration: number }[]): [number, number] {
+  const asset = clip.assetId ? media.find((m) => m.id === clip.assetId) : undefined;
+  if (!asset || !asset.duration) return [0, 1];
+  return [(clip.sourceStart ?? 0) / asset.duration, (clip.sourceEnd ?? asset.duration) / asset.duration];
+}
+
+const placeholderCache = new Map<string, number[]>();
+function placeholderPeaksCached(mediaId: string): number[] {
+  let peaks = placeholderCache.get(mediaId);
+  if (!peaks) {
+    peaks = placeholderPeaks(mediaId);
+    placeholderCache.set(mediaId, peaks);
+  }
+  return peaks;
+}
+
+/* ---------------------------------------------------------------- */
+
+interface ClipBlockProps {
+  clip: TimelineClip;
+  track: Track;
+  label: string;
+  peaks: number[] | null;
+  peaksRange: [number, number];
+  pxPerSec: number;
+  height: number;
+  selected: boolean;
+  onSelect: () => void;
+  onMove: (newStart: number) => void;
+  onTrim: (edge: "start" | "end", newTime: number) => void;
+}
+
+function ClipBlock({
+  clip,
+  track,
+  label,
+  peaks,
+  peaksRange,
+  pxPerSec,
+  height,
+  selected,
+  onSelect,
+  onMove,
+  onTrim,
+}: ClipBlockProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const left = 12 + clip.startTime * pxPerSec;
+  const width = Math.max(8, (clip.endTime - clip.startTime) * pxPerSec);
+  const movable = track.type !== "video" && !track.locked;
+
+  // waveform (main video track only)
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !peaks) return;
+    const w = Math.max(2, Math.floor(width));
+    const h = height - 12;
+    canvas.width = w * 2;
+    canvas.height = h * 2;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = selected ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.45)";
+
+    const startIdx = Math.floor(peaksRange[0] * peaks.length);
+    const endIdx = Math.max(startIdx + 1, Math.floor(peaksRange[1] * peaks.length));
+    const slice = peaks.slice(startIdx, endIdx);
+    const bars = Math.floor(w / 2);
+    for (let i = 0; i < bars; i++) {
+      const peak = slice.length ? slice[Math.floor((i / bars) * slice.length)] ?? 0 : 0.3;
+      const barH = Math.max(2, peak * h * 1.7);
+      ctx.fillRect(i * 4, h - barH, 2.5, barH * 2);
+    }
+  }, [peaks, peaksRange, width, height, selected]);
+
+  const startDrag = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    onSelect();
+    if (!movable) return;
+    const startX = e.clientX;
+    const origStart = clip.startTime;
+    let moved = false;
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      if (!moved && Math.abs(dx) < 3) return;
+      moved = true;
+      onMove(Math.max(0, origStart + dx / pxPerSec));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  const startTrim = (edge: "start" | "end") => (e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    onSelect();
+    const startX = e.clientX;
+    const orig = edge === "start" ? clip.startTime : clip.endTime;
+    const move = (ev: PointerEvent) => {
+      onTrim(edge, orig + (ev.clientX - startX) / pxPerSec);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  return (
+    <div
+      className={`group absolute top-0.5 bottom-0.5 overflow-hidden rounded-md bg-gradient-to-b transition-shadow ${TRACK_COLORS[track.type]} ${
+        selected ? "ring-2 ring-fuchsia-400" : "ring-1 ring-white/10 hover:ring-white/30"
+      } ${movable ? "cursor-grab active:cursor-grabbing" : ""}`}
+      style={{ left, width }}
+      onPointerDown={startDrag}
+    >
+      {peaks && (
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-x-1 top-3 bottom-1 h-[calc(100%-1rem)] w-[calc(100%-0.5rem)] opacity-80"
+        />
+      )}
+      <div className="pointer-events-none absolute inset-x-1.5 top-0.5 truncate text-[9px] font-medium text-white/75">
+        {label}
+      </div>
+      {selected && !track.locked && (
+        <>
+          <div className="absolute inset-y-0 left-0 w-2 cursor-ew-resize bg-fuchsia-400/90" onPointerDown={startTrim("start")} />
+          <div className="absolute inset-y-0 right-0 w-2 cursor-ew-resize bg-fuchsia-400/90" onPointerDown={startTrim("end")} />
+        </>
+      )}
     </div>
   );
 }
@@ -245,121 +590,9 @@ function ToolButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium text-zinc-300 transition hover:bg-white/10 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
+      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-zinc-300 transition hover:bg-white/10 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
     >
       {children}
     </button>
-  );
-}
-
-const placeholderCache = new Map<string, number[]>();
-function placeholderPeaksCached(mediaId: string): number[] {
-  let peaks = placeholderCache.get(mediaId);
-  if (!peaks) {
-    peaks = placeholderPeaks(mediaId);
-    placeholderCache.set(mediaId, peaks);
-  }
-  return peaks;
-}
-
-interface ClipBlockProps {
-  left: number;
-  width: number;
-  label: string;
-  peaks: number[] | null;
-  /** Fraction of the media covered by this clip (for slicing the waveform). */
-  peaksStart: number;
-  peaksEnd: number;
-  selected: boolean;
-  onSelect: () => void;
-  onTrim: (edge: "start" | "end", deltaPx: number) => void;
-}
-
-function ClipBlock({
-  left,
-  width,
-  label,
-  peaks,
-  peaksStart,
-  peaksEnd,
-  selected,
-  onSelect,
-  onTrim,
-}: ClipBlockProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const w = Math.max(2, Math.floor(width));
-    const h = 44;
-    canvas.width = w * 2; // 2x for crisp rendering
-    canvas.height = h * 2;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = selected ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.45)";
-
-    const data = peaks ?? [];
-    const startIdx = Math.floor(peaksStart * data.length);
-    const endIdx = Math.max(startIdx + 1, Math.floor(peaksEnd * data.length));
-    const slice = data.slice(startIdx, endIdx);
-    const bars = Math.floor(w / 2);
-    for (let i = 0; i < bars; i++) {
-      const peak = slice.length
-        ? slice[Math.floor((i / bars) * slice.length)] ?? 0
-        : 0.3;
-      const barH = Math.max(2, peak * h * 1.7);
-      ctx.fillRect(i * 4, h - barH, 2.5, barH * 2);
-    }
-  }, [peaks, peaksStart, peaksEnd, width, selected]);
-
-  const startTrim = (edge: "start" | "end") => (e: React.PointerEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-    onSelect();
-    const startX = e.clientX;
-    let applied = 0;
-    const move = (ev: PointerEvent) => {
-      const delta = ev.clientX - startX - applied;
-      applied += delta;
-      onTrim(edge, delta);
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
-
-  return (
-    <div
-      className={`group absolute top-1 bottom-1 overflow-hidden rounded-lg transition-shadow ${
-        selected
-          ? "bg-gradient-to-b from-violet-600/70 to-violet-800/70 ring-2 ring-fuchsia-400"
-          : "bg-gradient-to-b from-zinc-700/80 to-zinc-800/80 ring-1 ring-white/10 hover:ring-white/30"
-      }`}
-      style={{ left, width }}
-      // select on press; the event still bubbles to the lane's scrub handler
-      onPointerDown={onSelect}
-    >
-      <canvas ref={canvasRef} className="absolute inset-x-1 top-3 bottom-1 h-[calc(100%-1rem)] w-[calc(100%-0.5rem)] opacity-80" />
-      <div className="pointer-events-none absolute inset-x-1.5 top-0.5 truncate text-[9px] font-medium text-white/70">
-        {label}
-      </div>
-      {selected && (
-        <>
-          <div
-            className="absolute inset-y-0 left-0 w-2 cursor-ew-resize bg-fuchsia-400/90"
-            onPointerDown={startTrim("start")}
-          />
-          <div
-            className="absolute inset-y-0 right-0 w-2 cursor-ew-resize bg-fuchsia-400/90"
-            onPointerDown={startTrim("end")}
-          />
-        </>
-      )}
-    </div>
   );
 }

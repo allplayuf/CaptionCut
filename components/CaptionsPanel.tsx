@@ -1,68 +1,47 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Caption, TranscriptionLanguage } from "@/types";
-import { buildProjectSnapshot, useEditorStore } from "@/hooks/useEditorStore";
-import { totalDuration } from "@/lib/video/timeline";
-import { Plus, Sparkles, Trash2 } from "lucide-react";
+import type { Caption } from "@/types";
+import { useEditorStore } from "@/hooks/useEditorStore";
+import { tracksDuration } from "@/lib/timeline/tracks";
+import { useTranscription } from "@/hooks/useTranscription";
+import {
+  ChevronsLeft,
+  ChevronsRight,
+  Merge,
+  Plus,
+  Replace,
+  Scissors,
+  Sparkles,
+  Trash2,
+  Wand2,
+} from "lucide-react";
 
-/** Right panel, Captions tab: auto-caption trigger + line-by-line editor. */
+/** Right panel, Captions tab: auto-caption trigger + line-by-line editor + tools. */
 export default function CaptionsPanel() {
   const captions = useEditorStore((s) => s.captions);
-  const clips = useEditorStore((s) => s.clips);
+  const tracks = useEditorStore((s) => s.tracks);
   const currentTime = useEditorStore((s) => s.currentTime);
   const selectedCaptionId = useEditorStore((s) => s.selectedCaptionId);
   const isTranscribing = useEditorStore((s) => s.isTranscribing);
 
-  const setCaptions = useEditorStore((s) => s.setCaptions);
-  const setTranscribing = useEditorStore((s) => s.setTranscribing);
   const addCaptionAtPlayhead = useEditorStore((s) => s.addCaptionAtPlayhead);
+  const cleanAllCaptions = useEditorStore((s) => s.cleanAllCaptions);
+  const shiftAllCaptions = useEditorStore((s) => s.shiftAllCaptions);
+  const searchReplaceCaptions = useEditorStore((s) => s.searchReplaceCaptions);
   const addToast = useEditorStore((s) => s.addToast);
 
-  const [language, setLanguage] = useState<TranscriptionLanguage>("auto");
-  const duration = totalDuration(clips);
+  const { runTranscription, language, setLanguage } = useTranscription();
+  const duration = tracksDuration(tracks);
+  const hasClips = duration > 0;
 
-  const runAutoCaptions = async () => {
-    if (clips.length === 0) {
-      addToast("info", "Upload a video first.");
-      return;
-    }
-    setTranscribing(true);
-    try {
-      // Heads-up when the free local model still needs its one-time download.
-      try {
-        const status = await (await fetch("/api/transcribe")).json();
-        if (status?.provider === "local-whisper" && status.ready === false) {
-          addToast(
-            "info",
-            "First run: downloading the free local speech model (~150 MB). This happens once — captions will start right after."
-          );
-        }
-      } catch {
-        // status probe is best-effort
-      }
+  const [showReplace, setShowReplace] = useState(false);
+  const [findText, setFindText] = useState("");
+  const [replaceText, setReplaceText] = useState("");
 
-      const state = useEditorStore.getState();
-      const snapshot = buildProjectSnapshot(state);
-      const response = await fetch("/api/transcribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ media: snapshot.media, clips: snapshot.clips, language }),
-      });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error ?? "Transcription failed.");
-
-      setCaptions(body.captions as Caption[]);
-      if (body.provider === "mock") {
-        addToast("info", "Demo captions generated (mock mode). Unset TRANSCRIPTION_PROVIDER for real local transcription.");
-      } else {
-        addToast("success", `Generated ${body.captions.length} captions ✨`);
-      }
-    } catch (err) {
-      addToast("error", err instanceof Error ? err.message : "Transcription failed.");
-    } finally {
-      setTranscribing(false);
-    }
+  const runReplace = () => {
+    const count = searchReplaceCaptions(findText, replaceText);
+    addToast(count > 0 ? "success" : "info", count > 0 ? `Replaced ${count} match${count === 1 ? "" : "es"}.` : "No matches found.");
   };
 
   return (
@@ -71,7 +50,7 @@ export default function CaptionsPanel() {
         <div className="mb-2 flex items-center gap-2">
           <select
             value={language}
-            onChange={(e) => setLanguage(e.target.value as TranscriptionLanguage)}
+            onChange={(e) => setLanguage(e.target.value as typeof language)}
             className="flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-zinc-200 outline-none focus:border-violet-400"
             title="Spoken language"
           >
@@ -81,8 +60,8 @@ export default function CaptionsPanel() {
           </select>
         </div>
         <button
-          onClick={runAutoCaptions}
-          disabled={isTranscribing || clips.length === 0}
+          onClick={() => void runTranscription()}
+          disabled={isTranscribing || !hasClips}
           className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-fuchsia-500/25 transition hover:brightness-110 active:scale-[0.98] disabled:opacity-40"
         >
           {isTranscribing ? (
@@ -106,6 +85,50 @@ export default function CaptionsPanel() {
         )}
       </div>
 
+      {/* caption tools */}
+      {captions.length > 0 && (
+        <div className="border-b border-white/8 px-2 py-1.5">
+          <div className="flex items-center gap-0.5">
+            <ToolIcon title="Clean captions: fix punctuation, strip ums/uhs, bold key words" onClick={cleanAllCaptions}>
+              <Wand2 size={13} />
+            </ToolIcon>
+            <ToolIcon title="Shift all captions 0.1s earlier" onClick={() => shiftAllCaptions(-0.1)}>
+              <ChevronsLeft size={13} />
+            </ToolIcon>
+            <ToolIcon title="Shift all captions 0.1s later" onClick={() => shiftAllCaptions(0.1)}>
+              <ChevronsRight size={13} />
+            </ToolIcon>
+            <ToolIcon title="Search & replace" onClick={() => setShowReplace((v) => !v)} active={showReplace}>
+              <Replace size={13} />
+            </ToolIcon>
+            <span className="ml-auto text-[10px] text-zinc-600">{captions.length} lines</span>
+          </div>
+          {showReplace && (
+            <div className="mt-1.5 flex items-center gap-1">
+              <input
+                value={findText}
+                onChange={(e) => setFindText(e.target.value)}
+                placeholder="Find"
+                className="w-0 flex-1 rounded border border-white/10 bg-black/30 px-1.5 py-1 text-[11px] text-zinc-200 outline-none focus:border-violet-400"
+              />
+              <input
+                value={replaceText}
+                onChange={(e) => setReplaceText(e.target.value)}
+                placeholder="Replace"
+                onKeyDown={(e) => e.key === "Enter" && runReplace()}
+                className="w-0 flex-1 rounded border border-white/10 bg-black/30 px-1.5 py-1 text-[11px] text-zinc-200 outline-none focus:border-violet-400"
+              />
+              <button
+                onClick={runReplace}
+                className="rounded bg-violet-500/25 px-2 py-1 text-[11px] font-semibold text-violet-200 transition hover:bg-violet-500/40"
+              >
+                Go
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {captions.length === 0 ? (
           <div className="px-4 py-8 text-center text-xs leading-relaxed text-zinc-600">
@@ -116,10 +139,11 @@ export default function CaptionsPanel() {
           </div>
         ) : (
           <div className="flex flex-col gap-1">
-            {captions.map((cap) => (
+            {captions.map((cap, i) => (
               <CaptionRow
                 key={cap.id}
                 caption={cap}
+                isLast={i === captions.length - 1}
                 active={currentTime >= cap.startTime && currentTime < cap.endTime}
                 selected={cap.id === selectedCaptionId}
               />
@@ -139,18 +163,46 @@ export default function CaptionsPanel() {
 
 /* ---------------------------------------------------------------- */
 
+function ToolIcon({
+  children,
+  onClick,
+  title,
+  active,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  title: string;
+  active?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={`rounded-md p-1.5 transition ${
+        active ? "bg-violet-500/25 text-violet-200" : "text-zinc-400 hover:bg-white/10 hover:text-white"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 function CaptionRow({
   caption,
   active,
   selected,
+  isLast,
 }: {
   caption: Caption;
   active: boolean;
   selected: boolean;
+  isLast: boolean;
 }) {
   const updateCaptionText = useEditorStore((s) => s.updateCaptionText);
   const updateCaptionTiming = useEditorStore((s) => s.updateCaptionTiming);
   const deleteCaption = useEditorStore((s) => s.deleteCaption);
+  const mergeCaptionWithNext = useEditorStore((s) => s.mergeCaptionWithNext);
+  const splitCaption = useEditorStore((s) => s.splitCaption);
   const selectCaption = useEditorStore((s) => s.selectCaption);
   const setCurrentTime = useEditorStore((s) => s.setCurrentTime);
   const setPlaying = useEditorStore((s) => s.setPlaying);
@@ -203,16 +255,40 @@ function CaptionRow({
             words
           </span>
         )}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            deleteCaption(caption.id);
-          }}
-          className="ml-auto rounded p-1 text-zinc-600 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-400 group-hover:opacity-100"
-          title="Delete caption"
-        >
-          <Trash2 size={12} />
-        </button>
+        <div className="ml-auto flex items-center opacity-0 transition group-hover:opacity-100">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              splitCaption(caption.id);
+            }}
+            className="rounded p-1 text-zinc-600 transition hover:bg-white/10 hover:text-zinc-200"
+            title="Split caption in half"
+          >
+            <Scissors size={12} />
+          </button>
+          {!isLast && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                mergeCaptionWithNext(caption.id);
+              }}
+              className="rounded p-1 text-zinc-600 transition hover:bg-white/10 hover:text-zinc-200"
+              title="Merge with next caption"
+            >
+              <Merge size={12} />
+            </button>
+          )}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              deleteCaption(caption.id);
+            }}
+            className="rounded p-1 text-zinc-600 transition hover:bg-rose-500/20 hover:text-rose-400"
+            title="Delete caption"
+          >
+            <Trash2 size={12} />
+          </button>
+        </div>
       </div>
     </div>
   );
