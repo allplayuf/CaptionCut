@@ -3,11 +3,13 @@
 import type { CSSProperties } from "react";
 import type { Caption, CaptionStyle } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
+import { FORMATS } from "@/lib/video/formats";
 
 /**
  * Renders the active caption over the preview using the same geometry as the
- * ASS export (1080x1920 canvas, scaled by `scale`), so what you see is what
- * gets burned in.
+ * ASS export: style values live on the 1080x1920 reference canvas and scale
+ * onto the current format's canvas (x by width/1080, y and font sizes by
+ * height/1920), so what you see is what gets burned in — for every format.
  */
 
 /** Must match POSITION_MARGIN_V in lib/export/ass.ts. */
@@ -20,18 +22,24 @@ const POSITION_BOTTOM_MARGIN: Record<CaptionStyle["position"], number> = {
 export default function CaptionOverlay({ scale }: { scale: number }) {
   const captions = useEditorStore((s) => s.captions);
   const style = useEditorStore((s) => s.style);
+  const format = useEditorStore((s) => s.format);
   const currentTime = useEditorStore((s) => s.currentTime);
 
   const active = findActiveCaption(captions, currentTime);
   if (!active) return null;
 
+  // Mirrors buildAss(): horizontal by width, vertical + fonts by height.
+  const canvas = FORMATS[format];
+  const xScale = (canvas.width / 1080) * scale;
+  const yScale = (canvas.height / 1920) * scale;
+
   const isCenter = style.position === "center";
-  const bottomMargin = POSITION_BOTTOM_MARGIN[style.position] * scale;
+  const bottomMargin = POSITION_BOTTOM_MARGIN[style.position] * yScale;
 
   const containerStyle: CSSProperties = {
     position: "absolute",
-    left: 70 * scale,
-    right: 70 * scale,
+    left: 70 * xScale,
+    right: 70 * xScale,
     display: "flex",
     justifyContent: "center",
     pointerEvents: "none",
@@ -44,7 +52,7 @@ export default function CaptionOverlay({ scale }: { scale: number }) {
 
   const textStyle: CSSProperties = {
     fontFamily: `'${style.fontFamily}', sans-serif`,
-    fontSize: style.fontSize * scale,
+    fontSize: style.fontSize * yScale,
     fontWeight: style.fontWeight,
     color: style.textColor,
     lineHeight: 1.2,
@@ -55,17 +63,17 @@ export default function CaptionOverlay({ scale }: { scale: number }) {
     ...(hasBox || style.strokeWidth === 0
       ? {}
       : {
-          WebkitTextStroke: `${style.strokeWidth * 2 * scale}px ${style.strokeColor}`,
+          WebkitTextStroke: `${style.strokeWidth * 2 * yScale}px ${style.strokeColor}`,
           paintOrder: "stroke fill",
         }),
     ...(!hasBox && style.shadow
-      ? { textShadow: `0 ${3 * scale}px ${10 * scale}px rgba(0,0,0,0.85)` }
+      ? { textShadow: `0 ${3 * yScale}px ${10 * yScale}px rgba(0,0,0,0.85)` }
       : {}),
     ...(hasBox
       ? {
           backgroundColor: hexToRgba(style.backgroundColor as string, style.backgroundOpacity),
-          padding: `${10 * scale}px ${18 * scale}px`,
-          borderRadius: 8 * scale,
+          padding: `${10 * yScale}px ${18 * yScale}px`,
+          borderRadius: 8 * yScale,
           boxDecorationBreak: "clone" as const,
           WebkitBoxDecorationBreak: "clone" as const,
         }

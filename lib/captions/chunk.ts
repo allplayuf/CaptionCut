@@ -60,7 +60,32 @@ export function chunkWordsToCaptions(words: WordTiming[]): Caption[] {
   }
   flush();
 
-  return postProcess(captions);
+  return postProcess(mergeOrphans(captions));
+}
+
+/**
+ * A chunk that ends up as a single short word (an artifact of hitting a cap
+ * one word early) reads as a flicker. Fold it into the previous chunk when
+ * they're contiguous speech and the merge still fits on one line.
+ */
+function mergeOrphans(captions: Caption[]): Caption[] {
+  const out: Caption[] = [];
+  for (const cap of captions) {
+    const prev = out[out.length - 1];
+    const words = cap.words ?? [];
+    const isOrphan = words.length === 1 && cap.text.length <= 12;
+    const contiguous = prev && cap.startTime - prev.endTime < 0.35;
+    const fits = prev && prev.text.length + cap.text.length + 1 <= MAX_CHARS + 6;
+    const prevEndsSentence = prev && /[.!?]["')\]]?$/.test(prev.text);
+    if (isOrphan && contiguous && fits && !prevEndsSentence) {
+      prev.endTime = cap.endTime;
+      prev.text = `${prev.text} ${cap.text}`;
+      prev.words = prev.words ? [...prev.words, ...words] : undefined;
+    } else {
+      out.push({ ...cap });
+    }
+  }
+  return out;
 }
 
 /**

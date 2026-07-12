@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { MediaAsset, TimelineClip } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
@@ -8,14 +8,27 @@ import { mediaUrl } from "@/lib/video/client";
 import { clipsAt, findTrack } from "@/lib/timeline/tracks";
 
 /**
- * Composites the non-main tracks over the 9:16 preview:
+ * Composites the non-main tracks over the preview:
  *   b-roll video and image overlays (visual layers, inside the zoom wrapper),
  *   text graphics and stickers (above zoom, like captions),
  *   music/sfx/voice playback (invisible <audio> elements kept in sync).
- * All geometry matches the 1080x1920 export canvas via `scale`.
+ * Overlay coordinates live in the 1080x1920 reference system and are scaled
+ * onto the format canvas (x by canvasW/1080, y by canvasH/1920) exactly like
+ * the exporter, so every format previews what gets rendered.
+ * Text, sticker and image overlays are draggable directly in the preview.
  */
 
-export function VisualOverlays({ scale }: { scale: number }) {
+/** Reference canvas overlay transforms are authored on. */
+const REF_W = 1080;
+const REF_H = 1920;
+
+interface LayerProps {
+  scale: number;
+  canvasW: number;
+  canvasH: number;
+}
+
+export function VisualOverlays({ scale, canvasW, canvasH }: LayerProps) {
   const tracks = useEditorStore((s) => s.tracks);
   const media = useEditorStore((s) => s.media);
   const currentTime = useEditorStore((s) => s.currentTime);
@@ -31,7 +44,14 @@ export function VisualOverlays({ scale }: { scale: number }) {
         type === "broll" ? (
           <BrollVideo key={clip.id} clip={clip} asset={asset} muted={track.muted} />
         ) : (
-          <ImageOverlay key={clip.id} clip={clip} asset={asset} scale={scale} />
+          <ImageOverlay
+            key={clip.id}
+            clip={clip}
+            asset={asset}
+            scale={scale}
+            canvasW={canvasW}
+            canvasH={canvasH}
+          />
         )
       );
     }
@@ -39,7 +59,7 @@ export function VisualOverlays({ scale }: { scale: number }) {
   return <>{layers}</>;
 }
 
-export function TextOverlays({ scale }: { scale: number }) {
+export function TextOverlays({ scale, canvasW, canvasH }: LayerProps) {
   const tracks = useEditorStore((s) => s.tracks);
   const currentTime = useEditorStore((s) => s.currentTime);
 
@@ -48,7 +68,16 @@ export function TextOverlays({ scale }: { scale: number }) {
     const track = findTrack(tracks, type);
     if (!track || track.hidden) continue;
     for (const clip of clipsAt(track, currentTime)) {
-      layers.push(<TextSticker key={clip.id} clip={clip} scale={scale} sticker={type === "sticker"} />);
+      layers.push(
+        <TextSticker
+          key={clip.id}
+          clip={clip}
+          scale={scale}
+          canvasW={canvasW}
+          canvasH={canvasH}
+          sticker={type === "sticker"}
+        />
+      );
     }
   }
   return <>{layers}</>;
@@ -108,6 +137,47 @@ function useMediaSync(
   }, [ref, isPlaying]);
 }
 
+/**
+ * Drag an overlay around the preview; the transform commits once on release
+ * (a single undo step). Pixel deltas convert back to reference coordinates
+ * through the same x/y scales used to place the element.
+ */
+function useOverlayDrag(clip: TimelineClip, xScalePx: number, yScalePx: number, defaultScale: number) {
+  const [drag, setDrag] = useState<{ dx: number; dy: number } | null>(null);
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const store = useEditorStore.getState();
+    store.selectClip(clip.id);
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const move = (ev: PointerEvent) => setDrag({ dx: ev.clientX - sx, dy: ev.clientY - sy });
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      setDrag(null);
+      const dx = ev.clientX - sx;
+      const dy = ev.clientY - sy;
+      if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+      const t = clip.transform ?? {};
+      useEditorStore.getState().updateTimelineClip(clip.id, {
+        transform: {
+          x: Math.round((t.x ?? 0) + dx / xScalePx),
+          y: Math.round((t.y ?? 0) + dy / yScalePx),
+          scale: t.scale ?? defaultScale,
+          rotation: t.rotation ?? 0,
+          opacity: t.opacity ?? 1,
+        },
+      });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  return { drag, onPointerDown };
+}
+
 function BrollVideo({ clip, asset, muted }: { clip: TimelineClip; asset: MediaAsset; muted: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
   useMediaSync(ref, clip, { volume: clip.volume ?? 0, muted });
@@ -124,40 +194,69 @@ function BrollVideo({ clip, asset, muted }: { clip: TimelineClip; asset: MediaAs
   );
 }
 
-function ImageOverlay({ clip, asset, scale }: { clip: TimelineClip; asset: MediaAsset; scale: number }) {
+function ImageOverlay({
+  clip,
+  asset,
+  scale,
+  canvasW,
+  canvasH,
+}: {
+  clip: TimelineClip;
+  asset: MediaAsset;
+} & LayerProps) {
+  const selected = useEditorStore((s) => s.selectedClipId === clip.id);
   const t = clip.transform ?? {};
-  const width = 1080 * (t.scale ?? 0.8) * scale;
+  const xScalePx = (canvasW / REF_W) * scale;
+  const yScalePx = (canvasH / REF_H) * scale;
+  const { drag, onPointerDown } = useOverlayDrag(clip, xScalePx, yScalePx, 0.8);
+  const width = canvasW * (t.scale ?? 0.8) * scale;
   const style: CSSProperties = {
     position: "absolute",
-    left: `calc(50% + ${(t.x ?? 0) * scale}px)`,
-    top: `calc(50% + ${(t.y ?? 0) * scale}px)`,
+    left: `calc(50% + ${(t.x ?? 0) * xScalePx + (drag?.dx ?? 0)}px)`,
+    top: `calc(50% + ${(t.y ?? 0) * yScalePx + (drag?.dy ?? 0)}px)`,
     width,
     transform: `translate(-50%, -50%) rotate(${t.rotation ?? 0}deg)`,
     opacity: t.opacity ?? 1,
     borderRadius: 8 * scale,
+    cursor: drag ? "grabbing" : "grab",
+    outline: selected ? "1.5px dashed rgba(255,255,255,0.75)" : undefined,
+    outlineOffset: 2,
   };
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={mediaUrl(asset.id)} alt="" style={style} draggable={false} />;
+  return <img src={mediaUrl(asset.id)} alt="" style={style} draggable={false} onPointerDown={onPointerDown} />;
 }
 
-function TextSticker({ clip, scale, sticker }: { clip: TimelineClip; scale: number; sticker: boolean }) {
+function TextSticker({
+  clip,
+  scale,
+  canvasW,
+  canvasH,
+  sticker,
+}: { clip: TimelineClip; sticker: boolean } & LayerProps) {
+  const selected = useEditorStore((s) => s.selectedClipId === clip.id);
   const t = clip.transform ?? {};
   const s = clip.style ?? {};
-  const fontSize = (s.fontSize ?? (sticker ? 160 : 64)) * (t.scale ?? 1) * scale;
+  const xScalePx = (canvasW / REF_W) * scale;
+  const yScalePx = (canvasH / REF_H) * scale;
+  const { drag, onPointerDown } = useOverlayDrag(clip, xScalePx, yScalePx, 1);
+  // Font size scales with canvas height, matching the ASS export.
+  const fontSize = (s.fontSize ?? (sticker ? 160 : 64)) * (t.scale ?? 1) * (canvasH / REF_H) * scale;
   const hasBox = !sticker && s.backgroundColor != null;
 
   const style: CSSProperties = {
     position: "absolute",
-    left: `calc(50% + ${(t.x ?? 0) * scale}px)`,
-    top: `calc(50% + ${(t.y ?? 0) * scale}px)`,
+    left: `calc(50% + ${(t.x ?? 0) * xScalePx + (drag?.dx ?? 0)}px)`,
+    top: `calc(50% + ${(t.y ?? 0) * yScalePx + (drag?.dy ?? 0)}px)`,
     transform: `translate(-50%, -50%) rotate(${t.rotation ?? 0}deg)`,
     opacity: t.opacity ?? 1,
     fontSize,
     lineHeight: 1.2,
     textAlign: "center",
     maxWidth: `${86}%`,
-    pointerEvents: "none",
     whiteSpace: "pre-wrap",
+    cursor: drag ? "grabbing" : "grab",
+    outline: selected ? "1.5px dashed rgba(255,255,255,0.75)" : undefined,
+    outlineOffset: 4,
     ...(sticker
       ? {}
       : {
@@ -178,7 +277,11 @@ function TextSticker({ clip, scale, sticker }: { clip: TimelineClip; scale: numb
               : {}),
         }),
   };
-  return <div style={style}>{clip.text}</div>;
+  return (
+    <div style={style} onPointerDown={onPointerDown} title="Drag to reposition">
+      {clip.text}
+    </div>
+  );
 }
 
 function AudioClipPlayer({ clip, asset, muted }: { clip: TimelineClip; asset: MediaAsset; muted: boolean }) {

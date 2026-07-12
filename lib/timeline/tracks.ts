@@ -87,7 +87,14 @@ export function mainClips(tracks: Track[]): Clip[] {
     mediaId: c.assetId ?? "",
     sourceStart: c.sourceStart ?? 0,
     sourceEnd: c.sourceEnd ?? 0,
+    speed: c.speed,
   }));
+}
+
+/** Playback rate of a clip, clamped to the range the exporter supports. */
+export function clipSpeedOf(clip: { speed?: number }): number {
+  const s = clip.speed ?? 1;
+  return Math.min(2, Math.max(0.5, s > 0 ? s : 1));
 }
 
 /** Project duration = main video track length. */
@@ -100,7 +107,7 @@ export function tracksDuration(tracks: Track[]): number {
 export function rippleMainTrack(track: Track): Track {
   let cursor = 0;
   const clips = track.clips.map((c) => {
-    const dur = Math.max(0, (c.sourceEnd ?? 0) - (c.sourceStart ?? 0));
+    const dur = Math.max(0, (c.sourceEnd ?? 0) - (c.sourceStart ?? 0)) / clipSpeedOf(c);
     const laid = { ...c, startTime: round3(cursor), endTime: round3(cursor + dur) };
     cursor += dur;
     return laid;
@@ -249,28 +256,41 @@ export function buildTimeRemap(keptRanges: TimeRange[]): TimeRemap {
   return { point, collapse, totalDuration };
 }
 
-/** Slice the main video track to the kept ranges (in output order). */
-export function rearrangeMainTrack(track: Track, keptRanges: TimeRange[]): Track {
+/**
+ * Slice the main video track to the kept ranges (in output order).
+ * `rangeSpeeds` (parallel to keptRanges) applies a playback-rate ramp to
+ * every clip sliced out of that range (composed with any existing speed).
+ */
+export function rearrangeMainTrack(
+  track: Track,
+  keptRanges: TimeRange[],
+  rangeSpeeds?: (number | undefined)[]
+): Track {
   const source = track.clips;
   const outClips: TimelineClip[] = [];
 
-  for (const range of keptRanges) {
+  keptRanges.forEach((range, ri) => {
+    const rampSpeed = rangeSpeeds?.[ri];
     for (const clip of source) {
       const overlapStart = Math.max(range.start, clip.startTime);
       const overlapEnd = Math.min(range.end, clip.endTime);
       if (overlapEnd - overlapStart < 0.02) continue;
-      const srcStart = (clip.sourceStart ?? 0) + (overlapStart - clip.startTime);
-      const srcEnd = (clip.sourceStart ?? 0) + (overlapEnd - clip.startTime);
+      // Timeline seconds → source seconds through the clip's own speed.
+      const speed = clipSpeedOf(clip);
+      const srcStart = (clip.sourceStart ?? 0) + (overlapStart - clip.startTime) * speed;
+      const srcEnd = (clip.sourceStart ?? 0) + (overlapEnd - clip.startTime) * speed;
+      const outSpeed = rampSpeed !== undefined ? clipSpeedOf({ speed: speed * rampSpeed }) : clip.speed;
       outClips.push({
         ...clip,
         id: nanoid(8),
         sourceStart: round3(srcStart),
         sourceEnd: round3(srcEnd),
+        speed: outSpeed,
         startTime: 0,
         endTime: srcEnd - srcStart,
       });
     }
-  }
+  });
 
   return rippleMainTrack({ ...track, clips: outClips });
 }
@@ -367,8 +387,144 @@ export function zoomAt(tracks: Track[], time: number): { scale: number; anchorX:
   return { scale: 1, anchorX: 0.5, anchorY: 0.5 };
 }
 
+/** Active freeze-frame effect clip at a timeline time (null = none). */
+export function freezeAt(tracks: Track[], time: number): TimelineClip | null {
+  const effects = findTrack(tracks, "effects");
+  if (!effects || effects.hidden) return null;
+  for (const clip of effects.clips) {
+    if (time >= clip.startTime && time < clip.endTime && clip.effect?.kind === "freeze") {
+      return clip;
+    }
+  }
+  return null;
+}
+
+/** White-flash opacity at a timeline time (1 at the flash start, decaying to 0). */
+export function flashOpacityAt(tracks: Track[], time: number): number {
+  const effects = findTrack(tracks, "effects");
+  if (!effects || effects.hidden) return 0;
+  let opacity = 0;
+  for (const clip of effects.clips) {
+    if (time >= clip.startTime && time < clip.endTime && clip.effect?.kind === "flash") {
+      const dur = Math.max(0.05, clip.endTime - clip.startTime);
+      // Linear decay matches the export's fade=t=out over the clip length.
+      opacity = Math.max(opacity, 1 - (time - clip.startTime) / dur);
+    }
+  }
+  return opacity;
+}
+
 export function clipsAt(track: Track, time: number): TimelineClip[] {
   return track.clips.filter((c) => time >= c.startTime && time < c.endTime);
+}
+
+/* ------------------------------------------------------------------ */
+/* Source-anchored caption remapping                                   */
+/* ------------------------------------------------------------------ */
+
+const SRC_EPS = 0.002;
+
+/** Map a timeline time on a laid-out main track to its source position. */
+function mainSourcePointAt(
+  clips: TimelineClip[],
+  t: number
+): { assetId: string; src: number } | null {
+  for (const c of clips) {
+    if (t < c.startTime - SRC_EPS || t > c.endTime + SRC_EPS) continue;
+    if (!c.assetId || c.sourceStart === undefined) return null;
+    const local = Math.min(Math.max(0, t - c.startTime), c.endTime - c.startTime);
+    return { assetId: c.assetId, src: (c.sourceStart ?? 0) + local * clipSpeedOf(c) };
+  }
+  return null;
+}
+
+/** Map a source position back to the (first) main-track clip that contains it. */
+function mainTimelinePointFor(
+  clips: TimelineClip[],
+  point: { assetId: string; src: number }
+): number | null {
+  for (const c of clips) {
+    if (c.assetId !== point.assetId || c.sourceStart === undefined) continue;
+    const s0 = c.sourceStart ?? 0;
+    const s1 = c.sourceEnd ?? 0;
+    if (point.src < s0 - SRC_EPS || point.src > s1 + SRC_EPS) continue;
+    const local = Math.min(Math.max(0, point.src - s0), s1 - s0);
+    return round3(c.startTime + local / clipSpeedOf(c));
+  }
+  return null;
+}
+
+/**
+ * Re-time captions through ANY main-track change (trim, split, delete,
+ * reorder, speed, replay-insert) by anchoring them to source positions:
+ * each caption/word is mapped timeline → source on the old track, then
+ * source → timeline on the new one. Words whose source footage was cut are
+ * dropped; captions split when their words land in discontiguous places.
+ * This is what keeps captions in sync when re-trimming after captioning.
+ */
+export function remapCaptionsToMainTrack(
+  oldClips: TimelineClip[],
+  newClips: TimelineClip[],
+  captions: Caption[]
+): Caption[] {
+  if (captions.length === 0) return captions;
+
+  const out: Caption[] = [];
+  for (const cap of captions) {
+    const words = cap.words && cap.words.length > 0 ? cap.words : null;
+
+    if (words) {
+      type Mapped = { word: WordTiming; start: number; end: number };
+      const mapped: Mapped[] = [];
+      for (const w of words) {
+        const mid = mainSourcePointAt(oldClips, (w.startTime + w.endTime) / 2);
+        if (!mid) continue;
+        const nm = mainTimelinePointFor(newClips, mid);
+        if (nm === null) continue; // this word's footage was cut
+        const sp = mainSourcePointAt(oldClips, w.startTime) ?? mid;
+        const ep = mainSourcePointAt(oldClips, w.endTime) ?? mid;
+        const ns = mainTimelinePointFor(newClips, sp) ?? nm;
+        const ne = mainTimelinePointFor(newClips, ep) ?? nm;
+        if (ne - ns >= 0.02) mapped.push({ word: w, start: ns, end: ne });
+        else mapped.push({ word: w, start: round3(Math.max(0, nm - 0.05)), end: round3(nm + 0.05) });
+      }
+      if (mapped.length === 0) continue;
+
+      // Words that now sit far apart (cut seam / reorder) become separate captions.
+      const runs: Mapped[][] = [[mapped[0]]];
+      for (let i = 1; i < mapped.length; i++) {
+        const prev = mapped[i - 1];
+        const cur = mapped[i];
+        if (cur.start < prev.end - 0.5 || cur.start - prev.end > 0.75) runs.push([cur]);
+        else runs[runs.length - 1].push(cur);
+      }
+      // A caption that survived whole keeps its (possibly cleaned) text.
+      const intact = runs.length === 1 && runs[0].length === words.length;
+      runs.forEach((run, ri) => {
+        out.push({
+          ...cap,
+          id: ri === 0 ? cap.id : nanoid(8),
+          startTime: run[0].start,
+          endTime: round3(Math.max(run[run.length - 1].end, run[0].start + 0.1)),
+          text: intact ? cap.text : run.map((m) => m.word.word).join(" "),
+          words: run.map((m) => ({ ...m.word, startTime: m.start, endTime: m.end })),
+        });
+      });
+    } else {
+      const sp = mainSourcePointAt(oldClips, cap.startTime + SRC_EPS);
+      const ep = mainSourcePointAt(oldClips, cap.endTime - SRC_EPS);
+      const ns = sp ? mainTimelinePointFor(newClips, sp) : null;
+      const ne = ep ? mainTimelinePointFor(newClips, ep) : null;
+      if (ns === null && ne === null) continue;
+      const dur = cap.endTime - cap.startTime;
+      const start = ns ?? Math.max(0, (ne ?? 0) - dur);
+      const end = ne ?? start + dur;
+      if (end - start >= 0.08) {
+        out.push({ ...cap, startTime: round3(start), endTime: round3(end) });
+      }
+    }
+  }
+  return out.sort((a, b) => a.startTime - b.startTime);
 }
 
 /* ------------------------------------------------------------------ */

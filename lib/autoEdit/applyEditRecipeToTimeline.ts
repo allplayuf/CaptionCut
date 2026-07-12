@@ -31,8 +31,9 @@ export function applyEditRecipeToTimeline(
   const vi = tracks.findIndex((t) => t.type === "video");
   if (vi < 0) return null;
 
-  /* 1. Rearrange the main track + remap everything else through the cuts. */
-  const newMain = rearrangeMainTrack(tracks[vi], recipe.keptRanges);
+  /* 1. Rearrange the main track + remap everything else through the cuts.
+        rangeSpeeds carries the recipe's speed ramps onto the sliced clips. */
+  const newMain = rearrangeMainTrack(tracks[vi], recipe.keptRanges, recipe.rangeSpeeds);
   if (newMain.clips.length === 0) return null;
 
   const nextTracks = remapOverlayTracks(tracks, recipe.keptRanges);
@@ -44,9 +45,10 @@ export function applyEditRecipeToTimeline(
         clean pass realizes them on whatever survived the cuts). */
   nextCaptions = cleanCaptions(nextCaptions);
 
-  /* 3. Zooms → effects track. */
+  /* 3. Zooms + flashes → effects track. Flashes keep their exact timing (they
+        must land ON the cut) and may overlap a zoom — both render together. */
   const ei = nextTracks.findIndex((t) => t.type === "effects");
-  if (ei >= 0 && recipe.zooms.length > 0) {
+  if (ei >= 0 && (recipe.zooms.length > 0 || (recipe.flashes?.length ?? 0) > 0)) {
     const effects = nextTracks[ei];
     let clips = [...effects.clips];
     for (const zoom of recipe.zooms) {
@@ -55,11 +57,30 @@ export function applyEditRecipeToTimeline(
         type: "effects",
         startTime: round3(zoom.start),
         endTime: round3(zoom.end),
-        effect: { kind: "zoom", zoomScale: zoom.scale, anchorX: 0.5, anchorY: 0.45 },
+        effect: {
+          kind: "zoom",
+          zoomScale: zoom.scale,
+          anchorX: zoom.anchorX ?? 0.5,
+          anchorY: zoom.anchorY ?? 0.45,
+        },
         metadata: { reason: zoom.reason, recipeId: recipe.id },
       };
       const placed = placeWithoutOverlap({ ...effects, clips }, clip);
       if (placed.endTime - placed.startTime > 0.3) clips = [...clips, placed];
+    }
+    for (const flash of recipe.flashes ?? []) {
+      if (flash.end - flash.start < 0.08) continue;
+      clips = [
+        ...clips,
+        {
+          id: nanoid(8),
+          type: "effects",
+          startTime: round3(flash.start),
+          endTime: round3(flash.end),
+          effect: { kind: "flash" },
+          metadata: { recipeId: recipe.id },
+        },
+      ];
     }
     nextTracks[ei] = { ...effects, clips };
   }

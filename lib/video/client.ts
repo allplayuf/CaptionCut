@@ -7,6 +7,14 @@ export function mediaUrl(mediaId: string): string {
   return `/api/media/${mediaId}`;
 }
 
+/** Frames per filmstrip sprite (matches app/api/media/[id]/filmstrip). */
+export const FILMSTRIP_FRAMES = 20;
+
+/** URL of the timeline filmstrip sprite for a video asset. */
+export function filmstripUrl(mediaId: string): string {
+  return `/api/media/${mediaId}/filmstrip`;
+}
+
 /**
  * Upload a video with progress (XHR because fetch has no upload progress).
  * Resolves with the probed MediaAsset or rejects with a user-friendly Error.

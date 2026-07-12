@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "CaptionCut — TikTok caption editor",
+  title: "CaptionCut — AI football montage editor",
   description:
-    "Fast vertical video editor for TikTok, Reels and Shorts with automatic captions that actually work.",
+    "AI-powered short-form video editor for football creators: upload raw match clips, auto-cut a TikTok-ready montage, fine-tune it on a real multi-track timeline.",
 };
 
 export default function RootLayout({

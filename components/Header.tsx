@@ -4,12 +4,28 @@ import { useEffect, useRef, useState } from "react";
 import type { Project, ProjectSummary } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { tracksDuration } from "@/lib/timeline/tracks";
-import { ChevronDown, Clapperboard, Download, FilePlus2, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  Clapperboard,
+  CloudUpload,
+  Download,
+  FilePlus2,
+  Redo2,
+  Trash2,
+  Undo2,
+} from "lucide-react";
 
 export default function Header({ onExport }: { onExport: () => void }) {
   const projectName = useEditorStore((s) => s.projectName);
   const projectId = useEditorStore((s) => s.projectId);
   const tracks = useEditorStore((s) => s.tracks);
+  const saveState = useEditorStore((s) => s.saveState);
+  const canUndo = useEditorStore((s) => s.past.length > 0);
+  const canRedo = useEditorStore((s) => s.future.length > 0);
+  const undo = useEditorStore((s) => s.undo);
+  const redo = useEditorStore((s) => s.redo);
   const setProjectName = useEditorStore((s) => s.setProjectName);
   const resetToNewProject = useEditorStore((s) => s.resetToNewProject);
   const loadProject = useEditorStore((s) => s.loadProject);
@@ -17,6 +33,8 @@ export default function Header({ onExport }: { onExport: () => void }) {
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  /** Project pending delete confirmation (second click confirms). */
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -44,9 +62,15 @@ export default function Header({ onExport }: { onExport: () => void }) {
   };
 
   const removeProject = async (id: string) => {
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      return;
+    }
+    setConfirmDeleteId(null);
     await fetch(`/api/projects/${id}`, { method: "DELETE" }).catch(() => {});
     setProjects((list) => list.filter((p) => p.id !== id));
     if (id === projectId) resetToNewProject();
+    addToast("info", "Project deleted.");
   };
 
   return (
@@ -110,10 +134,16 @@ export default function Header({ onExport }: { onExport: () => void }) {
                 </button>
                 <button
                   onClick={() => void removeProject(p.id)}
-                  className="rounded p-1 text-zinc-600 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-400 group-hover:opacity-100"
-                  title="Delete project"
+                  onMouseLeave={() => confirmDeleteId === p.id && setConfirmDeleteId(null)}
+                  className={`flex items-center gap-1 rounded p-1 text-zinc-600 transition hover:bg-rose-500/20 hover:text-rose-400 ${
+                    confirmDeleteId === p.id
+                      ? "bg-rose-500/20 px-1.5 text-[9px] font-bold text-rose-300 opacity-100"
+                      : "opacity-0 group-hover:opacity-100"
+                  }`}
+                  title={confirmDeleteId === p.id ? "Click again to permanently delete" : "Delete project"}
                 >
                   <Trash2 size={12} />
+                  {confirmDeleteId === p.id && "Sure?"}
                 </button>
               </div>
             ))}
@@ -121,7 +151,54 @@ export default function Header({ onExport }: { onExport: () => void }) {
         )}
       </div>
 
+      <div className="mx-1 h-5 w-px bg-white/10" />
+
+      <button
+        onClick={undo}
+        disabled={!canUndo}
+        title="Undo (Ctrl+Z)"
+        className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-white/8 hover:text-zinc-100 disabled:opacity-30 disabled:hover:bg-transparent"
+      >
+        <Undo2 size={14} />
+      </button>
+      <button
+        onClick={redo}
+        disabled={!canRedo}
+        title="Redo (Ctrl+Shift+Z)"
+        className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-white/8 hover:text-zinc-100 disabled:opacity-30 disabled:hover:bg-transparent"
+      >
+        <Redo2 size={14} />
+      </button>
+
       <div className="ml-auto flex items-center gap-2">
+        <span
+          className={`flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-medium transition ${
+            saveState === "error"
+              ? "bg-rose-500/10 text-rose-300"
+              : saveState === "saving"
+                ? "text-zinc-500"
+                : "text-zinc-600"
+          }`}
+          title={
+            saveState === "error"
+              ? "Autosave failed — your latest changes may not be on disk"
+              : "Everything autosaves to your projects folder"
+          }
+        >
+          {saveState === "saving" ? (
+            <>
+              <CloudUpload size={11} className="animate-pulse" /> Saving…
+            </>
+          ) : saveState === "error" ? (
+            <>
+              <AlertTriangle size={11} /> Save failed
+            </>
+          ) : (
+            <>
+              <Check size={11} /> Saved
+            </>
+          )}
+        </span>
         <span className="rounded-full bg-white/5 px-2.5 py-1 font-mono text-[10px] text-zinc-500 ring-1 ring-white/10">
           9:16 · 1080×1920
         </span>

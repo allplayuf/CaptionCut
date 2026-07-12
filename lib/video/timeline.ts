@@ -2,8 +2,14 @@ import type { Clip } from "@/types";
 
 /** Pure timeline math shared by the preview player, the timeline UI and the server export. */
 
+/** Playback rate of a clip, clamped to the range the exporter supports. */
+export function clipSpeed(clip: { speed?: number }): number {
+  const s = clip.speed ?? 1;
+  return Math.min(2, Math.max(0.5, s > 0 ? s : 1));
+}
+
 export function clipDuration(clip: Clip): number {
-  return Math.max(0, clip.sourceEnd - clip.sourceStart);
+  return Math.max(0, clip.sourceEnd - clip.sourceStart) / clipSpeed(clip);
 }
 
 export function totalDuration(clips: Clip[]): number {
@@ -31,7 +37,7 @@ export function timelineToSource(clips: Clip[], time: number): TimelinePosition 
         clip,
         clipIndex: i,
         clipTimelineStart: offset,
-        sourceTime: clip.sourceStart + local,
+        sourceTime: clip.sourceStart + local * clipSpeed(clip),
       };
     }
     offset += dur;

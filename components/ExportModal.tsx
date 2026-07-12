@@ -7,6 +7,7 @@ import { formatTime } from "@/lib/video/timeline";
 import { tracksDuration } from "@/lib/timeline/tracks";
 import { buildExportRequest } from "@/lib/export/request";
 import { EXPORT_PRESETS } from "@/lib/export/presets";
+import { FORMATS } from "@/lib/video/formats";
 import { CheckCircle2, Download, X } from "lucide-react";
 
 type Phase =
@@ -18,21 +19,28 @@ type Phase =
 export default function ExportModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const tracks = useEditorStore((s) => s.tracks);
   const captions = useEditorStore((s) => s.captions);
+  const format = useEditorStore((s) => s.format);
   const [phase, setPhase] = useState<Phase>({ name: "idle" });
   const [presetId, setPresetId] = useState<ExportPresetId>("tiktok");
   const [lastOpen, setLastOpen] = useState(open);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [startedAt, setStartedAt] = useState(0);
 
   const duration = tracksDuration(tracks);
   const preset = EXPORT_PRESETS.find((p) => p.id === presetId) ?? EXPORT_PRESETS[0];
+  const aspect = aspectLabel(preset.width, preset.height);
   const overlayCount = tracks
     .filter((t) => !["video", "caption"].includes(t.type) && !t.hidden)
     .reduce((sum, t) => sum + t.clips.length, 0);
 
-  // Reset to a fresh idle state each time the modal is reopened.
+  // Reset to a fresh idle state each time the modal is reopened, preselecting
+  // the preset that matches the project's editing format.
   if (open !== lastOpen) {
     setLastOpen(open);
-    if (open) setPhase({ name: "idle" });
+    if (open) {
+      setPhase({ name: "idle" });
+      setPresetId(FORMATS[format].presetId);
+    }
   }
 
   useEffect(() => {
@@ -63,6 +71,7 @@ export default function ExportModal({ open, onClose }: { open: boolean; onClose:
       if (!response.ok) throw new Error(body.error ?? "Export failed to start.");
 
       const jobId = (body as ExportJobState).id;
+      setStartedAt(Date.now());
       setPhase({ name: "running", jobId, progress: 0 });
 
       pollRef.current = setInterval(async () => {
@@ -120,7 +129,7 @@ export default function ExportModal({ open, onClose }: { open: boolean; onClose:
         )}
 
         <div className="mb-4 grid grid-cols-2 gap-2 text-xs">
-          <Spec label="Format" value={`9:16 · ${preset.width}×${preset.height} · ${preset.fps}fps`} />
+          <Spec label="Format" value={`${aspect} · ${preset.width}×${preset.height} · ${preset.fps}fps`} />
           <Spec label="Duration" value={formatTime(duration)} />
           <Spec
             label="Captions"
@@ -131,6 +140,13 @@ export default function ExportModal({ open, onClose }: { open: boolean; onClose:
 
         {phase.name === "idle" && (
           <>
+            {aspect !== format && (
+              <p className="mb-3 rounded-lg bg-sky-500/10 px-3 py-2 text-[11px] leading-snug text-sky-300">
+                Your project is set to {format} — this preset re-crops the footage to {aspect} around
+                the detected action, and scales captions to match. Switch the editing format in the
+                Inspector to preview {aspect} directly.
+              </p>
+            )}
             {duration > 180 && (
               <p className="mb-3 rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] leading-snug text-amber-300">
                 This video is over 3 minutes — rendering may take several minutes.
@@ -159,6 +175,7 @@ export default function ExportModal({ open, onClose }: { open: boolean; onClose:
             </div>
             <p className="mt-3 text-center text-[11px] text-zinc-500">
               Cutting, zooming, mixing audio and burning captions in…
+              {remainingLabel(phase.progress, startedAt)}
             </p>
           </div>
         )}
@@ -193,6 +210,25 @@ export default function ExportModal({ open, onClose }: { open: boolean; onClose:
       </div>
     </div>
   );
+}
+
+function aspectLabel(w: number, h: number): string {
+  const ratio = w / h;
+  if (Math.abs(ratio - 9 / 16) < 0.01) return "9:16";
+  if (Math.abs(ratio - 1) < 0.01) return "1:1";
+  if (Math.abs(ratio - 16 / 9) < 0.01) return "16:9";
+  return `${w}:${h}`;
+}
+
+/** " · ~40s left" once progress is meaningful enough to extrapolate. */
+function remainingLabel(progress: number, startedAt: number): string {
+  if (progress < 0.04 || !startedAt) return "";
+  const elapsed = (Date.now() - startedAt) / 1000;
+  const remaining = Math.round((elapsed / progress) * (1 - progress));
+  if (remaining < 3) return "";
+  return remaining >= 90
+    ? ` · ~${Math.round(remaining / 60)} min left`
+    : ` · ~${remaining}s left`;
 }
 
 function Spec({ label, value }: { label: string; value: string }) {

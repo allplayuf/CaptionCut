@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import type { Project, ProjectSummary } from "@/types";
 import { buildProjectSnapshot, stepFrame, useEditorStore } from "@/hooks/useEditorStore";
+import { tracksDuration } from "@/lib/timeline/tracks";
 import Header from "@/components/Header";
 import MediaPanel from "@/components/MediaPanel";
 import VideoPreview from "@/components/VideoPreview";
 import RightPanel from "@/components/RightPanel";
+import StartScreen from "@/components/StartScreen";
 import Timeline from "@/components/Timeline";
 import ExportModal from "@/components/ExportModal";
 import Toasts from "@/components/Toasts";
@@ -14,6 +16,12 @@ import Toasts from "@/components/Toasts";
 export default function EditorPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const revision = useEditorStore((s) => s.revision);
+  const projectId = useEditorStore((s) => s.projectId);
+  const mediaCount = useEditorStore((s) => s.media.length);
+  /** Wait for the resume fetch before deciding to show the start screen. */
+  const [booted, setBooted] = useState(false);
+  /** Project ids whose start screen the user skipped this session. */
+  const [skippedStartId, setSkippedStartId] = useState<string | null>(null);
 
   // Resume the most recently edited project on load.
   useEffect(() => {
@@ -28,6 +36,8 @@ export default function EditorPage() {
         }
       } catch {
         // starting fresh is fine
+      } finally {
+        setBooted(true);
       }
     })();
   }, []);
@@ -35,13 +45,16 @@ export default function EditorPage() {
   // Debounced autosave whenever project content changes.
   useEffect(() => {
     if (revision === 0) return;
+    useEditorStore.getState().setSaveState("saving");
     const timer = setTimeout(() => {
       const snapshot = buildProjectSnapshot(useEditorStore.getState());
       fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(snapshot),
-      }).catch(() => {});
+      })
+        .then((r) => useEditorStore.getState().setSaveState(r.ok ? "saved" : "error"))
+        .catch(() => useEditorStore.getState().setSaveState("error"));
     }, 1200);
     return () => clearTimeout(timer);
   }, [revision]);
@@ -68,13 +81,41 @@ export default function EditorPage() {
       } else if (mod && (e.key === "y" || e.key === "Y")) {
         e.preventDefault();
         s.redo();
+      } else if (mod && (e.key === "b" || e.key === "B")) {
+        e.preventDefault();
+        s.splitAtPlayhead();
+      } else if (mod && (e.key === "d" || e.key === "D")) {
+        e.preventDefault();
+        if (s.selectedClipId) s.duplicateClip(s.selectedClipId);
+      } else if (mod && (e.key === "c" || e.key === "C")) {
+        // Only hijack copy when a clip is selected (text selection still works).
+        if (s.selectedClipId && !window.getSelection()?.toString()) {
+          e.preventDefault();
+          s.copyClip(s.selectedClipId);
+        }
+      } else if (mod && (e.key === "v" || e.key === "V")) {
+        if (s.clipboard) {
+          e.preventDefault();
+          s.pasteClip();
+        }
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        s.setPlaying(false);
+        s.setCurrentTime(0);
+      } else if (e.key === "End") {
+        e.preventDefault();
+        s.setPlaying(false);
+        s.setCurrentTime(tracksDuration(s.tracks));
       } else if (e.code === "Space") {
         e.preventDefault();
         s.setPlaying(!s.isPlaying);
       } else if (e.key === "s" || e.key === "S") {
         s.splitAtPlayhead();
-      } else if ((e.key === "Delete" || e.key === "Backspace") && s.selectedClipId) {
-        s.deleteClip(s.selectedClipId);
+      } else if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        (s.selectedClipIds.length > 0 || s.selectedClipId)
+      ) {
+        s.deleteSelectedClips();
       } else if (e.key === "ArrowLeft") {
         // plain = 1s, shift = 1 frame
         stepFrame(-1, e.shiftKey);
@@ -87,7 +128,7 @@ export default function EditorPage() {
   }, []);
 
   return (
-    <div className="flex h-screen flex-col bg-[#08080d] text-zinc-200">
+    <div className="relative flex h-screen flex-col bg-[#08080d] text-zinc-200">
       <Header onExport={() => setExportOpen(true)} />
 
       <div className="flex min-h-0 flex-1">
@@ -107,6 +148,10 @@ export default function EditorPage() {
       <div className="h-64 shrink-0">
         <Timeline />
       </div>
+
+      {booted && mediaCount === 0 && skippedStartId !== projectId && (
+        <StartScreen onSkip={() => setSkippedStartId(projectId)} />
+      )}
 
       <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} />
       <Toasts />

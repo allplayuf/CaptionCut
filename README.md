@@ -1,8 +1,8 @@
 # CaptionCut 🎬
 
-A fast, TikTok-first video editor with one killer feature: **automatic captions that actually work**.
+An AI-powered short-form video editor built for **football creators**.
 
-Upload a video → trim/split/reorder clips → hit **Auto Captions** → style them (TikTok Bold, MrBeast, Podcast Clip, …) → export a 1080×1920 MP4 with the captions burned in.
+Upload raw match clips → hit **Create montage** (Hype, Clean Recap, Street, Goals & Reactions, Community, Interview + Match, Sponsor Recap) → get a TikTok-ready edit on a real multi-track timeline → fine-tune every cut, caption and zoom → export for TikTok/Reels/Shorts, Instagram Square or Landscape. Automatic captions run 100% locally and free.
 
 ![stack](https://img.shields.io/badge/Next.js-16-black) ![stack](https://img.shields.io/badge/TypeScript-strict-blue) ![stack](https://img.shields.io/badge/FFmpeg-bundled-green)
 
@@ -50,14 +50,15 @@ WHISPER_CPP_PATH=...      # use your own whisper.cpp build (required on macOS/Li
 
 **Adding a provider** (e.g. faster-whisper behind HTTP): implement the `TranscriptionProvider` interface from `lib/transcription/types.ts` in `lib/transcription/providers/`, and register it in `PROVIDERS` in `lib/transcription/index.ts`. Nothing else changes — everything downstream consumes `Caption[]`.
 
-> Tip: generate captions **after** you finish trimming — captions are timed to the timeline and don't shift when clips change.
+> Captions are **anchored to the source footage**: re-trimming, splitting, reordering or speed-changing clips after captioning re-times every caption (word-accurately) instead of letting content drift under them. Words whose footage you cut are dropped automatically.
 
 ## How export works
 
-1. `POST /api/export` starts a background FFmpeg job; the client polls `GET /api/export/:jobId` for progress (parsed from FFmpeg's `time=` output) and downloads from `/api/export/:jobId/download`.
+1. `POST /api/export` starts a background FFmpeg job; the client polls `GET /api/export/:jobId` for progress (parsed from FFmpeg's `time=` output, with estimated time remaining) and downloads from `/api/export/:jobId/download`.
 2. The FFmpeg filter graph (`lib/export/exporter.ts`):
-   - trims each clip (`trim`/`atrim`), scales + center-crops to **1080×1920** (matching the preview's `object-fit: cover`), normalizes to 30 fps,
-   - concatenates all clips (silent clips get generated silence so audio stays aligned),
+   - partitions the timeline into **(clip × zoom) pieces** — every piece trims straight from its source with the punch-zoom applied inline, then one flat concat (no split/trim/concat fan-out, which deadlocks FFmpeg's filter scheduler),
+   - scales + smart-crops each piece to the export canvas (9:16 **1080×1920** by default; **1080×1080** square and **1920×1080** landscape presets re-crop around the detected action and scale caption geometry to match),
+   - keeps silent clips aligned with generated silence,
    - burns captions in with **libass** using a generated `.ass` file (`lib/export/ass.ts`) whose `PlayResX/Y` is 1080×1920 — every pixel value in the style panel maps 1:1 to the output, which is what keeps preview ≈ export,
    - encodes H.264 (CRF 19, maxrate 10 Mb/s, high profile) + AAC 192k with `+faststart` — a TikTok-friendly upload.
 3. Word highlighting is exported as one ASS dialogue event per spoken word with the active word recolored.
@@ -75,16 +76,46 @@ lib/transcription/ provider registry + local whisper.cpp, OpenAI (optional), moc
 lib/captions/      TikTok caption chunking, style presets
 lib/export/        ASS subtitle builder + FFmpeg export job manager
 lib/server/        FFmpeg/FFprobe wrappers, data paths, JSON project store
+lib/autoEdit/      the auto-edit brain: transcript analysis, highlight/dead-space detection,
+                   silence & filler cuts, hook scoring, moment scoring, signal stitching,
+                   recipe generation + application
 lib/video/         timeline math (shared client/server), client upload helpers
 lib/audio/         browser waveform peak extraction
 types/             shared TypeScript types (Caption, Clip, CaptionStyle, Project, …)
 data/              user data: uploads, projects, exports (gitignored)
 ```
 
+## AI Auto Edit (free & local)
+
+One button turns raw phone clips into a paced 9:16 short. The editor "watches and listens" to the footage with two fast local FFmpeg passes per file (cached in `data/analysis/`):
+
+- **audio** → energy envelope (cheers, laughs, shouts), overall loudness, and a beat grid (BPM + phase) when the audio is musical;
+- **video** → a motion curve (tackles, sprints, celebrations) and scene-change instants.
+
+Those signals are fused with the transcript (when there is one) into a single edit recipe:
+
+- **Highlights** — audio-burst + motion-spike moments (a goal and the roar after it) are detected, listed in the panel, protected from cutting, and given punch-in zooms.
+- **Hook cold-open** — the strongest spoken hook opens the video; with no usable speech, the biggest detected *moment* opens it instead. Football montages work with zero dialogue.
+- **Cuts** — silence, filler words and stutters (from the transcript) plus *dead space* (low energy + low motion) are removed; kept fragments under 0.6 s are absorbed so there's no stutter-cutting, and an over-cut guard keeps at least ~30 % of the footage.
+- **Beat-aware cutting** — when a beat grid exists (an added music track wins over footage audio), cut seams and pattern-interrupt zooms snap onto the beat. Footage without a confident musical beat falls back to an **energy-onset grid** (ball strikes, cheers), so beat-synced cutting always works; ambient music without a stable BPM contributes its own onsets.
+- **Intentional zooms** — punch-ins land on reactions (anchored high, for faces), action and emphasized sentences; filler pattern-interrupts only fill long uneventful gaps, and total zoom density is capped so it never feels random.
+- **Regenerate** — one click undoes the edit and cuts a *different take* (deterministic seed: alternate hook, shifted interrupts, varied zoom scales).
+- **Loudness-normalized export** — the final mix is normalized to −14 LUFS (the TikTok/Reels standard) so clips shot at different distances sit at one level.
+
+Styles (Viral / Clean / Podcast / Sports / Storytime / Educational / Meme) tune all thresholds — **Sports** cuts hardest, zooms strongest and opens on the biggest moment. Everything runs locally; if analysis or transcription fails, the editor gracefully falls back to whatever evidence it has.
+
+### Football montage presets
+
+The montage engine (`lib/autoEdit/montage.ts`) ships seven presets with real pacing/effect differences — **Hype** (fastest cuts, big zooms), **Clean Recap** (chronological, calm), **Street Football** (gritty, tight), **Goals & Reactions** (action + the celebration after it, slow-mo on the top moment), **Community** (people-first), **Interview + Match** (best spoken lines interleaved with action) and **Sponsor Recap** (clean, partner-friendly, end card). Target length is 10/15/20/30s or custom (8–60s). After a cut, one-tap regenerate modifiers — **Faster · More goals · More reactions · Less effects** — recut a meaningfully different take that keeps your preset.
+
 ## Features
 
-- **Upload** — drag & drop, multiple videos, vertical or horizontal (anything is cover-cropped to 9:16); friendly errors for unsupported/oversized files (512 MB cap).
-- **Timeline** — scrub, play/pause (Space), trim by dragging clip edges, split at playhead (S), delete (Del), reorder, audio waveforms (WebAudio-decoded, with a placeholder pattern when the codec can't be decoded in-browser).
+- **Start screen** — first-run onboarding with drag-and-drop upload, workflow explanation and recent projects.
+- **Upload** — drag & drop, multiple videos, vertical or horizontal (anything is cover-cropped to 9:16); friendly errors for unsupported/oversized files (512 MB cap); media bin shows real thumbnails, duration/orientation badges and analysis status.
+- **Timeline** — scrub, play/pause (Space), trim by dragging clip edges (Shift disables snapping), split at playhead (S), delete (Del), duplicate (Ctrl+D), copy/paste (Ctrl+C/V), drag-reorder, **multi-select** (Ctrl/Cmd-click, group delete), Home/End jumps, zoom in/out, filmstrip thumbnails + audio waveforms.
+- **Effects** — punch-in zooms, **freeze-frames** (hold the frame while music keeps playing), **flash pops** (white flash on goals/impacts) and one-click **instant replay** (last 3 s repeated in slow-mo with a zoom) — all previewed live and rendered identically in the export.
+- **Inspector** — Premiere-style contextual panel: clip timing/speed/volume/fades, text style, transform (position/scale/rotation/opacity) with reset, zoom strength/anchor, caption text + timing, project format + overview.
+- **Preview** — **format-aware** (9:16 / 1:1 / 16:9 — switch in the transport bar or Inspector; captions and overlays scale exactly like the export), accurate multi-track playback, **drag text/stickers/images directly in the preview**, scrubber, theater/fullscreen mode, buffering indicator, TikTok safe-zone guides.
 - **Auto Captions** — one button; editable line-by-line (text + start/end times), click a caption to jump to it, add captions manually.
 - **Styling** — 5 presets (TikTok Bold, MrBeast Style, Clean Minimal, Podcast Clip, Meme Style) plus full control: font, size, weight, colors, stroke, shadow, background box + opacity, ALL CAPS, spoken-word highlight, and three TikTok-safe positions.
 - **Safe zones** — toggleable overlay showing TikTok's top UI, right button rail and bottom caption/music areas.
@@ -96,7 +127,7 @@ data/              user data: uploads, projects, exports (gitignored)
 - The bundled whisper.cpp build is CPU-only; for GPU speed, build whisper.cpp with CUDA/Metal yourself and point `WHISPER_CPP_PATH` at it.
 - Fonts must exist on the machine that runs the export (the presets stick to Windows/mac-safe families: Arial, Arial Black, Impact, Segoe UI, Verdana, …).
 - The caption background box renders with rounded corners in the preview but square corners in the export (libass limitation); background replaces stroke/shadow in both.
-- Captions are timed to the timeline, so re-trimming after captioning shifts content under them — regenerate or adjust times.
+- No optical video stabilization yet — for shaky phone footage, shoot with the phone's built-in stabilization on.
 
 ## TODO (post-MVP)
 

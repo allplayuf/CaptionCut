@@ -49,6 +49,8 @@ export interface Clip {
   sourceStart: number;
   /** Out-point in the source video, seconds. */
   sourceEnd: number;
+  /** Playback rate (1 = normal). Timeline duration = source duration / speed. */
+  speed?: number;
 }
 
 /* ------------------------------------------------------------------ */
@@ -112,6 +114,8 @@ export interface TimelineClip {
   /** Source in/out points for trimmed A/V media. */
   sourceStart?: number;
   sourceEnd?: number;
+  /** Playback rate for main-track video (1 = normal, 0.85 = slow-mo ramp). */
+  speed?: number;
   /** Text content for text/sticker clips (sticker = emoji string). */
   text?: string;
   transform?: Partial<ClipTransform>;
@@ -148,6 +152,26 @@ export type EditStyle =
   | "educational"
   | "meme";
 
+/** Football-montage presets (the clip-selection engine in lib/autoEdit/montage.ts). */
+export type MontageStyle =
+  | "hype"
+  | "clean-recap"
+  | "street"
+  | "goals"
+  | "community"
+  | "interview"
+  | "sponsor";
+
+/** One-tap regenerate adjustments: nudge the next take without changing preset. */
+export interface MontageModifiers {
+  /** <1 = faster cuts, >1 = calmer cuts (multiplies segment length bounds). */
+  pace?: number;
+  /** Prefer moments of this kind when selecting (goals/action vs reactions/community). */
+  favorKind?: "action" | "reaction";
+  /** Dial punch-in zooms down/off for a cleaner look (multiplies zoom share). */
+  effectsLevel?: number;
+}
+
 export interface TimeRange {
   start: number;
   end: number;
@@ -167,7 +191,10 @@ export interface CaptionInstruction {
 
 export interface ZoomInstruction extends TimeRange {
   scale: number;
-  reason: "emphasis" | "pattern-interrupt" | "hook";
+  reason: "emphasis" | "pattern-interrupt" | "hook" | "action" | "reaction";
+  /** Punch-in anchor as canvas fraction (defaults 0.5 / 0.45). */
+  anchorX?: number;
+  anchorY?: number;
 }
 
 export interface OverlayInstruction extends TimeRange {
@@ -198,20 +225,106 @@ export interface HookCandidate {
   reasons: string[];
 }
 
+/* ------------------------------------------------------------------ */
+/* Media analysis (local FFmpeg signals — no API)                      */
+/* ------------------------------------------------------------------ */
+
+/** Per-asset audio analysis, sampled at `rate` Hz over the source file. */
+export interface AudioAnalysis {
+  rate: number;
+  /** Normalized 0..1 RMS energy envelope. */
+  energy: number[];
+  /** Mean RMS level in dBFS (for cross-clip leveling). */
+  loudness: number;
+  /** Detected tempo; null when no confident musical beat exists. */
+  bpm: number | null;
+  /** 0..1-ish periodicity confidence behind bpm. */
+  beatConfidence: number;
+  /** Beat instants in source seconds (empty without confident bpm). */
+  beats: number[];
+}
+
+/** Per-asset video analysis, sampled at `rate` Hz over the source file. */
+export interface VideoAnalysis {
+  rate: number;
+  /** Normalized 0..1 frame-difference motion curve. */
+  motion: number[];
+  /** Hard-cut / scene-change instants in source seconds. */
+  sceneChanges: number[];
+  /**
+   * Horizontal center of motion mass per sample (0 = left edge, 1 = right),
+   * used to smart-crop horizontal footage to 9:16 without losing the action.
+   * Absent on old caches (fall back to center crop).
+   */
+  motionCenterX?: number[];
+  /** Samples/sec of motionCenterX (may differ from `rate`). */
+  motionCenterRate?: number;
+}
+
+/** Cached local analysis of one media asset (data/analysis/<id>.json). */
+export interface MediaAnalysis {
+  version: number;
+  assetId: string;
+  duration: number;
+  audio: AudioAnalysis | null;
+  video: VideoAnalysis | null;
+}
+
+/** Analysis curves stitched into the CURRENT timeline's time domain. */
+export interface TimelineSignals {
+  /** Samples per second of the energy/motion curves. */
+  rate: number;
+  /** Normalized 0..1 audio energy across the timeline. */
+  energy: number[];
+  /** Normalized 0..1 motion across the timeline. */
+  motion: number[];
+  /** Scene changes + clip joins, timeline seconds. */
+  sceneChanges: number[];
+  /** Beat grid on the timeline (music track wins over footage audio). */
+  beats: number[];
+  bpm: number | null;
+  duration: number;
+  /** True when any main-track source had usable audio. */
+  hasAudio: boolean;
+  /**
+   * Where the beat grid came from: a music track, beats in the footage audio,
+   * or the energy-onset fallback grid (cuts land on impacts, not a tempo).
+   */
+  beatSource?: "music" | "footage" | "energy";
+}
+
+/** A detected "moment worth keeping": goal, celebration, laugh, key line. */
+export interface HighlightMoment {
+  /** Peak instant, timeline seconds. */
+  time: number;
+  /** Suggested keep window around the peak. */
+  start: number;
+  end: number;
+  score: number;
+  kind: "action" | "reaction" | "speech" | "scene";
+  label: string;
+}
+
 export interface EditRecipe {
   id: string;
   projectId: string;
-  style: EditStyle;
+  style: EditStyle | MontageStyle;
   /** Ranges of the ORIGINAL timeline kept, in output order (reorders allowed). */
   keptRanges: TimeRange[];
+  /** Playback rate per kept range (parallel to keptRanges; 1/undefined = normal). */
+  rangeSpeeds?: (number | undefined)[];
   cuts: CutInstruction[];
   captions: CaptionInstruction[];
   /** Times below are in the FINAL (post-cut) timeline. */
   zooms: ZoomInstruction[];
+  /** White flash pops on the biggest moments (FINAL-timeline times). */
+  flashes?: TimeRange[];
   overlays: OverlayInstruction[];
   brollSuggestions: BrollSuggestion[];
   audioInstructions: AudioInstruction[];
   hooks: HookCandidate[];
+  /** Signal-detected highlights (FINAL-timeline times). Absent on old saves. */
+  highlights?: HighlightMoment[];
   exportPreset: ExportPresetId;
   reasoningSummary: string;
 }
@@ -258,6 +371,8 @@ export interface Project {
   captions: Caption[];
   style: CaptionStyle;
   editRecipe?: EditRecipe;
+  /** Editing/preview aspect ratio. Absent on old saves (= "9:16"). */
+  format?: AspectRatioId;
 }
 
 export interface ProjectSummary {
@@ -277,17 +392,27 @@ export interface ExportJobState {
   error?: string;
 }
 
-export type ExportPresetId = "tiktok" | "tiktok-60" | "draft";
+export type ExportPresetId = "tiktok" | "tiktok-60" | "square" | "landscape" | "draft";
 
 export interface ExportPreset {
   id: ExportPresetId;
   name: string;
   description: string;
+  /** Output file dimensions. */
   width: number;
   height: number;
+  /**
+   * Composition canvas: captions/overlays/crops are laid out at this size,
+   * then scaled to width×height (lets the 720p draft reuse the 1080 layout).
+   */
+  canvasWidth: number;
+  canvasHeight: number;
   fps: number;
   crf: number;
   x264Preset: string;
 }
 
 export type TranscriptionLanguage = "auto" | "en" | "sv";
+
+/** Project aspect ratio: drives the preview canvas and the default export preset. */
+export type AspectRatioId = "9:16" | "1:1" | "16:9";

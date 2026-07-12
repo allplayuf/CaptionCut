@@ -11,9 +11,10 @@ export const MEDIA_DIR = path.join(DATA_ROOT, "media");
 export const PROJECTS_DIR = path.join(DATA_ROOT, "projects");
 export const EXPORTS_DIR = path.join(DATA_ROOT, "exports");
 export const TMP_DIR = path.join(DATA_ROOT, "tmp");
+export const ANALYSIS_DIR = path.join(DATA_ROOT, "analysis");
 
 export function ensureDataDirs(): void {
-  for (const dir of [MEDIA_DIR, PROJECTS_DIR, EXPORTS_DIR, TMP_DIR]) {
+  for (const dir of [MEDIA_DIR, PROJECTS_DIR, EXPORTS_DIR, TMP_DIR, ANALYSIS_DIR]) {
     fs.mkdirSync(dir, { recursive: true });
   }
 }

@@ -1,13 +1,30 @@
 "use client";
 
 import { useState } from "react";
+import { useEditorStore } from "@/hooks/useEditorStore";
 import AIPanel from "./AIPanel";
 import CaptionsPanel from "./CaptionsPanel";
+import InspectorPanel from "./InspectorPanel";
 import StylePanel from "./StylePanel";
 
-/** Right sidebar: AI Edit / Captions / Style tabs. */
+type Tab = "ai" | "inspect" | "captions" | "style";
+
+/** Right sidebar: AI Edit / Inspector / Captions / Style tabs. Selecting a
+ *  clip or caption anywhere jumps to the Inspector so its settings are one
+ *  glance away (like Premiere's Essential panel). */
 export default function RightPanel() {
-  const [tab, setTab] = useState<"ai" | "captions" | "style">("ai");
+  const [tab, setTab] = useState<Tab>("ai");
+  const selectedClipId = useEditorStore((s) => s.selectedClipId);
+  const selectedCaptionId = useEditorStore((s) => s.selectedCaptionId);
+
+  // Jump to the Inspector whenever a new clip/caption is selected
+  // (state adjusted during render — no effect, no extra paint).
+  const selectionKey = selectedClipId ?? selectedCaptionId;
+  const [lastSelection, setLastSelection] = useState(selectionKey);
+  if (selectionKey !== lastSelection) {
+    setLastSelection(selectionKey);
+    if (selectionKey) setTab("inspect");
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -15,6 +32,7 @@ export default function RightPanel() {
         {(
           [
             ["ai", "AI Edit"],
+            ["inspect", "Inspector"],
             ["captions", "Captions"],
             ["style", "Style"],
           ] as const
@@ -33,7 +51,15 @@ export default function RightPanel() {
         ))}
       </div>
       <div className="min-h-0 flex-1">
-        {tab === "ai" ? <AIPanel /> : tab === "captions" ? <CaptionsPanel /> : <StylePanel />}
+        {tab === "ai" ? (
+          <AIPanel />
+        ) : tab === "inspect" ? (
+          <InspectorPanel />
+        ) : tab === "captions" ? (
+          <CaptionsPanel />
+        ) : (
+          <StylePanel />
+        )}
       </div>
     </div>
   );

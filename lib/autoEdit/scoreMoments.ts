@@ -1,4 +1,4 @@
-import type { TimeRange } from "@/types";
+import type { TimeRange, TimelineSignals } from "@/types";
 import { round3 } from "@/lib/timeline/tracks";
 import type { Transcript } from "./analyzeTranscript";
 import { detectHooks } from "./detectHooks";
@@ -6,19 +6,22 @@ import { detectHooks } from "./detectHooks";
 /**
  * Moment scoring: a per-second interest curve over the timeline, built from
  * speech density, speaking pace and hook-quality of the sentences playing at
- * each second, plus audio energy when peaks are available. Powers
- * "find the best 30/45/60 seconds".
+ * each second, plus audio energy and visual motion when signals are
+ * available. Powers "find the best 30/45/60 seconds" — and with signals it
+ * works even for footage with no usable speech (sports, vlogs, b-roll).
  */
 
 export interface MomentScoreInput {
   transcript: Transcript;
-  /** Normalized timeline amplitude peaks (optional). */
+  /** Normalized timeline amplitude peaks (optional legacy fallback). */
   peaks?: number[] | null;
+  /** Stitched motion/energy/scene signals (optional, preferred). */
+  signals?: TimelineSignals | null;
   duration: number;
 }
 
 export function scoreMoments(input: MomentScoreInput): number[] {
-  const { transcript, peaks, duration } = input;
+  const { transcript, peaks, signals, duration } = input;
   const seconds = Math.max(1, Math.ceil(duration));
   const scores = new Array<number>(seconds).fill(0);
 
@@ -36,8 +39,17 @@ export function scoreMoments(input: MomentScoreInput): number[] {
     for (let sec = from; sec <= to; sec++) scores[sec] += hook.score * 0.25;
   }
 
-  // Audio energy (loud moments = laughs, exclamations, action).
-  if (peaks && peaks.length > 0) {
+  if (signals) {
+    // Preferred: real analysis signals. Audio energy finds laughs/cheers/
+    // exclamations; motion finds action; scene changes hint at variety.
+    addCurve(scores, signals.energy, signals.rate, 1.4);
+    addCurve(scores, signals.motion, signals.rate, 1.2);
+    for (const sc of signals.sceneChanges) {
+      const sec = Math.floor(sc);
+      if (sec >= 0 && sec < seconds) scores[sec] += 0.5;
+    }
+  } else if (peaks && peaks.length > 0) {
+    // Legacy fallback: browser-decoded waveform peaks.
     for (let sec = 0; sec < seconds; sec++) {
       const from = Math.floor((sec / duration) * peaks.length);
       const to = Math.max(from + 1, Math.floor(((sec + 1) / duration) * peaks.length));
@@ -48,6 +60,18 @@ export function scoreMoments(input: MomentScoreInput): number[] {
   }
 
   return scores;
+}
+
+/** Add a fixed-rate curve into the per-second score array (mean per second). */
+function addCurve(scores: number[], curve: number[], rate: number, weight: number): void {
+  for (let sec = 0; sec < scores.length; sec++) {
+    const from = Math.floor(sec * rate);
+    const to = Math.min(curve.length, Math.floor((sec + 1) * rate));
+    if (to <= from) continue;
+    let sum = 0;
+    for (let i = from; i < to; i++) sum += curve[i];
+    scores[sec] += (sum / (to - from)) * weight;
+  }
 }
 
 export interface BestWindow extends TimeRange {

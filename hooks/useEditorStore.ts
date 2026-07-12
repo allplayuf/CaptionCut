@@ -3,10 +3,12 @@
 import { create } from "zustand";
 import { nanoid } from "nanoid";
 import type {
+  AspectRatioId,
   Caption,
   CaptionStyle,
   ClipEffect,
   EditRecipe,
+  MediaAnalysis,
   MediaAsset,
   Project,
   TimeRange,
@@ -20,6 +22,7 @@ import { cleanCaptions } from "@/lib/captions/clean";
 import { applyEditRecipeToTimeline } from "@/lib/autoEdit/applyEditRecipeToTimeline";
 import {
   assetKind,
+  clipSpeedOf,
   createDefaultTracks,
   mainClips,
   mainVideoTrack,
@@ -28,6 +31,7 @@ import {
   placeWithoutOverlap,
   rearrangeMainTrack,
   remapCaptions,
+  remapCaptionsToMainTrack,
   remapOverlayTracks,
   rippleMainTrack,
   round3,
@@ -60,7 +64,12 @@ interface EditorState {
   tracks: Track[];
   captions: Caption[];
   style: CaptionStyle;
+  /** Editing/preview aspect ratio (drives the preview canvas + export default). */
+  format: AspectRatioId;
   editRecipe: EditRecipe | null;
+  /** Revision at which editRecipe was applied — regenerate is only safe while
+      no other edit happened since (-1 = never). */
+  editRecipeRevision: number;
   /** Bumped on every content edit; drives autosave. */
   revision: number;
 
@@ -72,13 +81,24 @@ interface EditorState {
   currentTime: number;
   isPlaying: boolean;
 
+  // clipboard
+  clipboard: { clip: TimelineClip; trackType: TrackType } | null;
+
   // ui
+  /** Primary selection (drives the inspector). Last-clicked of selectedClipIds. */
   selectedClipId: string | null;
+  /** Full multi-selection (Ctrl/Cmd-click on the timeline adds/toggles). */
+  selectedClipIds: string[];
   selectedCaptionId: string | null;
   showSafeZones: boolean;
   isTranscribing: boolean;
+  /** Autosave status shown in the header. */
+  saveState: "saved" | "saving" | "error";
   /** Decoded waveform peaks per media id; null = decode failed (placeholder shown). */
   waveforms: Record<string, number[] | null>;
+  /** Local FFmpeg analysis per media id; null = analysis failed. Shared by the
+      auto editor (signals) and the preview (smart-crop object position). */
+  analyses: Record<string, MediaAnalysis | null>;
   toasts: Toast[];
 
   // project actions
@@ -95,14 +115,24 @@ interface EditorState {
   addClipFromMedia: (mediaId: string) => void;
   addMediaToTrack: (mediaId: string, trackType: TrackType, atTime?: number) => void;
   deleteClip: (clipId: string) => void;
+  /** Delete every selected clip (falls back to the primary selection). */
+  deleteSelectedClips: () => void;
+  duplicateClip: (clipId: string) => void;
+  copyClip: (clipId: string) => void;
+  pasteClip: () => void;
   moveClip: (clipId: string, direction: -1 | 1) => void;
+  /** Drag-reorder a main-track clip to a new index (ripple re-layout follows). */
+  moveClipToIndex: (clipId: string, index: number) => void;
   moveTimelineClip: (clipId: string, newStart: number) => void;
   trimTimelineClip: (clipId: string, edge: "start" | "end", newTime: number) => void;
   splitAtPlayhead: () => void;
   updateTimelineClip: (clipId: string, patch: Partial<TimelineClip>) => void;
   addTextClip: (text: string, atTime?: number, duration?: number) => void;
   addStickerClip: (emoji: string, atTime?: number) => void;
-  addZoomClip: (atTime: number, duration: number, effect: ClipEffect) => void;
+  /** Add a zoom/freeze/flash clip to the effects track. */
+  addEffectClip: (atTime: number, duration: number, effect: ClipEffect) => void;
+  /** Insert a slow-mo instant replay of the last few seconds at the playhead. */
+  insertReplay: () => void;
 
   // tracks
   toggleTrackLocked: (trackId: string) => void;
@@ -129,15 +159,18 @@ interface EditorState {
   // style
   setStyle: (patch: Partial<CaptionStyle>) => void;
   applyPreset: (style: CaptionStyle) => void;
+  setFormat: (format: AspectRatioId) => void;
 
   // playback / ui
   setCurrentTime: (time: number) => void;
   setPlaying: (playing: boolean) => void;
-  selectClip: (id: string | null) => void;
+  selectClip: (id: string | null, opts?: { additive?: boolean }) => void;
   selectCaption: (id: string | null) => void;
   toggleSafeZones: () => void;
   setTranscribing: (value: boolean) => void;
+  setSaveState: (value: "saved" | "saving" | "error") => void;
   setWaveform: (mediaId: string, peaks: number[] | null) => void;
+  mergeAnalyses: (analyses: Record<string, MediaAnalysis | null>) => void;
 
   addToast: (kind: Toast["kind"], message: string) => void;
   dismissToast: (id: string) => void;
@@ -190,6 +223,18 @@ export const useEditorStore = create<EditorState>((set, get) => {
     return false;
   };
 
+  /** Selection patch: primary + multi kept in sync. */
+  const sel = (id: string | null) => ({
+    selectedClipId: id,
+    selectedClipIds: id ? [id] : [],
+  });
+
+  /** Main-track replacement + captions re-anchored to their source footage. */
+  const mainEdit = (s: EditorState, vi: number, newMain: Track) => ({
+    tracks: replaceTrack(s.tracks, vi, newMain),
+    captions: remapCaptionsToMainTrack(s.tracks[vi].clips, newMain.clips, s.captions),
+  });
+
   return {
     projectId: nanoid(10),
     projectName: "Untitled project",
@@ -198,7 +243,9 @@ export const useEditorStore = create<EditorState>((set, get) => {
     tracks: createDefaultTracks(),
     captions: [],
     style: { ...DEFAULT_STYLE },
+    format: "9:16",
     editRecipe: null,
+    editRecipeRevision: -1,
     revision: 0,
 
     past: [],
@@ -207,11 +254,16 @@ export const useEditorStore = create<EditorState>((set, get) => {
     currentTime: 0,
     isPlaying: false,
 
+    clipboard: null,
+
     selectedClipId: null,
+    selectedClipIds: [],
     selectedCaptionId: null,
     showSafeZones: true,
     isTranscribing: false,
+    saveState: "saved",
     waveforms: {},
+    analyses: {},
     toasts: [],
 
     resetToNewProject: () =>
@@ -223,13 +275,16 @@ export const useEditorStore = create<EditorState>((set, get) => {
         tracks: createDefaultTracks(),
         captions: [],
         style: { ...DEFAULT_STYLE },
+        format: "9:16",
         editRecipe: null,
+        editRecipeRevision: -1,
         revision: 0,
         past: [],
         future: [],
         currentTime: 0,
         isPlaying: false,
         selectedClipId: null,
+        selectedClipIds: [],
         selectedCaptionId: null,
       }),
 
@@ -242,13 +297,16 @@ export const useEditorStore = create<EditorState>((set, get) => {
         tracks: migrateTracks(project),
         captions: project.captions ?? [],
         style: { ...DEFAULT_STYLE, ...project.style },
+        format: project.format ?? "9:16",
         editRecipe: project.editRecipe ?? null,
+        editRecipeRevision: -1,
         revision: 0,
         past: [],
         future: [],
         currentTime: 0,
         isPlaying: false,
         selectedClipId: null,
+        selectedClipIds: [],
         selectedCaptionId: null,
       }),
 
@@ -263,7 +321,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
           past: s.past.slice(0, -1),
           future: [snapshotOf(s), ...s.future].slice(0, HISTORY_LIMIT),
           revision: s.revision + 1,
-          selectedClipId: null,
+          ...sel(null),
           selectedCaptionId: null,
         };
       }),
@@ -277,7 +335,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
           past: [...s.past, snapshotOf(s)].slice(-HISTORY_LIMIT),
           future: s.future.slice(1),
           revision: s.revision + 1,
-          selectedClipId: null,
+          ...sel(null),
           selectedCaptionId: null,
         };
       }),
@@ -296,7 +354,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         return {
           media,
           tracks: replaceTrack(s.tracks, vi, rippleMainTrack({ ...video, clips: [...video.clips, clip] })),
-          selectedClipId: clip.id,
+          ...sel(clip.id),
         };
       }),
 
@@ -310,7 +368,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         const clip = makeMainClip(asset);
         return {
           tracks: replaceTrack(s.tracks, vi, rippleMainTrack({ ...video, clips: [...video.clips, clip] })),
-          selectedClipId: clip.id,
+          ...sel(clip.id),
         };
       }),
 
@@ -349,7 +407,75 @@ export const useEditorStore = create<EditorState>((set, get) => {
         clip = placeWithoutOverlap(track, clip);
         return {
           tracks: replaceTrack(s.tracks, ti, { ...track, clips: [...track.clips, clip] }),
-          selectedClipId: clip.id,
+          ...sel(clip.id),
+        };
+      }),
+
+    duplicateClip: (clipId) =>
+      commit((s) => {
+        const loc = locate(s.tracks, clipId);
+        if (!loc || guardLocked(loc.track)) return {};
+        const copy: TimelineClip = { ...loc.clip, id: nanoid(8) };
+        if (loc.track.type === "video") {
+          // Main track: insert right after the original; ripple lays it out.
+          const clips = [...loc.track.clips];
+          clips.splice(loc.clipIndex + 1, 0, copy);
+          return {
+            ...mainEdit(s, loc.trackIndex, rippleMainTrack({ ...loc.track, clips })),
+            ...sel(copy.id),
+          };
+        }
+        // Free tracks: land in the first gap after the original.
+        const dur = copy.endTime - copy.startTime;
+        copy.startTime = loc.clip.endTime;
+        copy.endTime = round3(copy.startTime + dur);
+        const placed = placeWithoutOverlap(loc.track, copy);
+        return {
+          tracks: replaceTrack(s.tracks, loc.trackIndex, {
+            ...loc.track,
+            clips: [...loc.track.clips, placed],
+          }),
+          ...sel(placed.id),
+        };
+      }),
+
+    copyClip: (clipId) => {
+      const s = get();
+      const loc = locate(s.tracks, clipId);
+      if (!loc) return;
+      set({ clipboard: { clip: { ...loc.clip }, trackType: loc.track.type } });
+      s.addToast("info", "Clip copied — Ctrl+V pastes it at the playhead.");
+    },
+
+    pasteClip: () =>
+      commit((s) => {
+        if (!s.clipboard) return {};
+        const { clip, trackType } = s.clipboard;
+        const ti = s.tracks.findIndex((t) => t.type === trackType);
+        if (ti < 0) return {};
+        const track = s.tracks[ti];
+        if (guardLocked(track)) return {};
+
+        const copy: TimelineClip = { ...clip, id: nanoid(8) };
+        if (trackType === "video") {
+          // Main track: insert after the clip under the playhead; ripple lays out.
+          const at = track.clips.findIndex(
+            (c) => s.currentTime >= c.startTime && s.currentTime < c.endTime
+          );
+          const clips = [...track.clips];
+          clips.splice(at >= 0 ? at + 1 : clips.length, 0, copy);
+          return {
+            ...mainEdit(s, ti, rippleMainTrack({ ...track, clips })),
+            ...sel(copy.id),
+          };
+        }
+        const dur = copy.endTime - copy.startTime;
+        copy.startTime = round3(Math.max(0, s.currentTime));
+        copy.endTime = round3(copy.startTime + dur);
+        const placed = placeWithoutOverlap(track, copy);
+        return {
+          tracks: replaceTrack(s.tracks, ti, { ...track, clips: [...track.clips, placed] }),
+          ...sel(placed.id),
         };
       }),
 
@@ -360,10 +486,37 @@ export const useEditorStore = create<EditorState>((set, get) => {
         const clips = loc.track.clips.filter((c) => c.id !== clipId);
         let track = { ...loc.track, clips };
         if (track.type === "video") track = rippleMainTrack(track);
+        const remainingIds = s.selectedClipIds.filter((id) => id !== clipId);
         return {
-          tracks: replaceTrack(s.tracks, loc.trackIndex, track),
+          ...(track.type === "video"
+            ? mainEdit(s, loc.trackIndex, track)
+            : { tracks: replaceTrack(s.tracks, loc.trackIndex, track) }),
           selectedClipId: s.selectedClipId === clipId ? null : s.selectedClipId,
+          selectedClipIds: remainingIds,
         };
+      }),
+
+    deleteSelectedClips: () =>
+      commit((s) => {
+        const ids = new Set(s.selectedClipIds.length ? s.selectedClipIds : s.selectedClipId ? [s.selectedClipId] : []);
+        if (ids.size === 0) return {};
+        let tracks = s.tracks;
+        let captions = s.captions;
+        let removed = 0;
+        s.tracks.forEach((track, ti) => {
+          if (!track.clips.some((c) => ids.has(c.id))) return;
+          if (track.locked) return;
+          const clips = track.clips.filter((c) => !ids.has(c.id));
+          removed += track.clips.length - clips.length;
+          let next: Track = { ...track, clips };
+          if (next.type === "video") {
+            next = rippleMainTrack(next);
+            captions = remapCaptionsToMainTrack(tracks[ti].clips, next.clips, captions);
+          }
+          tracks = replaceTrack(tracks, ti, next);
+        });
+        if (removed === 0) return {};
+        return { tracks, captions, ...sel(null) };
       }),
 
     moveClip: (clipId, direction) =>
@@ -374,9 +527,19 @@ export const useEditorStore = create<EditorState>((set, get) => {
         if (target < 0 || target >= loc.track.clips.length) return {};
         const clips = [...loc.track.clips];
         [clips[loc.clipIndex], clips[target]] = [clips[target], clips[loc.clipIndex]];
-        return {
-          tracks: replaceTrack(s.tracks, loc.trackIndex, rippleMainTrack({ ...loc.track, clips })),
-        };
+        return mainEdit(s, loc.trackIndex, rippleMainTrack({ ...loc.track, clips }));
+      }),
+
+    moveClipToIndex: (clipId, index) =>
+      commit((s) => {
+        const loc = locate(s.tracks, clipId);
+        if (!loc || loc.track.type !== "video" || guardLocked(loc.track)) return {};
+        const target = Math.max(0, Math.min(loc.track.clips.length - 1, index));
+        if (target === loc.clipIndex) return {};
+        const clips = [...loc.track.clips];
+        const [moved] = clips.splice(loc.clipIndex, 1);
+        clips.splice(target, 0, moved);
+        return mainEdit(s, loc.trackIndex, rippleMainTrack({ ...loc.track, clips }));
       }),
 
     moveTimelineClip: (clipId, newStart) =>
@@ -403,9 +566,11 @@ export const useEditorStore = create<EditorState>((set, get) => {
         let next: TimelineClip;
         if (track.type === "video") {
           // Main track: trimming adjusts source in/out; ripple re-layout follows.
+          // Timeline delta → source delta through the clip's playback rate.
           const sourceStart = clip.sourceStart ?? 0;
           const sourceEnd = clip.sourceEnd ?? 0;
-          const delta = newTime - (edge === "start" ? clip.startTime : clip.endTime);
+          const delta =
+            (newTime - (edge === "start" ? clip.startTime : clip.endTime)) * clipSpeedOf(clip);
           if (edge === "start") {
             const ns = Math.max(0, Math.min(sourceStart + delta, sourceEnd - MIN_CLIP));
             next = { ...clip, sourceStart: round3(ns) };
@@ -415,9 +580,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
             next = { ...clip, sourceEnd: round3(ne) };
           }
           const clips = track.clips.map((c) => (c.id === clipId ? next : c));
-          return {
-            tracks: replaceTrack(s.tracks, loc.trackIndex, rippleMainTrack({ ...track, clips })),
-          };
+          return mainEdit(s, loc.trackIndex, rippleMainTrack({ ...track, clips }));
         }
 
         // Free tracks: trim timeline edges (and source edges for A/V media).
@@ -469,7 +632,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
           get().addToast("info", "Move the playhead inside a clip to split it.");
           return {};
         }
-        const offset = time - clip.startTime;
+        const offset = (time - clip.startTime) * clipSpeedOf(clip);
         const hasSource = clip.sourceStart !== undefined;
         const splitSource = hasSource ? (clip.sourceStart ?? 0) + offset : undefined;
 
@@ -492,7 +655,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         if (nextTrack.type === "video") nextTrack = rippleMainTrack(nextTrack);
         return {
           tracks: replaceTrack(st.tracks, ti, nextTrack),
-          selectedClipId: right.id,
+          ...sel(right.id),
         };
       });
     },
@@ -502,8 +665,11 @@ export const useEditorStore = create<EditorState>((set, get) => {
         const loc = locate(s.tracks, clipId);
         if (!loc || guardLocked(loc.track)) return {};
         const clips = loc.track.clips.map((c) => (c.id === clipId ? { ...c, ...patch, id: c.id } : c));
-        let track: Track = { ...loc.track, clips };
-        if (track.type === "video") track = rippleMainTrack(track);
+        const track: Track = { ...loc.track, clips };
+        if (track.type === "video") {
+          // Speed/trim changes re-time the timeline — captions follow the source.
+          return mainEdit(s, loc.trackIndex, rippleMainTrack(track));
+        }
         return { tracks: replaceTrack(s.tracks, loc.trackIndex, track) };
       }),
 
@@ -533,7 +699,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         });
         return {
           tracks: replaceTrack(s.tracks, ti, { ...track, clips: [...track.clips, clip] }),
-          selectedClipId: clip.id,
+          ...sel(clip.id),
         };
       }),
 
@@ -555,11 +721,11 @@ export const useEditorStore = create<EditorState>((set, get) => {
         });
         return {
           tracks: replaceTrack(s.tracks, ti, { ...track, clips: [...track.clips, clip] }),
-          selectedClipId: clip.id,
+          ...sel(clip.id),
         };
       }),
 
-    addZoomClip: (atTime, duration, effect) =>
+    addEffectClip: (atTime, duration, effect) =>
       commit((s) => {
         const ti = s.tracks.findIndex((t) => t.type === "effects");
         if (ti < 0) return {};
@@ -574,9 +740,89 @@ export const useEditorStore = create<EditorState>((set, get) => {
         });
         return {
           tracks: replaceTrack(s.tracks, ti, { ...track, clips: [...track.clips, clip] }),
-          selectedClipId: clip.id,
+          ...sel(clip.id),
         };
       }),
+
+    insertReplay: () => {
+      const s = get();
+      const vi = s.tracks.findIndex((t) => t.type === "video");
+      const video = vi >= 0 ? s.tracks[vi] : null;
+      const playhead = s.currentTime;
+      if (!video || video.clips.length === 0 || playhead < 0.8) {
+        get().addToast("info", "Play past a moment first — replay repeats the last 3 seconds.");
+        return;
+      }
+      commit((st) => {
+        const track = st.tracks[vi];
+        if (guardLocked(track)) return {};
+        const t = round3(playhead);
+        const from = round3(Math.max(0, t - 3));
+
+        // Slow-mo copies of every main-track slice inside [from, t].
+        const slices: TimelineClip[] = [];
+        for (const clip of track.clips) {
+          const os = Math.max(from, clip.startTime);
+          const oe = Math.min(t, clip.endTime);
+          if (oe - os < 0.05) continue;
+          const sp = clipSpeedOf(clip);
+          slices.push({
+            ...clip,
+            id: nanoid(8),
+            sourceStart: round3((clip.sourceStart ?? 0) + (os - clip.startTime) * sp),
+            sourceEnd: round3((clip.sourceStart ?? 0) + (oe - clip.startTime) * sp),
+            speed: Math.max(0.5, round3(sp * 0.5)),
+            metadata: { ...clip.metadata, replay: true },
+          });
+        }
+        if (slices.length === 0) return {};
+
+        // Split the clip under the playhead so the replay lands exactly at t.
+        const clips = [...track.clips];
+        const ci = clips.findIndex((c) => t > c.startTime + 0.05 && t < c.endTime - 0.05);
+        let insertAt: number;
+        if (ci >= 0) {
+          const clip = clips[ci];
+          const sp = clipSpeedOf(clip);
+          const srcAt = round3((clip.sourceStart ?? 0) + (t - clip.startTime) * sp);
+          clips.splice(
+            ci,
+            1,
+            { ...clip, id: nanoid(8), sourceEnd: srcAt },
+            { ...clip, id: nanoid(8), sourceStart: srcAt }
+          );
+          insertAt = ci + 1;
+        } else {
+          insertAt = clips.findIndex((c) => t <= c.startTime + 0.05);
+          if (insertAt < 0) insertAt = clips.length;
+        }
+        clips.splice(insertAt, 0, ...slices);
+        const newMain = rippleMainTrack({ ...track, clips });
+
+        // Punch-zoom over the replay span sells the "different angle" feel.
+        const first = newMain.clips[insertAt];
+        const last = newMain.clips[insertAt + slices.length - 1];
+        const patch = mainEdit(st, vi, newMain);
+        const ei = st.tracks.findIndex((tr) => tr.type === "effects");
+        if (ei >= 0 && !st.tracks[ei].locked) {
+          const effects = patch.tracks[ei];
+          const zoomClip = placeWithoutOverlap(effects, {
+            id: nanoid(8),
+            type: "effects",
+            startTime: first.startTime,
+            endTime: last.endTime,
+            effect: { kind: "zoom", zoomScale: 1.12, anchorX: 0.5, anchorY: 0.45 },
+            metadata: { reason: "replay" },
+          });
+          patch.tracks = replaceTrack(patch.tracks, ei, {
+            ...effects,
+            clips: [...effects.clips, zoomClip],
+          });
+        }
+        return { ...patch, ...sel(slices.length ? newMain.clips[insertAt].id : null) };
+      });
+      get().addToast("success", "Instant replay added — slow-mo of the last 3s at the playhead.");
+    },
 
     /* ---------------- tracks ---------------- */
 
@@ -756,7 +1002,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
           tracks,
           captions: remapCaptions(s.captions, keptRanges),
           currentTime: 0,
-          selectedClipId: null,
+          ...sel(null),
           selectedCaptionId: null,
         };
       });
@@ -774,9 +1020,10 @@ export const useEditorStore = create<EditorState>((set, get) => {
           tracks: result.tracks,
           captions: result.captions,
           editRecipe: recipe,
+          editRecipeRevision: s.revision + 1, // commit() bumps to this value
           currentTime: 0,
           isPlaying: false,
-          selectedClipId: null,
+          ...sel(null),
           selectedCaptionId: null,
         };
       });
@@ -795,15 +1042,28 @@ export const useEditorStore = create<EditorState>((set, get) => {
 
     setStyle: (patch) => commit((s) => ({ style: { ...s.style, ...patch } })),
     applyPreset: (style) => commit(() => ({ style: { ...style } })),
+    setFormat: (format) => commit(() => ({ format })),
 
     setCurrentTime: (time) => set({ currentTime: Math.max(0, time) }),
     setPlaying: (playing) => set({ isPlaying: playing }),
-    selectClip: (id) => set({ selectedClipId: id }),
+    selectClip: (id, opts) =>
+      set((s) => {
+        if (!id) return sel(null);
+        if (opts?.additive) {
+          const ids = s.selectedClipIds.includes(id)
+            ? s.selectedClipIds.filter((x) => x !== id)
+            : [...s.selectedClipIds, id];
+          return { selectedClipIds: ids, selectedClipId: ids[ids.length - 1] ?? null };
+        }
+        return sel(id);
+      }),
     selectCaption: (id) => set({ selectedCaptionId: id }),
     toggleSafeZones: () => set((s) => ({ showSafeZones: !s.showSafeZones })),
     setTranscribing: (value) => set({ isTranscribing: value }),
+    setSaveState: (value) => set({ saveState: value }),
     setWaveform: (mediaId, peaks) =>
       set((s) => ({ waveforms: { ...s.waveforms, [mediaId]: peaks } })),
+    mergeAnalyses: (analyses) => set((s) => ({ analyses: { ...s.analyses, ...analyses } })),
 
     addToast: (kind, message) => {
       const id = nanoid(6);
@@ -866,6 +1126,7 @@ export function buildProjectSnapshot(state: {
   tracks: Track[];
   captions: Caption[];
   style: CaptionStyle;
+  format: AspectRatioId;
   editRecipe: EditRecipe | null;
 }): Project {
   return {
@@ -879,6 +1140,7 @@ export function buildProjectSnapshot(state: {
     tracks: state.tracks,
     captions: state.captions,
     style: state.style,
+    format: state.format,
     editRecipe: state.editRecipe ?? undefined,
   };
 }

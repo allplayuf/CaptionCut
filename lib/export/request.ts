@@ -49,6 +49,18 @@ export interface ZoomPayload {
   anchorY: number;
 }
 
+/** Freeze-frame window: video holds the frame at `start`, main audio silent. */
+export interface FreezePayload {
+  start: number;
+  end: number;
+}
+
+/** White flash pop: full opacity at `start`, decays to 0 by `end`. */
+export interface FlashPayload {
+  start: number;
+  end: number;
+}
+
 export interface ExportRequest {
   media: MediaAsset[];
   clips: Clip[];
@@ -59,6 +71,8 @@ export interface ExportRequest {
   audioClips?: AudioClipPayload[];
   textOverlays?: AssOverlayEvent[];
   zooms?: ZoomPayload[];
+  freezes?: FreezePayload[];
+  flashes?: FlashPayload[];
   presetId?: ExportPresetId;
   mainAudioMuted?: boolean;
 }
@@ -170,23 +184,33 @@ export function buildExportRequest(input: {
   }
 
   const zooms: ZoomPayload[] = [];
+  const freezes: FreezePayload[] = [];
+  const flashes: FlashPayload[] = [];
   const effects = findTrack(tracks, "effects");
   if (effects && !effects.hidden) {
     for (const clip of effects.clips) {
-      if (clip.effect?.kind !== "zoom") continue;
       const start = clamp(clip.startTime);
       const end = clamp(clip.endTime);
-      const scale = clip.effect.zoomScale ?? 1;
-      if (end - start < 0.05 || scale <= 1.001) continue;
-      zooms.push({
-        start,
-        end,
-        scale: Math.min(2.5, scale),
-        anchorX: clip.effect.anchorX ?? 0.5,
-        anchorY: clip.effect.anchorY ?? 0.45,
-      });
+      if (end - start < 0.05) continue;
+      if (clip.effect?.kind === "zoom") {
+        const scale = clip.effect.zoomScale ?? 1;
+        if (scale <= 1.001) continue;
+        zooms.push({
+          start,
+          end,
+          scale: Math.min(2.5, scale),
+          anchorX: clip.effect.anchorX ?? 0.5,
+          anchorY: clip.effect.anchorY ?? 0.45,
+        });
+      } else if (clip.effect?.kind === "freeze") {
+        freezes.push({ start, end });
+      } else if (clip.effect?.kind === "flash") {
+        flashes.push({ start, end });
+      }
     }
     zooms.sort((a, b) => a.start - b.start);
+    freezes.sort((a, b) => a.start - b.start);
+    flashes.sort((a, b) => a.start - b.start);
   }
 
   return {
@@ -198,6 +222,8 @@ export function buildExportRequest(input: {
     audioClips,
     textOverlays,
     zooms,
+    freezes,
+    flashes,
     presetId,
     mainAudioMuted: findTrack(tracks, "video")?.muted ?? false,
   };

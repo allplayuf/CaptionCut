@@ -122,15 +122,17 @@ async function extractTimelineAudio(
   const filters: string[] = [];
   clips.forEach((clip, i) => {
     const asset = mediaById.get(clip.mediaId)!;
+    const speed = Math.min(2, Math.max(0.5, clip.speed && clip.speed > 0 ? clip.speed : 1));
     if (asset.hasAudio) {
       const idx = inputIndex.get(clip.mediaId)!;
+      const tempo = speed !== 1 ? `,atempo=${speed.toFixed(4)}` : "";
       filters.push(
         `[${idx}:a]atrim=start=${clip.sourceStart.toFixed(3)}:end=${clip.sourceEnd.toFixed(3)},` +
-          `asetpts=PTS-STARTPTS,aformat=sample_rates=16000:channel_layouts=mono[a${i}]`
+          `asetpts=PTS-STARTPTS${tempo},aformat=sample_rates=16000:channel_layouts=mono[a${i}]`
       );
     } else {
       // Keep silent clips in the mix so caption timestamps line up with the timeline.
-      const dur = (clip.sourceEnd - clip.sourceStart).toFixed(3);
+      const dur = ((clip.sourceEnd - clip.sourceStart) / speed).toFixed(3);
       filters.push(`anullsrc=r=16000:cl=mono,atrim=start=0:end=${dur},asetpts=PTS-STARTPTS[a${i}]`);
     }
   });
