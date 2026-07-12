@@ -85,6 +85,45 @@ export function applyEditRecipeToTimeline(
     nextTracks[ei] = { ...effects, clips };
   }
 
+  /* 3b. Music: retrim the soundtrack to the recipe's chosen song section
+        (drop/chorus) and cut every music clip to the new video length so the
+        song never overhangs the timeline. */
+  const finalDur = newMain.clips[newMain.clips.length - 1].endTime;
+  const mi = nextTracks.findIndex((t) => t.type === "music");
+  if (mi >= 0 && nextTracks[mi].clips.length > 0) {
+    const musicTrack = nextTracks[mi];
+    let clips: TimelineClip[];
+    if (recipe.musicCut) {
+      // Soundtrack model: one clip, from 0, playing the best song section.
+      const base = musicTrack.clips[0];
+      const srcStart = recipe.musicCut.sourceStart;
+      const srcEnd = Math.min(recipe.musicCut.sourceEnd, srcStart + finalDur);
+      clips = [
+        {
+          ...base,
+          id: nanoid(8),
+          startTime: 0,
+          endTime: round3(Math.min(finalDur, srcEnd - srcStart)),
+          sourceStart: round3(srcStart),
+          sourceEnd: round3(srcEnd),
+          fadeOut: base.fadeOut ?? 1.2,
+        },
+      ];
+    } else {
+      clips = musicTrack.clips
+        .filter((c) => c.startTime < finalDur - 0.05)
+        .map((c) => {
+          if (c.endTime <= finalDur) return c;
+          const trimmed = { ...c, endTime: round3(finalDur) };
+          if (c.sourceStart !== undefined) {
+            trimmed.sourceEnd = round3((c.sourceStart ?? 0) + (finalDur - c.startTime));
+          }
+          return trimmed;
+        });
+    }
+    nextTracks[mi] = { ...musicTrack, clips };
+  }
+
   /* 4. Hook/CTA text overlays → text track. */
   const ti = nextTracks.findIndex((t) => t.type === "text");
   if (ti >= 0 && recipe.overlays.length > 0) {

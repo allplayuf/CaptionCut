@@ -1,4 +1,5 @@
 import type {
+  AudioAnalysis,
   Clip,
   MediaAnalysis,
   MediaAsset,
@@ -225,6 +226,60 @@ function dedupeSorted(times: number[]): number[] {
     if (out.length === 0 || t - out[out.length - 1] > 0.08) out.push(t);
   }
   return out;
+}
+
+/**
+ * Best starting point (source seconds) for playing `targetLen` seconds of a
+ * song: the window with the highest sustained energy, with a bonus for a
+ * strong energy RISE at the window start (a drop/chorus entry beats the
+ * middle of one). The start is snapped onto a beat so bar one lands on the
+ * first frame.
+ */
+export function findBestMusicStart(
+  audio: Pick<AudioAnalysis, "rate" | "energy" | "beats">,
+  songDuration: number,
+  targetLen: number
+): number {
+  const { rate, energy } = audio;
+  const n = energy.length;
+  const winLen = Math.min(targetLen, songDuration);
+  const win = Math.max(1, Math.round(winLen * rate));
+  if (n <= win + rate) return 0; // song barely longer than what we need
+
+  const prefix = new Float64Array(n + 1);
+  for (let i = 0; i < n; i++) prefix[i + 1] = prefix[i] + energy[i];
+  const mean = (a: number, b: number) => (prefix[b] - prefix[a]) / Math.max(1, b - a);
+
+  const ctx = Math.round(3 * rate); // 3s context for the "section entry" bonus
+  const step = Math.max(1, Math.round(rate / 4));
+  let bestIdx = 0;
+  let bestScore = -Infinity;
+  for (let i = 0; i + win <= n; i += step) {
+    const inside = mean(i, i + win);
+    const before = i > 0 ? mean(Math.max(0, i - ctx), i) : 0;
+    const entry = mean(i, Math.min(n, i + ctx));
+    const score = inside + 0.6 * Math.max(0, entry - before);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+
+  let t = bestIdx / rate;
+  // Land on a beat so the montage starts on the bar, not just near it.
+  if (audio.beats.length > 0) {
+    let nearest = audio.beats[0];
+    let dist = Infinity;
+    for (const b of audio.beats) {
+      const d = Math.abs(b - t);
+      if (d < dist) {
+        dist = d;
+        nearest = b;
+      }
+    }
+    if (dist < 1.2) t = nearest;
+  }
+  return round3(Math.max(0, Math.min(t, Math.max(0, songDuration - winLen))));
 }
 
 /** Snap a time to the nearest beat within `tolerance` seconds (or keep it). */

@@ -20,6 +20,7 @@ import type {
 import { DEFAULT_STYLE } from "@/lib/captions/presets";
 import { cleanCaptions } from "@/lib/captions/clean";
 import { applyEditRecipeToTimeline } from "@/lib/autoEdit/applyEditRecipeToTimeline";
+import { findBestMusicStart } from "@/lib/autoEdit/signals";
 import {
   assetKind,
   clipSpeedOf,
@@ -419,6 +420,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       const asset = state.media.find((m) => m.id === mediaId);
       if (!asset || assetKind(asset) === "image") return;
       const hadMusic = (state.tracks.find((t) => t.type === "music")?.clips.length ?? 0) > 0;
+      let cutIn = 0;
       commit((s) => {
         const ti = s.tracks.findIndex((t) => t.type === "music");
         if (ti < 0) return {};
@@ -429,14 +431,18 @@ export const useEditorStore = create<EditorState>((set, get) => {
           0.5,
           projectDur > 0 ? Math.min(projectDur, asset.duration) : asset.duration
         );
+        // Start at the song's best stretch (drop/chorus), not its intro.
+        const audio = s.analyses[mediaId]?.audio;
+        const srcStart = audio ? findBestMusicStart(audio, asset.duration, dur) : 0;
+        cutIn = srcStart;
         const clip: TimelineClip = {
           id: nanoid(8),
           type: "music",
           assetId: asset.id,
           startTime: 0,
           endTime: round3(dur),
-          sourceStart: 0,
-          sourceEnd: round3(Math.min(asset.duration, dur)),
+          sourceStart: round3(srcStart),
+          sourceEnd: round3(Math.min(asset.duration, srcStart + dur)),
           volume: 0.6,
           fadeIn: 0.5,
           fadeOut: 1.2,
@@ -446,11 +452,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
           ...sel(clip.id),
         };
       });
+      const cutNote = cutIn > 1 ? ` Starts ${Math.round(cutIn)}s in — the song's best section.` : "";
       get().addToast(
         "success",
         hadMusic
-          ? `Soundtrack swapped to "${asset.originalName}" — regenerate the montage to re-sync the cuts.`
-          : `"${asset.originalName}" set as the soundtrack — montage cuts will lock to its beat.`
+          ? `Soundtrack swapped to "${asset.originalName}".${cutNote} Regenerate the montage to re-sync.`
+          : `"${asset.originalName}" set as the soundtrack.${cutNote} Montage cuts will lock to its beat.`
       );
     },
 

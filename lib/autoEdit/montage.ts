@@ -151,6 +151,12 @@ export interface GenerateMontageInput {
   seed?: number;
   /** One-tap adjustments ("faster", "more reactions", "less effects"). */
   modifiers?: MontageModifiers;
+  /**
+   * The song section the soundtrack will play (chosen up front so the beat
+   * grid in `signals` already has this section's phase). Passed through to
+   * the recipe for the applier to realize.
+   */
+  musicCut?: { sourceStart: number; sourceEnd: number };
 }
 
 /** One candidate moment inside a raw clip window. */
@@ -441,6 +447,9 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
   if (ramped) parts.push("slow-mo on the top moment");
   if (zooms.length > 0) parts.push(`${zooms.length} punch-zooms`);
   if (flashes.length > 0) parts.push(`${flashes.length} flash pops`);
+  if (input.musicCut && input.musicCut.sourceStart > 1) {
+    parts.push(`music cut to its best section (${Math.round(input.musicCut.sourceStart)}s in)`);
+  }
 
   return {
     id: nanoid(10),
@@ -452,6 +461,7 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
     captions: [],
     zooms,
     flashes,
+    musicCut: input.musicCut,
     overlays,
     brollSuggestions: [],
     audioInstructions: [

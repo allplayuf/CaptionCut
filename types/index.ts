@@ -319,6 +319,13 @@ export interface EditRecipe {
   zooms: ZoomInstruction[];
   /** White flash pops on the biggest moments (FINAL-timeline times). */
   flashes?: TimeRange[];
+  /**
+   * The song section the soundtrack should play (source seconds): the engine
+   * picks the highest-energy stretch (drop/chorus) so the montage doesn't sit
+   * on a quiet intro. The applier retrims the music clip to this section and
+   * cuts it to the final video length.
+   */
+  musicCut?: { sourceStart: number; sourceEnd: number };
   overlays: OverlayInstruction[];
   brollSuggestions: BrollSuggestion[];
   audioInstructions: AudioInstruction[];

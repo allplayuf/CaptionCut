@@ -33,8 +33,16 @@ const HEADER_W = 116;
 const PAD = 12;
 const SNAP_PX = 8;
 
-const TRACK_HEIGHTS: Partial<Record<Track["type"], number>> = { video: 54 };
+const TRACK_HEIGHTS: Partial<Record<Track["type"], number>> = {
+  video: 54,
+  music: 36,
+  sfx: 30,
+  voice: 30,
+};
 const DEFAULT_TRACK_HEIGHT = 26;
+
+/** Tracks whose clips draw an audio waveform. */
+const WAVEFORM_TRACKS: Track["type"][] = ["video", "broll", "music", "sfx", "voice"];
 
 const TRACK_COLORS: Record<Track["type"], string> = {
   video: "from-zinc-700/80 to-zinc-800/80",
@@ -523,7 +531,7 @@ function TrackLane({
           track={track}
           label={clipLabel(clip, media)}
           peaks={
-            track.type === "video" && clip.assetId
+            WAVEFORM_TRACKS.includes(track.type) && clip.assetId
               ? waveforms[clip.assetId] ?? placeholderPeaksCached(clip.assetId)
               : null
           }

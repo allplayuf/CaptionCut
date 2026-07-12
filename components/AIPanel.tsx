@@ -22,7 +22,7 @@ import { detectDeadSpace } from "@/lib/autoEdit/detectHighlights";
 import { findBestWindow } from "@/lib/autoEdit/scoreMoments";
 import { generateEditRecipe } from "@/lib/autoEdit/generateEditRecipe";
 import { MONTAGE_PRESETS, generateMontageRecipe } from "@/lib/autoEdit/montage";
-import { buildTimelineSignals, fetchAnalyses } from "@/lib/autoEdit/signals";
+import { buildTimelineSignals, fetchAnalyses, findBestMusicStart } from "@/lib/autoEdit/signals";
 import {
   Activity,
   Clapperboard,
@@ -90,8 +90,10 @@ export default function AIPanel() {
   /* ---------------- shared input gathering ---------------- */
 
   /** Fetch (cached) local media analysis and stitch timeline signals.
-      The cache lives in the store so the preview's smart crop shares it. */
-  const getSignals = async (): Promise<TimelineSignals | null> => {
+      The cache lives in the store so the preview's smart crop shares it.
+      `tracksOverride` lets the montage flow build signals against a
+      pre-retrimmed music clip (correct beat phase for the chosen section). */
+  const getSignals = async (tracksOverride?: typeof tracks): Promise<TimelineSignals | null> => {
     const s = useEditorStore.getState();
     const missing = s.media.filter((m) => !(m.id in s.analyses));
     if (missing.length > 0) {
@@ -107,10 +109,49 @@ export default function AIPanel() {
     }
     try {
       const latest = useEditorStore.getState();
-      return buildTimelineSignals(latest.tracks, latest.media, latest.analyses);
+      return buildTimelineSignals(tracksOverride ?? latest.tracks, latest.media, latest.analyses);
     } catch {
       return null;
     }
+  };
+
+  /**
+   * Pick the song section the montage should ride (drop/chorus) and a tracks
+   * view with the music retrimmed to it, so the beat grid the engine snaps to
+   * already has that section's phase. Must run AFTER analyses are fetched.
+   */
+  const planMusicCut = (): {
+    musicCut?: { sourceStart: number; sourceEnd: number };
+    signalTracks?: typeof tracks;
+  } => {
+    const s = useEditorStore.getState();
+    const musicTrack = findTrack(s.tracks, "music");
+    const clip = musicTrack?.clips[0];
+    const asset = clip?.assetId ? s.media.find((m) => m.id === clip.assetId) : undefined;
+    const audio = clip?.assetId ? s.analyses[clip.assetId]?.audio : undefined;
+    if (!musicTrack || !clip || !asset || !audio) return {};
+    const srcStart = findBestMusicStart(audio, asset.duration, targetLength);
+    // Give the engine a little headroom past the target for beat snapping.
+    const span = Math.min(asset.duration - srcStart, targetLength * 1.5 + 4);
+    if (span < 4) return {};
+    const musicCut = { sourceStart: srcStart, sourceEnd: Math.round((srcStart + span) * 1000) / 1000 };
+    const signalTracks = s.tracks.map((t) =>
+      t.type === "music"
+        ? {
+            ...t,
+            clips: [
+              {
+                ...clip,
+                startTime: 0,
+                endTime: span,
+                sourceStart: musicCut.sourceStart,
+                sourceEnd: musicCut.sourceEnd,
+              },
+            ],
+          }
+        : t
+    );
+    return { musicCut, signalTracks };
   };
 
   /**
@@ -173,7 +214,11 @@ export default function AIPanel() {
       assemble hook → action → reaction → ender. */
   const runMontage = (nextSeed = 0, mods: MontageModifiers = modifiers) =>
     withBusy("montage", async () => {
-      const signals = await getSignals();
+      // Warm analyses first (getSignals fetches), then plan the song section
+      // so the beat grid below carries the chosen section's phase.
+      await getSignals();
+      const { musicCut, signalTracks } = planMusicCut();
+      const signals = await getSignals(signalTracks);
       // Interview preset needs speech; the others use captions only if present.
       const caps =
         montageStyle === "interview" ? await getCaptions("try") : useEditorStore.getState().captions;
@@ -197,6 +242,7 @@ export default function AIPanel() {
         endCard,
         seed: nextSeed,
         modifiers: mods,
+        musicCut,
       });
       s.applyEditRecipe(recipe);
       setSeed(nextSeed);
@@ -352,14 +398,24 @@ export default function AIPanel() {
     useEditorStore.getState().setCurrentTime(time);
   };
 
-  /** Upload an audio file and set it straight as the soundtrack. */
+  /** Upload an audio file and set it straight as the soundtrack. Waits
+      briefly for the beat/energy analysis so the clip can start at the
+      song's best section instead of its intro. */
   const onMusicPicked = async (files: FileList) => {
     const uploaded = await uploadFiles(files, { silentAudioTip: true });
     const audio = uploaded.find((a) => assetKind(a) === "audio");
-    if (audio) setMusicFromAsset(audio.id);
-    else if (uploaded.length > 0) {
-      useEditorStore.getState().addToast("error", "That file has no audio — pick an mp3/wav/m4a.");
+    if (!audio) {
+      if (uploaded.length > 0) {
+        useEditorStore.getState().addToast("error", "That file has no audio — pick an mp3/wav/m4a.");
+      }
+      return;
     }
+    // The upload flow warms the analysis in the background; give it a moment.
+    for (let i = 0; i < 40; i++) {
+      if (useEditorStore.getState().analyses[audio.id] !== undefined) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    setMusicFromAsset(audio.id);
   };
 
   const musicClip = findTrack(tracks, "music")?.clips[0];
