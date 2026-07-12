@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type {
   Caption,
   EditStyle,
@@ -11,8 +11,9 @@ import type {
   TimelineSignals,
 } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
+import { useMediaUpload } from "@/hooks/useMediaUpload";
 import { useTranscription } from "@/hooks/useTranscription";
-import { invertRanges, mainClips, tracksDuration } from "@/lib/timeline/tracks";
+import { assetKind, findTrack, invertRanges, mainClips, tracksDuration } from "@/lib/timeline/tracks";
 import { analyzeTranscript } from "@/lib/autoEdit/analyzeTranscript";
 import { detectSilence, type SilenceAggressiveness } from "@/lib/autoEdit/detectSilence";
 import { fillerCutRanges } from "@/lib/autoEdit/detectFillerWords";
@@ -29,6 +30,7 @@ import {
   Film,
   Flame,
   MessageSquareText,
+  Music,
   RefreshCw,
   Scissors,
   Sparkles,
@@ -56,6 +58,8 @@ const EDIT_STYLES: Array<{ id: EditStyle; name: string }> = [
 export default function AIPanel() {
   const captions = useEditorStore((s) => s.captions);
   const tracks = useEditorStore((s) => s.tracks);
+  const media = useEditorStore((s) => s.media);
+  const setMusicFromAsset = useEditorStore((s) => s.setMusicFromAsset);
   const isTranscribing = useEditorStore((s) => s.isTranscribing);
   const editRecipe = useEditorStore((s) => s.editRecipe);
   // Regenerate = undo + re-run; only safe while the auto edit is the latest change.
@@ -64,6 +68,8 @@ export default function AIPanel() {
   );
 
   const { runTranscription } = useTranscription();
+  const { uploading: musicUploading, handleFiles: uploadFiles } = useMediaUpload();
+  const musicInputRef = useRef<HTMLInputElement>(null);
   const [style, setStyle] = useState<EditStyle>("viral");
   const [montageStyle, setMontageStyle] = useState<MontageStyle>("hype");
   const [montageLength, setMontageLength] = useState(20);
@@ -346,6 +352,19 @@ export default function AIPanel() {
     useEditorStore.getState().setCurrentTime(time);
   };
 
+  /** Upload an audio file and set it straight as the soundtrack. */
+  const onMusicPicked = async (files: FileList) => {
+    const uploaded = await uploadFiles(files, { silentAudioTip: true });
+    const audio = uploaded.find((a) => assetKind(a) === "audio");
+    if (audio) setMusicFromAsset(audio.id);
+    else if (uploaded.length > 0) {
+      useEditorStore.getState().addToast("error", "That file has no audio — pick an mp3/wav/m4a.");
+    }
+  };
+
+  const musicClip = findTrack(tracks, "music")?.clips[0];
+  const musicAsset = musicClip ? media.find((m) => m.id === musicClip.assetId) : undefined;
+
   const hooks = captions.length > 0 ? detectHooks(analyzeTranscript(captions), 5) : [];
   const highlights = editRecipe?.highlights ?? [];
 
@@ -411,6 +430,48 @@ export default function AIPanel() {
             End card
           </label>
         </div>
+        {/* soundtrack: one click from file picker to beat-locked cuts */}
+        <input
+          ref={musicInputRef}
+          type="file"
+          accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac"
+          className="hidden"
+          onChange={(e) => {
+            if (e.target.files?.length) void onMusicPicked(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <button
+          onClick={() => musicInputRef.current?.click()}
+          disabled={musicUploading !== null}
+          className={`mb-2 flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-[11px] font-semibold ring-1 transition disabled:opacity-50 ${
+            musicAsset
+              ? "bg-emerald-500/10 text-emerald-300 ring-emerald-400/30 hover:bg-emerald-500/20"
+              : "bg-white/5 text-zinc-300 ring-white/10 hover:bg-white/10 hover:text-white"
+          }`}
+          title={
+            musicAsset
+              ? "Swap the soundtrack (replaces the music track)"
+              : "Upload a song — it lands on the Music track and montage cuts lock to its beat"
+          }
+        >
+          {musicUploading ? (
+            <>
+              <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+              Uploading {Math.round(musicUploading.progress * 100)}%…
+            </>
+          ) : musicAsset ? (
+            <>
+              <Music size={12} />
+              <span className="max-w-[70%] truncate">{musicAsset.originalName}</span>
+              <span className="text-emerald-500/80">· swap</span>
+            </>
+          ) : (
+            <>
+              <Music size={12} /> Add music — cuts sync to the beat
+            </>
+          )}
+        </button>
         <button
           onClick={() => void runMontage(0)}
           disabled={disabled}

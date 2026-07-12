@@ -221,16 +221,24 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
       videoLabel = `base${i}`;
     });
 
-    /* ---------------- flash pops (white overlay, alpha fade-out) ---------------- */
+    /* ---------------- flash pops (soft white overlay: 40ms attack, decay) ----------------
+       Peak alpha 0.75 — an accent, not a white-out. Mirrors flashOpacityAt()
+       in lib/timeline/tracks.ts so the preview shows the exported look. */
+    const FLASH_PEAK = 0.75;
+    const FLASH_ATTACK = 0.04;
     const flashes = (req.flashes ?? [])
       .filter((f) => f.end - f.start > 0.04 && f.start < outDuration)
       .slice(0, 24);
     flashes.forEach((f, i) => {
       const dur = Math.min(1.5, f.end - f.start);
       const st = Math.max(0, f.start);
+      const decay = Math.max(0.01, dur - FLASH_ATTACK);
       filters.push(
         `color=c=white:s=${CW}x${CH}:r=${preset.fps}:d=${dur.toFixed(3)},format=yuva420p,` +
-          `fade=t=out:st=0:d=${dur.toFixed(3)}:alpha=1,setpts=PTS+${st.toFixed(3)}/TB[fl${i}]`
+          `colorchannelmixer=aa=${FLASH_PEAK},` +
+          `fade=t=in:st=0:d=${FLASH_ATTACK}:alpha=1,` +
+          `fade=t=out:st=${FLASH_ATTACK}:d=${decay.toFixed(3)}:alpha=1,` +
+          `setpts=PTS+${st.toFixed(3)}/TB[fl${i}]`
       );
       filters.push(
         `[${videoLabel}][fl${i}]overlay=enable='between(t,${st.toFixed(3)},${(st + dur).toFixed(3)})':eof_action=pass[flb${i}]`

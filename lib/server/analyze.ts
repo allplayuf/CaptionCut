@@ -21,7 +21,7 @@ import { ANALYSIS_DIR, MEDIA_DIR, ensureDataDirs, safeId } from "./paths";
  * Results are cached in data/analysis/<assetId>.json (invalidated by VERSION).
  */
 
-const VERSION = 3;
+const VERSION = 4;
 /** Samples/sec of the stored energy curve. */
 const AUDIO_RATE = 20;
 /** Internal envelope rate used for beat detection (finer phase accuracy). */
@@ -192,13 +192,60 @@ function detectBeats(env: number[], rate: number): BeatResult | null {
     }
   }
 
-  const beats: number[] = [];
-  for (let i = bestOffset; i < env.length; i += bestLag) beats.push(round3(i / rate));
+  // Walk the grid, re-anchoring each beat on the strongest nearby onset so
+  // the integer-lag quantization error can't accumulate into drift (the true
+  // period is rarely a whole number of envelope samples).
+  const beatIdx: number[] = [];
+  const search = Math.max(1, Math.round(bestLag * 0.15));
+  let pos = bestOffset;
+  while (pos < onset.length) {
+    const center = Math.round(pos);
+    let anchor = center;
+    let anchorV = -1;
+    for (let j = Math.max(0, center - search); j <= Math.min(onset.length - 1, center + search); j++) {
+      if (onset[j] > anchorV) {
+        anchorV = onset[j];
+        anchor = j;
+      }
+    }
+    beatIdx.push(anchor);
+    pos = anchor + bestLag;
+  }
+
+  // Half-tempo guard: autocorrelation peaks on tempo MULTIPLES, so a 128 BPM
+  // track often wins at the 64 BPM lag. If the midpoints between beats carry
+  // onsets nearly as strong as the beats themselves, the tempo is double.
+  let bpm = Math.round((rate * 60) / bestLag);
+  if (beatIdx.length > 5 && bpm * 2 <= 200) {
+    let onSum = 0;
+    let midSum = 0;
+    const halves: number[] = [];
+    for (let k = 0; k + 1 < beatIdx.length; k++) {
+      const mid = Math.round((beatIdx[k] + beatIdx[k + 1]) / 2);
+      let mv = -1;
+      let mi = mid;
+      for (let j = Math.max(0, mid - 2); j <= Math.min(onset.length - 1, mid + 2); j++) {
+        if (onset[j] > mv) {
+          mv = onset[j];
+          mi = j;
+        }
+      }
+      onSum += onset[beatIdx[k]];
+      midSum += mv;
+      halves.push(mi);
+    }
+    if (midSum >= 0.55 * onSum) {
+      const merged = [...new Set([...beatIdx, ...halves])].sort((a, b) => a - b);
+      beatIdx.length = 0;
+      beatIdx.push(...merged);
+      bpm *= 2;
+    }
+  }
 
   return {
-    bpm: Math.round((rate * 60) / bestLag),
+    bpm,
     confidence,
-    beats,
+    beats: beatIdx.map((i) => round3(i / rate)),
   };
 }
 

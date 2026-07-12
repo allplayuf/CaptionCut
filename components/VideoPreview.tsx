@@ -271,7 +271,10 @@ export default function VideoPreview() {
                 style={{
                   transform: `scale(${zoom.scale})`,
                   transformOrigin: `${zoom.anchorX * 100}% ${zoom.anchorY * 100}%`,
-                  transition: "transform 130ms ease-out",
+                  // Short + sharp: the export punches instantly on the cut, so
+                  // the preview shouldn't ease in slowly.
+                  transition: "transform 70ms ease-out",
+                  willChange: "transform",
                 }}
               >
                 <video
@@ -290,13 +293,15 @@ export default function VideoPreview() {
                 <VisualOverlays scale={scale} canvasW={canvas.width} canvasH={canvas.height} />
               </div>
 
-              <TextOverlays scale={scale} canvasW={canvas.width} canvasH={canvas.height} />
+              {/* flash sits above the footage but below text/captions — same
+                  stacking as the export (overlay before libass burn-in) */}
               {flash > 0 && (
                 <div
                   className="pointer-events-none absolute inset-0 bg-white"
                   style={{ opacity: flash }}
                 />
               )}
+              <TextOverlays scale={scale} canvasW={canvas.width} canvasH={canvas.height} />
               <AudioTracks />
               {buffering && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">

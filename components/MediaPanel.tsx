@@ -259,9 +259,14 @@ function VideoActions({ asset }: { asset: MediaAsset }) {
 
 function AudioActions({ asset }: { asset: MediaAsset }) {
   const addMediaToTrack = useEditorStore((s) => s.addMediaToTrack);
+  const setMusicFromAsset = useEditorStore((s) => s.setMusicFromAsset);
   return (
     <>
-      <AddButton label="Music" title="Add to the music track at the playhead" onClick={() => addMediaToTrack(asset.id, "music")} />
+      <AddButton
+        label="Music"
+        title="Set as the soundtrack (replaces the music track; montage cuts lock to its beat)"
+        onClick={() => setMusicFromAsset(asset.id)}
+      />
       <AddButton label="SFX" title="Add to the sound-FX track at the playhead" onClick={() => addMediaToTrack(asset.id, "sfx")} />
       <AddButton label="Voice" title="Add to the voiceover track at the playhead" onClick={() => addMediaToTrack(asset.id, "voice")} />
     </>

@@ -210,9 +210,13 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
   /* 5 — order for rhythm: hook → action/reaction alternation → ender */
   const ordered = orderMoments(selected, config, rand);
 
-  /* 6 — beat-quantize segment lengths when there's a beat grid */
+  /* 6 — beat-quantize segment LENGTHS for non-music grids (energy/footage).
+        With a real music track, cut points are phase-locked to its beats in
+        step 9 instead — the song keeps playing across cuts, so boundaries
+        must land on actual beat instants, not just beat-length multiples. */
   let beatSnapped = 0;
-  if (signals?.bpm && signals.beats.length > 4) {
+  const musicSync = signals?.beatSource === "music" && signals.beats.length > 4;
+  if (signals?.bpm && signals.beats.length > 4 && !musicSync) {
     const interval = 60 / signals.bpm;
     for (const m of ordered) {
       const dur = m.end - m.start;
@@ -263,14 +267,43 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
     }
   }
 
+  // keptRanges holds the SAME range objects as finalSegs — step 9's
+  // music-sync adjustments below flow into the recipe automatically.
   const keptRanges = finalSegs.map((s) => s.range);
 
-  /* 9 — final-timeline layout (durations grow through slow-mo ramps) */
+  /* 9 — final-timeline layout (durations grow through slow-mo ramps).
+        Music sync: the song plays over the final cut from t=0, so every cut
+        boundary is nudged onto the nearest actual beat instant of the music
+        (phase-locked, not just beat-length multiples). */
+  const beatTolerance = musicSync
+    ? Math.min(0.6, (signals!.bpm ? 60 / signals!.bpm : medianGap(signals!.beats)) * 0.55)
+    : 0;
   const finalStarts: number[] = [];
   let cursor = 0;
   finalSegs.forEach((seg, i) => {
     finalStarts.push(round3(cursor));
-    cursor += (seg.range.end - seg.range.start) / (rangeSpeeds[i] ?? 1);
+    const speed = rangeSpeeds[i] ?? 1;
+    let outDur = (seg.range.end - seg.range.start) / speed;
+    if (musicSync && i < finalSegs.length) {
+      const beat = nearestBeat(cursor + outDur, signals!.beats, beatTolerance);
+      if (beat !== null) {
+        const newOut = beat - cursor;
+        const winEnd = seg.moment ? windows[seg.moment.window].end : seg.range.end;
+        const maxOut = (winEnd - seg.range.start) / speed;
+        const minOut = Math.max(0.5, config.minSeg * 0.6);
+        if (
+          Math.abs(newOut - outDur) > 0.03 &&
+          newOut >= minOut &&
+          newOut <= Math.min(maxOut, config.maxSeg * 1.5)
+        ) {
+          seg.range.end = round3(seg.range.start + newOut * speed);
+          if (seg.moment) seg.moment.end = seg.range.end;
+          outDur = newOut;
+          beatSnapped++;
+        }
+      }
+    }
+    cursor += outDur;
   });
   const newDuration = round3(cursor);
 
@@ -318,14 +351,16 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
   }
   zooms.sort((a, b) => a.start - b.start);
 
-  /* 10b — flash pops on the cut into the biggest action moments (goals) */
+  /* 10b — flash pops: at most two, only on genuinely big action moments,
+        short and soft (the renderer caps peak opacity at 0.75). */
   const flashes: TimeRange[] = [];
   if (config.flashOnPeaks) {
-    for (const { seg, i } of zoomable.slice(0, Math.min(3, zoomCount))) {
+    for (const { seg, i } of zoomable.slice(0, zoomCount)) {
+      if (flashes.length >= 2) break;
       const m = seg.moment!;
-      if (m.kind !== "action" || m.score < 4) continue;
+      if (m.kind !== "action" || m.score < 4.5) continue;
       const start = finalStarts[i];
-      flashes.push({ start: round3(start), end: round3(start + 0.22) });
+      flashes.push({ start: round3(start), end: round3(start + 0.18) });
     }
   }
 
@@ -396,9 +431,11 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
   if (!config.chronological) parts.push("opened on the biggest moment");
   if (beatSnapped > 0) {
     parts.push(
-      input.signals?.beatSource === "energy"
-        ? `${beatSnapped} cuts on energy peaks`
-        : `${beatSnapped} cuts on the beat`
+      musicSync
+        ? `${beatSnapped} cuts locked to the music`
+        : input.signals?.beatSource === "energy"
+          ? `${beatSnapped} cuts on energy peaks`
+          : `${beatSnapped} cuts on the beat`
     );
   }
   if (ramped) parts.push("slow-mo on the top moment");
@@ -421,7 +458,9 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
       {
         kind: "add-music",
         value: 0.85,
-        note: "Drop a music track on the Music lane — montages carry on the song. Cuts will snap to its beat on the next regenerate.",
+        note: musicSync
+          ? "Cuts are locked to your music's beats. Swapped the song? Regenerate to re-sync."
+          : "Add music (AI Edit panel or Media bin) — the next montage locks its cuts to the song's beat.",
       },
     ],
     hooks: [],
@@ -733,6 +772,31 @@ function applyModifiers(config: MontageConfig, mods?: MontageModifiers): Montage
     flashOnPeaks: config.flashOnPeaks && fx > 0.5,
     favorKind: mods.favorKind,
   };
+}
+
+/** Nearest beat instant within `tolerance` seconds of `t`, or null. */
+function nearestBeat(t: number, beats: number[], tolerance: number): number | null {
+  let best: number | null = null;
+  let bestDist = tolerance;
+  for (const b of beats) {
+    const d = Math.abs(b - t);
+    if (d < bestDist) {
+      bestDist = d;
+      best = b;
+    }
+    if (b > t + tolerance) break;
+  }
+  return best;
+}
+
+/** Median gap between consecutive beats (fallback interval when bpm is null). */
+function medianGap(beats: number[]): number {
+  if (beats.length < 2) return 0.5;
+  const gaps = beats
+    .slice(1)
+    .map((t, i) => t - beats[i])
+    .sort((a, b) => a - b);
+  return gaps[Math.floor(gaps.length / 2)];
 }
 
 /** Tiny deterministic PRNG so "regenerate" gives stable, reproducible takes. */

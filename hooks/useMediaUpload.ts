@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { MediaAsset } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { uploadVideo } from "@/lib/video/client";
 import { assetKind } from "@/lib/timeline/tracks";
@@ -29,9 +30,16 @@ export interface UploadProgress {
 export function useMediaUpload() {
   const [uploading, setUploading] = useState<UploadProgress | null>(null);
 
-  const handleFiles = async (files: FileList | File[]) => {
+  /** Uploads every supported file; resolves with the registered assets.
+      `opts.silentAudioTip` suppresses the "drop it on Music" hint when the
+      caller places the audio itself (e.g. the Add-music button). */
+  const handleFiles = async (
+    files: FileList | File[],
+    opts?: { silentAudioTip?: boolean }
+  ): Promise<MediaAsset[]> => {
     const list = Array.from(files);
     const addToast = useEditorStore.getState().addToast;
+    const uploaded: MediaAsset[] = [];
     for (let i = 0; i < list.length; i++) {
       const file = list[i];
       const typeOk =
@@ -46,6 +54,7 @@ export function useMediaUpload() {
           setUploading({ name: file.name, progress: p, index: i + 1, total: list.length })
         );
         useEditorStore.getState().addMedia(asset);
+        uploaded.push(asset);
         const kind = assetKind(asset);
         if (kind !== "image") {
           // Warm the analysis cache in the background: smart crop, montage
@@ -63,7 +72,7 @@ export function useMediaUpload() {
         if (kind === "video" && !asset.hasAudio) {
           addToast("info", `"${file.name}" has no audio track — auto captions won't find speech in it.`);
         }
-        if (kind === "audio") {
+        if (kind === "audio" && !opts?.silentAudioTip) {
           addToast("success", `"${file.name}" added — drop it on Music, SFX or Voiceover.`);
         }
       } catch (err) {
@@ -72,6 +81,7 @@ export function useMediaUpload() {
         setUploading(null);
       }
     }
+    return uploaded;
   };
 
   return { uploading, handleFiles };

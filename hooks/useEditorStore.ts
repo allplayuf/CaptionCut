@@ -114,6 +114,9 @@ interface EditorState {
   addMedia: (asset: MediaAsset) => void;
   addClipFromMedia: (mediaId: string) => void;
   addMediaToTrack: (mediaId: string, trackType: TrackType, atTime?: number) => void;
+  /** Set an audio asset as THE soundtrack: replaces the music track's clips,
+      spans the timeline from 0 with montage-friendly volume and fades. */
+  setMusicFromAsset: (mediaId: string) => void;
   deleteClip: (clipId: string) => void;
   /** Delete every selected clip (falls back to the primary selection). */
   deleteSelectedClips: () => void;
@@ -410,6 +413,46 @@ export const useEditorStore = create<EditorState>((set, get) => {
           ...sel(clip.id),
         };
       }),
+
+    setMusicFromAsset: (mediaId) => {
+      const state = get();
+      const asset = state.media.find((m) => m.id === mediaId);
+      if (!asset || assetKind(asset) === "image") return;
+      const hadMusic = (state.tracks.find((t) => t.type === "music")?.clips.length ?? 0) > 0;
+      commit((s) => {
+        const ti = s.tracks.findIndex((t) => t.type === "music");
+        if (ti < 0) return {};
+        const track = s.tracks[ti];
+        if (guardLocked(track)) return {};
+        const projectDur = tracksDuration(s.tracks);
+        const dur = Math.max(
+          0.5,
+          projectDur > 0 ? Math.min(projectDur, asset.duration) : asset.duration
+        );
+        const clip: TimelineClip = {
+          id: nanoid(8),
+          type: "music",
+          assetId: asset.id,
+          startTime: 0,
+          endTime: round3(dur),
+          sourceStart: 0,
+          sourceEnd: round3(Math.min(asset.duration, dur)),
+          volume: 0.6,
+          fadeIn: 0.5,
+          fadeOut: 1.2,
+        };
+        return {
+          tracks: replaceTrack(s.tracks, ti, { ...track, clips: [clip] }),
+          ...sel(clip.id),
+        };
+      });
+      get().addToast(
+        "success",
+        hadMusic
+          ? `Soundtrack swapped to "${asset.originalName}" — regenerate the montage to re-sync the cuts.`
+          : `"${asset.originalName}" set as the soundtrack — montage cuts will lock to its beat.`
+      );
+    },
 
     duplicateClip: (clipId) =>
       commit((s) => {

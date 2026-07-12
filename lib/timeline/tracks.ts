@@ -399,7 +399,11 @@ export function freezeAt(tracks: Track[], time: number): TimelineClip | null {
   return null;
 }
 
-/** White-flash opacity at a timeline time (1 at the flash start, decaying to 0). */
+/** Flash shape shared by preview and export: never a full white-out. */
+export const FLASH_PEAK = 0.75;
+export const FLASH_ATTACK = 0.04;
+
+/** White-flash opacity at a timeline time: 40ms attack to 0.75, then decay. */
 export function flashOpacityAt(tracks: Track[], time: number): number {
   const effects = findTrack(tracks, "effects");
   if (!effects || effects.hidden) return 0;
@@ -407,8 +411,13 @@ export function flashOpacityAt(tracks: Track[], time: number): number {
   for (const clip of effects.clips) {
     if (time >= clip.startTime && time < clip.endTime && clip.effect?.kind === "flash") {
       const dur = Math.max(0.05, clip.endTime - clip.startTime);
-      // Linear decay matches the export's fade=t=out over the clip length.
-      opacity = Math.max(opacity, 1 - (time - clip.startTime) / dur);
+      const p = time - clip.startTime;
+      // Matches the export's fade-in/fade-out alpha ramp on a 0.75-alpha white.
+      const value =
+        p < FLASH_ATTACK
+          ? FLASH_PEAK * (p / FLASH_ATTACK)
+          : FLASH_PEAK * Math.max(0, 1 - (p - FLASH_ATTACK) / Math.max(0.01, dur - FLASH_ATTACK));
+      opacity = Math.max(opacity, value);
     }
   }
   return opacity;
