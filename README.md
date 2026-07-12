@@ -112,14 +112,17 @@ The montage engine (`lib/autoEdit/montage.ts`) ships seven presets with real pac
 
 - **Start screen** — first-run onboarding with drag-and-drop upload, workflow explanation and recent projects.
 - **Upload** — drag & drop, multiple videos, vertical or horizontal (anything is cover-cropped to 9:16); friendly errors for unsupported/oversized files (512 MB cap); media bin shows real thumbnails, duration/orientation badges and analysis status.
-- **Timeline** — scrub, play/pause (Space), trim by dragging clip edges (Shift disables snapping), split at playhead (S), delete (Del), duplicate (Ctrl+D), copy/paste (Ctrl+C/V), drag-reorder, **multi-select** (Ctrl/Cmd-click, group delete), Home/End jumps, zoom in/out, filmstrip thumbnails + audio waveforms.
-- **Effects** — punch-in zooms, **freeze-frames** (hold the frame while music keeps playing), **flash pops** (soft white accent — 40 ms attack, 0.75 peak, smooth decay; never a white-out) and one-click **instant replay** (last 3 s repeated in slow-mo with a zoom) — all previewed live and rendered identically in the export.
-- **Inspector** — Premiere-style contextual panel: clip timing/speed/volume/fades, text style, transform (position/scale/rotation/opacity) with reset, zoom strength/anchor, caption text + timing, project format + overview.
-- **Preview** — **format-aware** (9:16 / 1:1 / 16:9 — switch in the transport bar or Inspector; captions and overlays scale exactly like the export), accurate multi-track playback, **drag text/stickers/images directly in the preview**, scrubber, theater/fullscreen mode, buffering indicator, TikTok safe-zone guides.
+- **Timeline** — scrub, play/pause (Space), trim by dragging clip edges (Shift disables snapping), split at playhead (S), delete (Del), duplicate (Ctrl+D), copy/paste (Ctrl+C/V), drag-reorder, real **multi-select** (Ctrl/Cmd-click toggle, Shift-click range, **drag-marquee** over empty space; group move/duplicate/delete, Alt+←/→ nudge), one-undo-step drags, **beat ticks on the ruler** that clips and captions snap onto, Home/End jumps, zoom in/out, filmstrip thumbnails + audio waveforms.
+- **Effects** — punch-in zooms, **slow zoom** (Ken Burns ramp), **handheld shake** (deterministic — preview matches export frame-for-frame), **cinematic vignette** (+contrast boost), **freeze-frames** (hold the frame while music keeps playing), **flash pops** (soft white accent; never a white-out), one-click **instant replay** (last 3 s in slow-mo with a zoom) and football presets — **Goal impact** (zoom+flash+shake), **Reaction punch**, **Ending freeze** (final-frame hold + editable outro text) — all previewed live and rendered identically in the export.
+- **Per-clip framing** — **Fill** (smart cover-crop around the action) or **Fit** (whole frame letterboxed over a blurred copy of itself), plus **Stabilize** (FFmpeg deshake + slight over-zoom at render time; the preview shows the matching framing and says so honestly).
+- **Inspector** — Premiere-style contextual panel: clip timing/speed/volume/fades, framing (fill/fit/stabilize), text style, transform with reset, all effect parameters, caption text + timing, **multi-selection view** (per-track counts, group actions), project format + overview.
+- **Preview** — **format-aware** (9:16 / 1:1 / 16:9 — switch in the transport bar or Inspector; captions and overlays scale exactly like the export), accurate multi-track playback, **drag text/stickers/images directly in the preview** with center/thirds **snap guides** and safe-margin frame (Shift = free), **drag captions** between the three safe positions, scrubber, theater/fullscreen mode, buffering indicator, TikTok safe-zone guides.
 - **Auto Captions** — one button; editable line-by-line (text + start/end times), click a caption to jump to it, add captions manually.
 - **Styling** — 5 presets (TikTok Bold, MrBeast Style, Clean Minimal, Podcast Clip, Meme Style) plus full control: font, size, weight, colors, stroke, shadow, background box + opacity, ALL CAPS, spoken-word highlight, and three TikTok-safe positions.
 - **Safe zones** — toggleable overlay showing TikTok's top UI, right button rail and bottom caption/music areas.
-- **Projects** — everything autosaves to `data/projects` (1.2 s debounce); the last project reopens automatically, and the Projects menu lets you switch/delete.
+- **Projects & versions** — everything autosaves to `data/projects` (1.2 s debounce); the last project reopens automatically, and the Projects menu lets you switch/delete. The **Versions** menu keeps restore points: save one manually before a risky change, and every auto edit snapshots itself so **Reset to auto edit** always works.
+- **Beat controls** — detected BPM + confidence shown next to the soundtrack (never a silent failure), **manual BPM** override, **tap tempo**, and a beat-sync on/off switch; the resulting grid draws as ticks under the timeline ruler and everything snaps to it.
+- **Export preflight** — before rendering, the exporter verifies every referenced media file still exists on disk (blocking, with filenames) and lists honest notes (e.g. which clips get deshaked or blur-fitted).
 
 ## Notes & limitations (MVP)
 
@@ -127,7 +130,7 @@ The montage engine (`lib/autoEdit/montage.ts`) ships seven presets with real pac
 - The bundled whisper.cpp build is CPU-only; for GPU speed, build whisper.cpp with CUDA/Metal yourself and point `WHISPER_CPP_PATH` at it.
 - Fonts must exist on the machine that runs the export (the presets stick to Windows/mac-safe families: Arial, Arial Black, Impact, Segoe UI, Verdana, …).
 - The caption background box renders with rounded corners in the preview but square corners in the export (libass limitation); background replaces stroke/shadow in both.
-- No optical video stabilization yet — for shaky phone footage, shoot with the phone's built-in stabilization on.
+- **Stabilization is export-time only**: the per-clip "Stabilize" toggle runs FFmpeg's `deshake` (plus a 3% over-zoom to hide edge compensation) during rendering. The browser can't deshake in real time, so the preview shows the matching framing with a badge saying exactly that — it is a shake *reducer*, not gimbal-grade optical stabilization.
 
 ## TODO (post-MVP)
 
@@ -137,4 +140,3 @@ The montage engine (`lib/autoEdit/montage.ts`) ships seven presets with real pac
 - [ ] Background music track + volume ducking
 - [ ] Export queue UI with cancel; clean up old exports automatically
 - [ ] SRT/VTT import & export
-- [ ] Blurred-background "fit" mode as an alternative to center-crop for horizontal footage

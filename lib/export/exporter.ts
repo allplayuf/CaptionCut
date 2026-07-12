@@ -7,7 +7,7 @@ import { runFfmpeg } from "@/lib/server/ffmpeg";
 import { clipSpeed, totalDuration } from "@/lib/video/timeline";
 import { buildAss } from "./ass";
 import { getExportPreset } from "./presets";
-import type { ExportRequest, FreezePayload, ZoomPayload } from "./request";
+import type { ExportRequest, FreezePayload, ShakePayload, VignettePayload, ZoomPayload } from "./request";
 
 export type { ExportRequest } from "./request";
 
@@ -125,13 +125,20 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
       audioInputIndex.push(inputCount++);
     }
 
-    /* ---------------- main track: (clip × zoom) pieces + one concat ----------------
+    /* ---------------- main track: (clip × effect) pieces + one concat ----------------
        The timeline is partitioned so every piece is either fully inside or
-       fully outside a punch-zoom window, and each piece trims straight from
-       its source input with the zoom applied inline. One flat concat — no
-       split/trim/concat fan-out, which deadlocks ffmpeg's filter scheduler
-       on longer graphs. */
-    const pieces = buildPieces(clips, req.zooms ?? [], req.freezes ?? [], outDuration);
+       fully outside each zoom/shake/vignette/freeze window, and each piece
+       trims straight from its source input with its effects applied inline.
+       One flat concat — no split/trim/concat fan-out, which deadlocks
+       ffmpeg's filter scheduler on longer graphs. */
+    const pieces = buildPieces(
+      clips,
+      req.zooms ?? [],
+      req.freezes ?? [],
+      req.shakes ?? [],
+      req.vignettes ?? [],
+      outDuration
+    );
     const filters: string[] = [];
     pieces.forEach((piece, i) => {
       const asset = mediaById.get(piece.clip.mediaId)!;
@@ -140,7 +147,49 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
       const end = piece.srcEnd.toFixed(3);
       const speed = clipSpeed(piece.clip);
       const speedV = speed !== 1 ? `/${speed.toFixed(4)}` : "";
+      const fitMode = piece.clip.fit === "fit";
+      // Shake reduction: deshake the raw segment, then a slight over-zoom
+      // after the canvas crop hides the mirrored border compensation.
+      // (Skipped on freeze pieces — a single cloned frame has no shake.)
+      const stab = Boolean(piece.clip.stabilize) && piece.freezeSrc === null;
+      const deshake = stab ? `,deshake=rx=32:ry=32:edge=mirror` : "";
 
+      /**
+       * Canvas framing from a trimmed piece-local stream:
+       *  fill — cover-scale + smart crop (the classic path);
+       *  fit  — blurred cover copy behind the letterboxed full frame.
+       * Returns the filter-chain suffix; fit mode pushes its side chains.
+       */
+      const frameToCanvas = (streamIn: string, srcA: number, srcB: number): string => {
+        const smart = smartCropOffset(
+          asset,
+          { mediaId: piece.clip.mediaId, sourceStart: srcA, sourceEnd: srcB },
+          CW,
+          CH
+        );
+        if (!fitMode) {
+          return (
+            `${streamIn}` +
+            `scale=${CW}:${CH}:force_original_aspect_ratio=increase,` +
+            `crop=${CW}:${CH}${smart}` +
+            (stab ? `,scale=trunc(iw*1.03/2)*2:trunc(ih*1.03/2)*2,crop=${CW}:${CH}` : "") +
+            `,setsar=1`
+          );
+        }
+        // fit: split into blurred background fill + letterboxed foreground.
+        filters.push(`${streamIn}split=2[pa${i}][pb${i}]`);
+        filters.push(
+          `[pb${i}]scale=${CW}:${CH}:force_original_aspect_ratio=increase,crop=${CW}:${CH},` +
+            `boxblur=luma_radius=24:luma_power=2:chroma_radius=12:chroma_power=2,setsar=1[pbg${i}]`
+        );
+        filters.push(
+          `[pa${i}]scale=${CW}:${CH}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[pfg${i}]`
+        );
+        return `[pbg${i}][pfg${i}]overlay=x=(W-w)/2:y=(H-h)/2:format=yuv420` + (stab ? `,scale=trunc(iw*1.03/2)*2:trunc(ih*1.03/2)*2,crop=${CW}:${CH},setsar=1` : "");
+      };
+
+      // fps is normalized BEFORE any split so the blur-fit overlay's two
+      // branches stay frame-aligned (a post-overlay fps drops a frame).
       let chain: string;
       if (piece.freezeSrc !== null) {
         // Freeze-frame piece: clone one frame for the piece's whole duration.
@@ -148,26 +197,65 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
         const f1 = (piece.freezeSrc + 0.12).toFixed(3);
         const dur = piece.outDur.toFixed(3);
         chain =
-          `[${idx}:v]trim=start=${f0}:end=${f1},setpts=PTS-STARTPTS,` +
-          `scale=${CW}:${CH}:force_original_aspect_ratio=increase,` +
-          `crop=${CW}:${CH}${smartCropOffset(asset, { mediaId: piece.clip.mediaId, sourceStart: piece.freezeSrc, sourceEnd: piece.freezeSrc + 0.12 }, CW, CH)},` +
-          `setsar=1,fps=${preset.fps},` +
-          `tpad=stop_mode=clone:stop_duration=${dur},trim=start=0:end=${dur},setpts=PTS-STARTPTS`;
+          frameToCanvas(
+            `[${idx}:v]trim=start=${f0}:end=${f1},setpts=PTS-STARTPTS,fps=${preset.fps},`,
+            piece.freezeSrc,
+            piece.freezeSrc + 0.12
+          ) + `,tpad=stop_mode=clone:stop_duration=${dur},trim=start=0:end=${dur},setpts=PTS-STARTPTS`;
       } else {
-        chain =
-          `[${idx}:v]trim=start=${start}:end=${end},setpts=(PTS-STARTPTS)${speedV},` +
-          `scale=${CW}:${CH}:force_original_aspect_ratio=increase,` +
-          `crop=${CW}:${CH}${smartCropOffset(asset, { mediaId: piece.clip.mediaId, sourceStart: piece.srcStart, sourceEnd: piece.srcEnd }, CW, CH)},` +
-          `setsar=1,fps=${preset.fps}`;
+        chain = frameToCanvas(
+          `[${idx}:v]trim=start=${start}:end=${end},setpts=(PTS-STARTPTS)${speedV}${deshake},fps=${preset.fps},`,
+          piece.srcStart,
+          piece.srcEnd
+        );
       }
+
+      /* effect stages — each expression uses window-relative time (t + off)
+         so ramps and jitter stay continuous across clip boundaries */
       if (piece.zoom) {
-        const k = piece.zoom.scale;
-        const ax = piece.zoom.anchorX.toFixed(3);
-        const ay = piece.zoom.anchorY.toFixed(3);
+        const z = piece.zoom;
+        const ax = z.anchorX.toFixed(3);
+        const ay = z.anchorY.toFixed(3);
+        const k0 = Math.max(1, z.scale);
+        const k1 = z.endScale !== undefined ? Math.max(1, z.endScale) : k0;
+        if (Math.abs(k1 - k0) < 0.005) {
+          // Constant punch: plain over-scale + anchored crop.
+          chain +=
+            `,scale=trunc(iw*${k0.toFixed(4)}/2)*2:trunc(ih*${k0.toFixed(4)}/2)*2,` +
+            `crop=${CW}:${CH}:trunc((iw-${CW})*${ax}):trunc((ih-${CH})*${ay}),` +
+            `setsar=1`;
+        } else {
+          // Animated ramp: 2x over-sample + zoompan for sub-pixel smoothness.
+          const off = Math.max(0, piece.tlStart - z.start).toFixed(4);
+          const dur = Math.max(0.05, z.end - z.start).toFixed(4);
+          const zExpr = `max(1,${k0.toFixed(4)}+(${k1.toFixed(4)}-${k0.toFixed(4)})*min((it+${off})/${dur},1))`;
+          chain +=
+            `,scale=${CW * 2}:${CH * 2},` +
+            `zoompan=z='${zExpr}':x='(iw-iw/zoom)*${ax}':y='(ih-ih/zoom)*${ay}':d=1:s=${CW}x${CH}:fps=${preset.fps},` +
+            `setsar=1`;
+        }
+      }
+      if (piece.shake) {
+        // Mirrors shakeOffset() in lib/timeline/tracks.ts exactly (amplitudes
+        // scaled from the 1080x1920 reference to this canvas). The crop window
+        // moves opposite to the content shift, hence the minus.
+        const s = piece.shake;
+        const axp = ((18 * s.intensity * CW) / REF_W).toFixed(3);
+        const ayp = ((18 * s.intensity * CH) / REF_H).toFixed(3);
+        const off = Math.max(0, piece.tlStart - s.start).toFixed(4);
+        const T = `(t+${off})`;
+        const jx = `${axp}*(0.62*sin(2*PI*8.3*${T})+0.38*sin(2*PI*3.4*${T}+1.7))`;
+        const jy = `${ayp}*(0.55*sin(2*PI*7.1*${T}+0.9)+0.45*sin(2*PI*2.8*${T}+2.3))`;
         chain +=
-          `,scale=trunc(iw*${k.toFixed(4)}/2)*2:trunc(ih*${k.toFixed(4)}/2)*2,` +
-          `crop=${CW}:${CH}:trunc((iw-${CW})*${ax}):trunc((ih-${CH})*${ay}),` +
+          `,scale=trunc(iw*1.06/2)*2:trunc(ih*1.06/2)*2,` +
+          `crop=${CW}:${CH}:x='max(0,min(iw-${CW},(iw-${CW})/2-(${jx})))':y='max(0,min(ih-${CH},(ih-${CH})/2-(${jy})))',` +
           `setsar=1`;
+      }
+      if (piece.vign) {
+        // Vignette + slight punch — the preview mirrors this with a radial
+        // gradient and a matching CSS contrast/saturation filter.
+        const angle = (Math.PI / 6 + piece.vign.strength * (Math.PI / 3 - Math.PI / 6)).toFixed(4);
+        chain += `,vignette=angle=${angle},eq=contrast=1.05:saturation=1.12`;
       }
       filters.push(`${chain}[v${i}]`);
 
@@ -398,11 +486,22 @@ function smartCropOffset(
 
 /** One render piece of the main track: a source slice with optional effects. */
 interface Piece {
-  clip: { mediaId: string; sourceStart: number; sourceEnd: number; speed?: number };
+  clip: {
+    mediaId: string;
+    sourceStart: number;
+    sourceEnd: number;
+    speed?: number;
+    fit?: "fill" | "fit";
+    stabilize?: boolean;
+  };
   /** Source in/out for this piece, seconds in the source file. */
   srcStart: number;
   srcEnd: number;
+  /** Piece start on the output timeline (for window-relative effect time). */
+  tlStart: number;
   zoom: ZoomPayload | null;
+  shake: ShakePayload | null;
+  vign: VignettePayload | null;
   /** Freeze-frame: source instant whose frame is cloned for the whole piece. */
   freezeSrc: number | null;
   /** Output duration (source span / speed; = timeline span for freezes). */
@@ -417,7 +516,7 @@ function normalizeZooms(zooms: ZoomPayload[], duration: number): ZoomPayload[] {
       start: Math.max(0, Math.min(duration, z.start)),
       end: Math.max(0, Math.min(duration, z.end)),
     }))
-    .filter((z) => z.end - z.start > 0.05 && z.scale > 1.001)
+    .filter((z) => z.end - z.start > 0.05 && Math.max(z.scale, z.endScale ?? 1) > 1.001)
     .sort((a, b) => a.start - b.start)
     .slice(0, MAX_ZOOM_SEGMENTS / 2);
   const out: ZoomPayload[] = [];
@@ -429,38 +528,46 @@ function normalizeZooms(zooms: ZoomPayload[], duration: number): ZoomPayload[] {
   return out;
 }
 
-/** Validated, non-overlapping freeze windows in output-timeline time. */
-function normalizeFreezes(freezes: FreezePayload[], duration: number): FreezePayload[] {
-  const valid = freezes
-    .map((f) => ({
-      start: Math.max(0, Math.min(duration, f.start)),
-      end: Math.max(0, Math.min(duration, f.end)),
+/** Validated, non-overlapping windows in output-timeline time (generic). */
+function normalizeWindows<T extends { start: number; end: number }>(
+  windows: T[],
+  duration: number
+): T[] {
+  const valid = windows
+    .map((w) => ({
+      ...w,
+      start: Math.max(0, Math.min(duration, w.start)),
+      end: Math.max(0, Math.min(duration, w.end)),
     }))
-    .filter((f) => f.end - f.start > 0.05)
+    .filter((w) => w.end - w.start > 0.05)
     .sort((a, b) => a.start - b.start)
     .slice(0, MAX_ZOOM_SEGMENTS / 2);
-  const out: FreezePayload[] = [];
-  for (const f of valid) {
+  const out: T[] = [];
+  for (const w of valid) {
     const last = out[out.length - 1];
-    if (last && f.start < last.end) continue;
-    out.push(f);
+    if (last && w.start < last.end) continue; // overlap within one type — earlier wins
+    out.push(w);
   }
   return out;
 }
 
 /**
  * Partition the main track into pieces cut at every clip boundary AND every
- * zoom/freeze edge, so each piece maps to one source slice with at most one
- * zoom and one freeze applied.
+ * zoom/freeze/shake/vignette edge, so each piece maps to one source slice
+ * with at most one window of each effect type applied.
  */
 function buildPieces(
-  clips: Array<{ mediaId: string; sourceStart: number; sourceEnd: number; speed?: number }>,
+  clips: Array<Piece["clip"]>,
   zooms: ZoomPayload[],
   freezes: FreezePayload[],
+  shakes: ShakePayload[],
+  vignettes: VignettePayload[],
   duration: number
 ): Piece[] {
   const windows = normalizeZooms(zooms, duration);
-  const freezeWins = normalizeFreezes(freezes, duration);
+  const freezeWins = normalizeWindows(freezes, duration);
+  const shakeWins = normalizeWindows(shakes, duration);
+  const vignWins = normalizeWindows(vignettes, duration);
   const pieces: Piece[] = [];
   let cursor = 0;
 
@@ -470,10 +577,10 @@ function buildPieces(
     const t0 = cursor;
     const t1 = cursor + dur;
 
-    // Cut points inside this clip: its own edges + zoom/freeze edges that
-    // fall meaningfully inside it (edges within 50ms of a clip edge snap).
+    // Cut points inside this clip: its own edges + effect edges that fall
+    // meaningfully inside it (edges within 50ms of a clip edge snap).
     const cuts = new Set<number>([t0, t1]);
-    for (const z of [...windows, ...freezeWins]) {
+    for (const z of [...windows, ...freezeWins, ...shakeWins, ...vignWins]) {
       if (z.start > t0 + 0.05 && z.start < t1 - 0.05) cuts.add(z.start);
       if (z.end > t0 + 0.05 && z.end < t1 - 0.05) cuts.add(z.end);
     }
@@ -486,6 +593,8 @@ function buildPieces(
       const mid = (a + b) / 2;
       const zoom = windows.find((z) => mid >= z.start && mid < z.end) ?? null;
       const freeze = freezeWins.find((f) => mid >= f.start && mid < f.end) ?? null;
+      const shake = shakeWins.find((s) => mid >= s.start && mid < s.end) ?? null;
+      const vign = vignWins.find((v) => mid >= v.start && mid < v.end) ?? null;
       // The frozen frame is the one at the freeze window's start, clamped
       // into this clip's source range (cross-clip windows hold each clip's
       // first frame instead).
@@ -499,7 +608,10 @@ function buildPieces(
         clip,
         srcStart: clip.sourceStart + (a - t0) * speed,
         srcEnd: clip.sourceStart + (b - t0) * speed,
+        tlStart: a,
         zoom,
+        shake,
+        vign,
         freezeSrc,
         outDur: b - a,
       });

@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Caption, Track, TimelineClip } from "@/types";
-import { useEditorStore } from "@/hooks/useEditorStore";
+import type { Caption, ClipEffect, Track, TimelineClip } from "@/types";
+import { useEditorStore, type EffectPresetId } from "@/hooks/useEditorStore";
 import { filmstripUrl, mediaUrl } from "@/lib/video/client";
 import { computePeaks, placeholderPeaks } from "@/lib/audio/waveform";
 import { formatTime } from "@/lib/video/timeline";
 import { mainVideoTrack, snapTargets, snapTime, tracksDuration } from "@/lib/timeline/tracks";
+import { timelineBeatMarkers } from "@/lib/autoEdit/signals";
 import {
+  ChevronDown,
   Copy,
   Eye,
   EyeOff,
@@ -19,6 +21,7 @@ import {
   Search,
   Smile,
   Snowflake,
+  Sparkles,
   Type,
   Trash2,
   Undo2,
@@ -68,22 +71,28 @@ export default function Timeline() {
   const past = useEditorStore((s) => s.past);
   const future = useEditorStore((s) => s.future);
 
+  const analyses = useEditorStore((s) => s.analyses);
+  const beat = useEditorStore((s) => s.beat);
   const setCurrentTime = useEditorStore((s) => s.setCurrentTime);
   const setPlaying = useEditorStore((s) => s.setPlaying);
   const selectClip = useEditorStore((s) => s.selectClip);
+  const setSelectedClips = useEditorStore((s) => s.setSelectedClips);
   const selectCaption = useEditorStore((s) => s.selectCaption);
   const selectedCaptionId = useEditorStore((s) => s.selectedCaptionId);
   const splitAtPlayhead = useEditorStore((s) => s.splitAtPlayhead);
   const deleteSelectedClips = useEditorStore((s) => s.deleteSelectedClips);
-  const duplicateClip = useEditorStore((s) => s.duplicateClip);
+  const duplicateSelectedClips = useEditorStore((s) => s.duplicateSelectedClips);
   const moveClipToIndex = useEditorStore((s) => s.moveClipToIndex);
   const moveTimelineClip = useEditorStore((s) => s.moveTimelineClip);
+  const moveSelectedClips = useEditorStore((s) => s.moveSelectedClips);
   const trimTimelineClip = useEditorStore((s) => s.trimTimelineClip);
   const updateCaptionTiming = useEditorStore((s) => s.updateCaptionTiming);
+  const pushHistory = useEditorStore((s) => s.pushHistory);
   const setWaveform = useEditorStore((s) => s.setWaveform);
   const addTextClip = useEditorStore((s) => s.addTextClip);
   const addStickerClip = useEditorStore((s) => s.addStickerClip);
   const addEffectClip = useEditorStore((s) => s.addEffectClip);
+  const applyEffectPreset = useEditorStore((s) => s.applyEffectPreset);
   const insertReplay = useEditorStore((s) => s.insertReplay);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
@@ -94,6 +103,8 @@ export default function Timeline() {
   const [zoom, setZoom] = useState<number | null>(null); // px per second; null = fit
   /** Live drag-reorder of a main-track clip: visual offset + insertion slot. */
   const [reorder, setReorder] = useState<{ clipId: string; dx: number; slot: number } | null>(null);
+  /** Live marquee selection rectangle, in content-div pixel coordinates. */
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const waveformStartedRef = useRef<Set<string>>(new Set());
 
   const duration = Math.max(tracksDuration(tracks), 0.001);
@@ -178,9 +189,80 @@ export default function Timeline() {
     return { marks, step };
   }, [duration, pxPerSec]);
 
+  // Soundtrack beat grid → ruler ticks + snap targets.
+  const beatInfo = useMemo(
+    () => timelineBeatMarkers(tracks, analyses, beat, duration),
+    [tracks, analyses, beat, duration]
+  );
+
+  /** Clip edges + playhead + beat instants — everything drags snap onto. */
+  const allSnapTargets = () => {
+    const targets = snapTargets(tracks, captions, currentTime);
+    if (beatInfo) targets.push(...beatInfo.beats);
+    return targets;
+  };
+
   // Visible tracks: main video always; others when they have clips.
   const visibleTracks = tracks.filter((t) => t.type === "video" || t.clips.length > 0);
   const playheadX = PAD + currentTime * pxPerSec;
+
+  // Vertical lane geometry inside the content div (ruler is 20px tall) —
+  // used to map the marquee rectangle onto clips.
+  const laneGeometry = computeLaneGeometry(visibleTracks);
+
+  /**
+   * Pointer-down on empty lane space: a plain click scrubs to that time, a
+   * drag becomes a marquee that selects every clip it touches (Premiere-style).
+   */
+  const onLaneDown = (e: React.PointerEvent) => {
+    if (duration <= 0.001 || e.button !== 0) return;
+    const rect = contentRef.current!.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    let active = false;
+
+    const clipsInBox = (box: { x0: number; y0: number; x1: number; y1: number }): string[] => {
+      const ids: string[] = [];
+      for (const lane of laneGeometry) {
+        if (lane.track.locked) continue;
+        if (lane.top + lane.height < box.y0 || lane.top > box.y1) continue;
+        for (const clip of lane.track.clips) {
+          const left = PAD + clip.startTime * pxPerSec;
+          const right = PAD + clip.endTime * pxPerSec;
+          if (right >= box.x0 && left <= box.x1) ids.push(clip.id);
+        }
+      }
+      return ids;
+    };
+
+    const move = (ev: PointerEvent) => {
+      const cx = ev.clientX - rect.left;
+      const cy = ev.clientY - rect.top;
+      if (!active && Math.hypot(cx - sx, cy - sy) < 5) return;
+      active = true;
+      const box = {
+        x0: Math.min(sx, cx),
+        y0: Math.min(sy, cy),
+        x1: Math.max(sx, cx),
+        y1: Math.max(sy, cy),
+      };
+      setMarquee(box);
+      setSelectedClips(clipsInBox(box));
+    };
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      setMarquee(null);
+      if (!active) {
+        // Plain click: deselect + move the playhead here.
+        setSelectedClips([]);
+        setPlaying(false);
+        setCurrentTime(timeFromEvent(ev.clientX));
+      }
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
 
   const zoomBy = (factor: number) =>
     setZoom(Math.max(fitPxPerSec * 0.5, Math.min(400, pxPerSec * factor)));
@@ -206,11 +288,16 @@ export default function Timeline() {
           <Scissors size={14} /> Split
         </ToolButton>
         <ToolButton
-          onClick={() => selectedClipId && duplicateClip(selectedClipId)}
-          disabled={!selectedClipId}
-          title="Duplicate selected clip (Ctrl+D)"
+          onClick={duplicateSelectedClips}
+          disabled={selectedClipIds.length === 0 && !selectedClipId}
+          title={
+            selectedClipIds.length > 1
+              ? `Duplicate ${selectedClipIds.length} selected clips (Ctrl+D)`
+              : "Duplicate selected clip (Ctrl+D)"
+          }
         >
           <Copy size={14} />
+          {selectedClipIds.length > 1 && <span>{selectedClipIds.length}</span>}
         </ToolButton>
         <ToolButton
           onClick={deleteSelectedClips}
@@ -218,7 +305,7 @@ export default function Timeline() {
           title={
             selectedClipIds.length > 1
               ? `Delete ${selectedClipIds.length} selected clips (Del)`
-              : "Delete selected clip (Del) · Ctrl+click to multi-select"
+              : "Delete selected clip (Del) · Ctrl+click, Shift+click or drag-marquee to multi-select"
           }
         >
           <Trash2 size={14} />
@@ -231,41 +318,12 @@ export default function Timeline() {
         <ToolButton onClick={() => addStickerClip("🔥")} disabled={duration <= 0.001} title="Add sticker at playhead">
           <Smile size={14} />
         </ToolButton>
-        <ToolButton
-          onClick={() =>
-            addEffectClip(useEditorStore.getState().currentTime, 2, {
-              kind: "zoom",
-              zoomScale: 1.15,
-              anchorX: 0.5,
-              anchorY: 0.45,
-            })
-          }
+        <EffectsMenu
           disabled={duration <= 0.001}
-          title="Add punch-in zoom at playhead"
-        >
-          <Search size={14} /> Zoom
-        </ToolButton>
-        <ToolButton
-          onClick={() => addEffectClip(useEditorStore.getState().currentTime, 1.2, { kind: "freeze" })}
-          disabled={duration <= 0.001}
-          title="Freeze the frame at the playhead (trim the clip to change hold length)"
-        >
-          <Snowflake size={14} />
-        </ToolButton>
-        <ToolButton
-          onClick={() => addEffectClip(useEditorStore.getState().currentTime, 0.25, { kind: "flash" })}
-          disabled={duration <= 0.001}
-          title="White flash pop at the playhead (goal / impact accent)"
-        >
-          <Zap size={14} />
-        </ToolButton>
-        <ToolButton
-          onClick={insertReplay}
-          disabled={duration <= 0.001}
-          title="Instant replay: repeat the last 3 seconds in slow motion"
-        >
-          <Rewind size={14} /> Replay
-        </ToolButton>
+          onAddEffect={(dur, effect) => addEffectClip(useEditorStore.getState().currentTime, dur, effect)}
+          onPreset={applyEffectPreset}
+          onReplay={insertReplay}
+        />
         <div className="ml-auto flex items-center gap-1">
           <ToolButton onClick={() => zoomBy(1 / 1.4)} title="Zoom timeline out (Ctrl+scroll)">
             <ZoomOut size={14} />
@@ -313,6 +371,16 @@ export default function Timeline() {
                   {ruler.step < 1 ? formatTime(t) : formatTime(t).replace(/\.\d$/, "")}
                 </div>
               ))}
+              {/* soundtrack beat ticks — drags and trims snap onto these */}
+              {beatInfo?.beats.map((t, i) => (
+                <div
+                  key={`b${i}`}
+                  className={`pointer-events-none absolute bottom-0 w-px ${
+                    beatInfo.source === "manual" ? "bg-sky-400/70" : "bg-emerald-400/70"
+                  }`}
+                  style={{ left: PAD + t * pxPerSec, height: 6 }}
+                />
+              ))}
             </div>
 
             {/* lanes */}
@@ -328,35 +396,37 @@ export default function Timeline() {
                 reorder={track.type === "video" ? reorder : null}
                 onReorderDrag={onReorderDrag}
                 onReorderEnd={onReorderEnd}
-                onScrub={onScrub}
-                onSelect={(id, additive) => selectClip(id, { additive })}
+                onLaneDown={onLaneDown}
+                onSelect={(id, additive, range) => selectClip(id, { additive, range })}
+                onDragStart={pushHistory}
                 onMove={(clipId, newStart, dragged, snap) => {
-                  if (!snap) {
-                    moveTimelineClip(clipId, newStart);
-                    return;
+                  // Group move when the dragged clip is part of a multi-selection.
+                  const s = useEditorStore.getState();
+                  const grouped = s.selectedClipIds.length > 1 && s.selectedClipIds.includes(clipId);
+                  let start = newStart;
+                  if (snap) {
+                    const targets = allSnapTargets().filter(
+                      (t) => t !== dragged.startTime && t !== dragged.endTime
+                    );
+                    const dur = dragged.endTime - dragged.startTime;
+                    start = snapTime(newStart, targets, SNAP_PX / pxPerSec);
+                    const endSnapped = snapTime(start + dur, targets, SNAP_PX / pxPerSec);
+                    if (endSnapped !== start + dur) start = endSnapped - dur;
                   }
-                  const targets = snapTargets(tracks, captions, currentTime).filter(
-                    (t) => t !== dragged.startTime && t !== dragged.endTime
-                  );
-                  const dur = dragged.endTime - dragged.startTime;
-                  let start = snapTime(newStart, targets, SNAP_PX / pxPerSec);
-                  const endSnapped = snapTime(start + dur, targets, SNAP_PX / pxPerSec);
-                  if (endSnapped !== start + dur) start = endSnapped - dur;
-                  moveTimelineClip(clipId, start);
+                  if (grouped) moveSelectedClips(clipId, start, { transient: true });
+                  else moveTimelineClip(clipId, start, { transient: true });
                 }}
                 onTrim={(clipId, edge, newTime, snap) => {
-                  if (!snap) {
-                    trimTimelineClip(clipId, edge, newTime);
-                    return;
-                  }
-                  const targets = snapTargets(tracks, captions, currentTime);
-                  trimTimelineClip(clipId, edge, snapTime(newTime, targets, SNAP_PX / pxPerSec));
+                  const time = snap
+                    ? snapTime(newTime, allSnapTargets(), SNAP_PX / pxPerSec)
+                    : newTime;
+                  trimTimelineClip(clipId, edge, time, { transient: true });
                 }}
               />
             ))}
 
             {/* captions lane — blocks are draggable and edge-trimmable */}
-            <div className="relative cursor-col-resize border-t border-white/5" style={{ height: 24 }} onPointerDown={onScrub}>
+            <div className="relative cursor-col-resize border-t border-white/5" style={{ height: 24 }} onPointerDown={onLaneDown}>
               {captions.map((cap) => (
                 <CaptionBlock
                   key={cap.id}
@@ -369,11 +439,12 @@ export default function Timeline() {
                     selectCaption(cap.id);
                   }}
                   onSelect={() => selectCaption(cap.id)}
+                  onDragStart={pushHistory}
                   onMove={(newStart, snap) => {
                     const dur = cap.endTime - cap.startTime;
                     let start = newStart;
                     if (snap) {
-                      const targets = snapTargets(tracks, captions, currentTime).filter(
+                      const targets = allSnapTargets().filter(
                         (t) => t !== cap.startTime && t !== cap.endTime
                       );
                       start = snapTime(newStart, targets, SNAP_PX / pxPerSec);
@@ -381,17 +452,29 @@ export default function Timeline() {
                       if (endSnapped !== start + dur) start = endSnapped - dur;
                     }
                     start = Math.max(0, start);
-                    updateCaptionTiming(cap.id, start, start + dur);
+                    updateCaptionTiming(cap.id, start, start + dur, { transient: true });
                   }}
                   onTrim={(edge, newTime, snap) => {
-                    const targets = snapTargets(tracks, captions, currentTime);
-                    const t = snap ? snapTime(newTime, targets, SNAP_PX / pxPerSec) : newTime;
-                    if (edge === "start") updateCaptionTiming(cap.id, t, cap.endTime);
-                    else updateCaptionTiming(cap.id, cap.startTime, t);
+                    const t = snap ? snapTime(newTime, allSnapTargets(), SNAP_PX / pxPerSec) : newTime;
+                    if (edge === "start") updateCaptionTiming(cap.id, t, cap.endTime, { transient: true });
+                    else updateCaptionTiming(cap.id, cap.startTime, t, { transient: true });
                   }}
                 />
               ))}
             </div>
+
+            {/* marquee selection rectangle */}
+            {marquee && (
+              <div
+                className="pointer-events-none absolute z-20 rounded-sm border border-fuchsia-400/70 bg-fuchsia-400/10"
+                style={{
+                  left: marquee.x0,
+                  top: marquee.y0,
+                  width: marquee.x1 - marquee.x0,
+                  height: marquee.y1 - marquee.y0,
+                }}
+              />
+            )}
 
             {/* playhead */}
             {duration > 0.001 && (
@@ -486,9 +569,12 @@ interface TrackLaneProps {
   reorder: { clipId: string; dx: number; slot: number } | null;
   onReorderDrag: (clipId: string, dx: number, clientX: number) => void;
   onReorderEnd: (clipId: string) => void;
-  onScrub: (e: React.PointerEvent) => void;
-  /** `additive` is true for Ctrl/Cmd-click (multi-select toggle). */
-  onSelect: (id: string, additive: boolean) => void;
+  /** Empty-lane pointer down: click scrubs, drag marquee-selects. */
+  onLaneDown: (e: React.PointerEvent) => void;
+  /** `additive` = Ctrl/Cmd-click toggle, `range` = Shift-click span. */
+  onSelect: (id: string, additive: boolean, range: boolean) => void;
+  /** Called once when a move/trim gesture actually starts (history point). */
+  onDragStart: () => void;
   /** `snap` is false while Shift is held (free positioning). */
   onMove: (clipId: string, newStart: number, clip: TimelineClip, snap: boolean) => void;
   onTrim: (clipId: string, edge: "start" | "end", newTime: number, snap: boolean) => void;
@@ -503,8 +589,9 @@ function TrackLane({
   reorder,
   onReorderDrag,
   onReorderEnd,
-  onScrub,
+  onLaneDown,
   onSelect,
+  onDragStart,
   onMove,
   onTrim,
 }: TrackLaneProps) {
@@ -520,9 +607,9 @@ function TrackLane({
 
   return (
     <div
-      className={`relative cursor-col-resize border-t border-white/5 ${track.hidden ? "opacity-35" : ""}`}
+      className={`relative border-t border-white/5 ${track.hidden ? "opacity-35" : ""}`}
       style={{ height }}
-      onPointerDown={onScrub}
+      onPointerDown={onLaneDown}
     >
       {track.clips.map((clip) => (
         <ClipBlock
@@ -540,7 +627,8 @@ function TrackLane({
           height={height}
           selected={selectedClipIds.includes(clip.id)}
           dragDx={reorder?.clipId === clip.id ? reorder.dx : null}
-          onSelect={(additive) => onSelect(clip.id, additive)}
+          onSelect={(additive, range) => onSelect(clip.id, additive, range)}
+          onDragStart={onDragStart}
           onMove={(newStart, snap) => onMove(clip.id, newStart, clip, snap)}
           onReorderDrag={(dx, clientX) => onReorderDrag(clip.id, dx, clientX)}
           onReorderEnd={() => onReorderEnd(clip.id)}
@@ -554,12 +642,57 @@ function TrackLane({
   );
 }
 
+/** One row of the Effects dropdown. */
+function Item({
+  icon,
+  label,
+  hint,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  hint: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition hover:bg-white/8"
+      title={hint}
+    >
+      <span className="flex w-4 justify-center text-zinc-400">{icon}</span>
+      <span className="flex-1 text-xs font-medium text-zinc-200">{label}</span>
+    </button>
+  );
+}
+
+/** Ruler height in px (`h-5`) — lanes stack directly beneath it. */
+const RULER_H = 20;
+
+/** Top offset + height of each visible lane inside the content div. */
+function computeLaneGeometry(
+  visibleTracks: Track[]
+): Array<{ track: Track; top: number; height: number }> {
+  let y = RULER_H;
+  return visibleTracks.map((track) => {
+    const height = TRACK_HEIGHTS[track.type] ?? DEFAULT_TRACK_HEIGHT;
+    const lane = { track, top: y, height };
+    y += height;
+    return lane;
+  });
+}
+
 function clipLabel(clip: TimelineClip, media: { id: string; originalName: string }[]): string {
   if (clip.type === "text" || clip.type === "sticker") return clip.text ?? "";
   if (clip.type === "effects") {
-    if (clip.effect?.kind === "zoom") return `zoom ×${(clip.effect.zoomScale ?? 1).toFixed(2)}`;
-    if (clip.effect?.kind === "freeze") return "❄ freeze";
-    if (clip.effect?.kind === "flash") return "⚡ flash";
+    const fx = clip.effect;
+    if (fx?.kind === "zoom") return `zoom ×${(fx.zoomScale ?? 1).toFixed(2)}`;
+    if (fx?.kind === "slow-zoom") return `↗ slow zoom ×${(fx.zoomScale ?? 1.25).toFixed(2)}`;
+    if (fx?.kind === "shake") return "✋ shake";
+    if (fx?.kind === "vignette") return "◐ vignette";
+    if (fx?.kind === "impact") return "⚽ goal impact";
+    if (fx?.kind === "freeze") return "❄ freeze";
+    if (fx?.kind === "flash") return "⚡ flash";
     return "fx";
   }
   const asset = clip.assetId ? media.find((m) => m.id === clip.assetId) : undefined;
@@ -596,7 +729,8 @@ interface ClipBlockProps {
   selected: boolean;
   /** Visual x offset while this clip is being drag-reordered (main track). */
   dragDx: number | null;
-  onSelect: (additive: boolean) => void;
+  onSelect: (additive: boolean, range: boolean) => void;
+  onDragStart: () => void;
   onMove: (newStart: number, snap: boolean) => void;
   onReorderDrag: (dx: number, clientX: number) => void;
   onReorderEnd: () => void;
@@ -614,6 +748,7 @@ function ClipBlock({
   selected,
   dragDx,
   onSelect,
+  onDragStart,
   onMove,
   onReorderDrag,
   onReorderEnd,
@@ -653,15 +788,19 @@ function ClipBlock({
   const startDrag = (e: React.PointerEvent) => {
     e.stopPropagation();
     const additive = e.ctrlKey || e.metaKey;
-    onSelect(additive);
-    // Ctrl/Cmd-click toggles membership in the multi-selection — no drag.
-    if (additive || !movable) return;
+    const range = e.shiftKey;
+    onSelect(additive, range);
+    // Modifier clicks adjust the multi-selection — no drag.
+    if (additive || range || !movable) return;
     const startX = e.clientX;
     const origStart = clip.startTime;
     let moved = false;
     const move = (ev: PointerEvent) => {
       const dx = ev.clientX - startX;
       if (!moved && Math.abs(dx) < 3) return;
+      // Free-track moves mutate live (transient) — record one history entry
+      // up front. Main-track reorder commits once on release by itself.
+      if (!moved && !isMain) onDragStart();
       moved = true;
       // Main track reorders by insertion; free tracks move in absolute time.
       // Shift disables snapping.
@@ -680,10 +819,16 @@ function ClipBlock({
   const startTrim = (edge: "start" | "end") => (e: React.PointerEvent) => {
     e.stopPropagation();
     e.preventDefault();
-    onSelect(false);
+    onSelect(false, false);
     const startX = e.clientX;
     const orig = edge === "start" ? clip.startTime : clip.endTime;
+    let moved = false;
     const move = (ev: PointerEvent) => {
+      if (!moved) {
+        if (Math.abs(ev.clientX - startX) < 2) return;
+        onDragStart();
+        moved = true;
+      }
       onTrim(edge, orig + (ev.clientX - startX) / pxPerSec, !ev.shiftKey);
     };
     const up = () => {
@@ -757,6 +902,7 @@ function CaptionBlock({
   selected,
   onJump,
   onSelect,
+  onDragStart,
   onMove,
   onTrim,
 }: {
@@ -765,6 +911,7 @@ function CaptionBlock({
   selected: boolean;
   onJump: () => void;
   onSelect: () => void;
+  onDragStart: () => void;
   onMove: (newStart: number, snap: boolean) => void;
   onTrim: (edge: "start" | "end", newTime: number, snap: boolean) => void;
 }) {
@@ -780,6 +927,7 @@ function CaptionBlock({
     const move = (ev: PointerEvent) => {
       const dx = ev.clientX - startX;
       if (!moved && Math.abs(dx) < 3) return;
+      if (!moved) onDragStart();
       moved = true;
       onMove(Math.max(0, origStart + dx / pxPerSec), !ev.shiftKey);
     };
@@ -798,8 +946,15 @@ function CaptionBlock({
     onSelect();
     const startX = e.clientX;
     const orig = edge === "start" ? caption.startTime : caption.endTime;
-    const move = (ev: PointerEvent) =>
+    let moved = false;
+    const move = (ev: PointerEvent) => {
+      if (!moved) {
+        if (Math.abs(ev.clientX - startX) < 2) return;
+        onDragStart();
+        moved = true;
+      }
       onTrim(edge, orig + (ev.clientX - startX) / pxPerSec, !ev.shiftKey);
+    };
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
@@ -829,6 +984,115 @@ function CaptionBlock({
 }
 
 /* ---------------------------------------------------------------- */
+
+/** Toolbar "Effects" dropdown: single effects + one-click football presets. */
+function EffectsMenu({
+  disabled,
+  onAddEffect,
+  onPreset,
+  onReplay,
+}: {
+  disabled: boolean;
+  onAddEffect: (duration: number, effect: ClipEffect) => void;
+  onPreset: (preset: EffectPresetId) => void;
+  onReplay: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [open]);
+
+  const pick = (fn: () => void) => () => {
+    setOpen(false);
+    fn();
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      <ToolButton onClick={() => setOpen((v) => !v)} disabled={disabled} title="Add an effect at the playhead">
+        <Sparkles size={14} /> Effects <ChevronDown size={12} />
+      </ToolButton>
+      {open && (
+        <div className="absolute left-0 top-full z-40 mt-1 w-64 rounded-xl border border-white/10 bg-[#16161f] p-1.5 shadow-2xl shadow-black/60">
+          <p className="px-2.5 pb-1 pt-1.5 text-[9px] font-semibold uppercase tracking-wider text-zinc-600">
+            Effects at playhead
+          </p>
+          <Item
+            icon={<Search size={13} />}
+            label="Punch zoom"
+            hint="Instant zoom-in for 2s — strength/anchor editable in the Inspector"
+            onClick={pick(() => onAddEffect(2, { kind: "zoom", zoomScale: 1.15, anchorX: 0.5, anchorY: 0.45 }))}
+          />
+          <Item
+            icon={<ZoomIn size={13} />}
+            label="Slow zoom (Ken Burns)"
+            hint="Gently ramps from 1× to 1.25× — adds motion to static clips"
+            onClick={pick(() => onAddEffect(2.5, { kind: "slow-zoom", zoomScale: 1.25, anchorX: 0.5, anchorY: 0.45 }))}
+          />
+          <Item
+            icon={<span className="text-[13px] leading-none">✋</span>}
+            label="Handheld shake"
+            hint="Deterministic camera wobble — same motion in preview and export"
+            onClick={pick(() => onAddEffect(1.2, { kind: "shake", intensity: 0.6 }))}
+          />
+          <Item
+            icon={<span className="text-[13px] leading-none">◐</span>}
+            label="Cinematic vignette"
+            hint="Edge darkening + slight contrast/saturation boost"
+            onClick={pick(() => onAddEffect(4, { kind: "vignette", strength: 0.5 }))}
+          />
+          <Item
+            icon={<Snowflake size={13} />}
+            label="Freeze frame"
+            hint="Holds the frame while music keeps playing — trim to set the hold"
+            onClick={pick(() => onAddEffect(1.2, { kind: "freeze" }))}
+          />
+          <Item
+            icon={<Zap size={13} />}
+            label="Flash"
+            hint="Soft white pop — goal / impact accent, never a white-out"
+            onClick={pick(() => onAddEffect(0.25, { kind: "flash" }))}
+          />
+          <div className="my-1 h-px bg-white/8" />
+          <p className="px-2.5 pb-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-600">
+            Football presets
+          </p>
+          <Item
+            icon={<span className="text-[13px] leading-none">⚽</span>}
+            label="Goal impact"
+            hint="Punch zoom + flash + shake in one clip — for actual goals, not filler"
+            onClick={pick(() => onPreset("goal-impact"))}
+          />
+          <Item
+            icon={<span className="text-[13px] leading-none">🎉</span>}
+            label="Reaction punch"
+            hint="Zoom-in anchored high, framed for faces and celebrations"
+            onClick={pick(() => onPreset("reaction"))}
+          />
+          <Item
+            icon={<Rewind size={13} />}
+            label="Instant replay"
+            hint="Repeats the last 3 seconds in slow motion as editable clips"
+            onClick={pick(onReplay)}
+          />
+          <Item
+            icon={<span className="text-[13px] leading-none">🧊</span>}
+            label="Ending freeze"
+            hint="Holds the final strong frame with an editable outro text"
+            onClick={pick(() => onPreset("ending-freeze"))}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ToolButton({
   children,

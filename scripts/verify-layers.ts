@@ -8,13 +8,45 @@ import fs from "fs";
 import path from "path";
 import type { MediaAsset, Project, Track } from "@/types";
 import { migrateTracks, findTrack, tracksDuration } from "@/lib/timeline/tracks";
+import { runFfmpeg } from "@/lib/server/ffmpeg";
 import { buildExportRequest } from "@/lib/export/request";
 import { startExportJob, readJobState, exportOutputPath } from "@/lib/export/exporter";
 
-const PROJECT_FILE = path.join(process.cwd(), "data", "projects", "jbn4Y4xMjH.json");
+const PROJECTS_DIR = path.join(process.cwd(), "data", "projects");
+const MEDIA_DIR = path.join(process.cwd(), "data", "media");
+
+/** Newest saved project with clips and at least two video assets (b-roll source). */
+function loadNewestProject(): Project {
+  const projects = fs
+    .readdirSync(PROJECTS_DIR)
+    .filter((f) => f.endsWith(".json"))
+    .map((f) => path.join(PROJECTS_DIR, f))
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)
+    .map((file) => JSON.parse(fs.readFileSync(file, "utf8")) as Project);
+  const match = projects.find(
+    (p) =>
+      p.media.filter((m) => (m.kind ?? "video") === "video").length >= 2 &&
+      (p.tracks?.some((t) => t.clips.length > 0) || p.clips?.length)
+  );
+  if (!match) throw new Error("need a saved project with clips and 2+ videos in data/projects");
+  return match;
+}
+
+/** Generate the synthetic overlay test assets if they're not on disk yet. */
+async function ensureTestAssets(): Promise<void> {
+  const img = path.join(MEDIA_DIR, "testimg01.png");
+  if (!fs.existsSync(img)) {
+    await runFfmpeg(["-y", "-f", "lavfi", "-i", "color=c=red:s=400x400:d=0.1", "-frames:v", "1", img], {});
+  }
+  const aud = path.join(MEDIA_DIR, "testaud01.mp3");
+  if (!fs.existsSync(aud)) {
+    await runFfmpeg(["-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=10", "-q:a", "9", aud], {});
+  }
+}
 
 async function main() {
-  const project = JSON.parse(fs.readFileSync(PROJECT_FILE, "utf8")) as Project;
+  const project = loadNewestProject();
+  await ensureTestAssets();
   const tracks: Track[] = migrateTracks(project);
   const duration = tracksDuration(tracks);
   console.log(`Base: ${duration.toFixed(1)}s, media: ${project.media.map((m) => m.filename).join(", ")}`);
@@ -30,7 +62,8 @@ async function main() {
     fps: 0, hasAudio: true, kind: "audio",
   };
   const media = [...project.media, testImage, testAudio];
-  const otherVideo = project.media[1]; // o8Gv_xX7iP, not on the main track
+  // Any second video works as b-roll (overlaying the main track with itself is fine too).
+  const otherVideo = project.media.filter((m) => (m.kind ?? "video") === "video")[1];
 
   // b-roll overlay 2–5s with audible audio (exercises overlay + broll-audio mix)
   findTrack(tracks, "broll")!.clips.push({

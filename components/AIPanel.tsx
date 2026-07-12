@@ -22,7 +22,12 @@ import { detectDeadSpace } from "@/lib/autoEdit/detectHighlights";
 import { findBestWindow } from "@/lib/autoEdit/scoreMoments";
 import { generateEditRecipe } from "@/lib/autoEdit/generateEditRecipe";
 import { MONTAGE_PRESETS, generateMontageRecipe } from "@/lib/autoEdit/montage";
-import { buildTimelineSignals, fetchAnalyses, findBestMusicStart } from "@/lib/autoEdit/signals";
+import {
+  buildTimelineSignals,
+  fetchAnalyses,
+  findBestMusicStart,
+  musicBeatConfidence,
+} from "@/lib/autoEdit/signals";
 import {
   Activity,
   Clapperboard,
@@ -109,7 +114,7 @@ export default function AIPanel() {
     }
     try {
       const latest = useEditorStore.getState();
-      return buildTimelineSignals(tracksOverride ?? latest.tracks, latest.media, latest.analyses);
+      return buildTimelineSignals(tracksOverride ?? latest.tracks, latest.media, latest.analyses, latest.beat);
     } catch {
       return null;
     }
@@ -528,6 +533,7 @@ export default function AIPanel() {
             </>
           )}
         </button>
+        {musicAsset && <BeatControls musicAssetId={musicAsset.id} />}
         <button
           onClick={() => void runMontage(0)}
           disabled={disabled}
@@ -785,6 +791,105 @@ export default function AIPanel() {
 }
 
 /* ---------------------------------------------------------------- */
+
+/**
+ * Beat sync status + controls for the current soundtrack: detected BPM with
+ * confidence (never a silent failure), a manual BPM override, tap tempo, and
+ * an on/off switch. Beat markers on the timeline ruler follow these settings.
+ */
+function BeatControls({ musicAssetId }: { musicAssetId: string }) {
+  const tracks = useEditorStore((s) => s.tracks);
+  const analyses = useEditorStore((s) => s.analyses);
+  const beat = useEditorStore((s) => s.beat);
+  const setBeatSettings = useEditorStore((s) => s.setBeatSettings);
+  /** Timestamps of the last few taps for tap-tempo. */
+  const tapsRef = useRef<number[]>([]);
+
+  const audio = analyses[musicAssetId]?.audio;
+  const analyzing = analyses[musicAssetId] === undefined;
+  const confidence = musicBeatConfidence(tracks, analyses);
+  const detectedBpm = audio?.bpm ?? null;
+  const enabled = beat.beatSyncEnabled !== false;
+
+  const status = analyzing
+    ? { label: "Analyzing beat…", tone: "text-zinc-400" }
+    : beat.bpmOverride
+      ? { label: `Manual ${beat.bpmOverride} BPM`, tone: "text-sky-300" }
+      : detectedBpm
+        ? {
+            label: `${detectedBpm} BPM · ${confidence >= 0.5 ? "solid" : "rough"} grid (${Math.round(confidence * 100)}%)`,
+            tone: confidence >= 0.5 ? "text-emerald-300" : "text-amber-300",
+          }
+        : { label: "No clear tempo — cuts use the song's energy hits", tone: "text-amber-300" };
+
+  const onTap = () => {
+    const now = performance.now();
+    const taps = tapsRef.current.filter((t) => now - t < 3000);
+    taps.push(now);
+    tapsRef.current = taps;
+    if (taps.length >= 3) {
+      const gaps = taps.slice(1).map((t, i) => t - taps[i]);
+      const avg = gaps.reduce((s, g) => s + g, 0) / gaps.length;
+      const bpm = Math.round(60000 / avg);
+      if (bpm >= 40 && bpm <= 220) setBeatSettings({ bpmOverride: bpm });
+    }
+  };
+
+  return (
+    <div className="mb-2 rounded-lg bg-white/4 p-2 ring-1 ring-white/8">
+      <div className="flex items-center justify-between gap-2">
+        <span className={`min-w-0 flex-1 truncate text-[10px] font-medium ${status.tone}`}>
+          ♪ {status.label}
+        </span>
+        <label className="flex shrink-0 cursor-pointer items-center gap-1 text-[10px] text-zinc-400" title="Off = auto edits ignore the beat grid">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setBeatSettings({ beatSyncEnabled: e.target.checked })}
+            className="h-3 w-3 accent-emerald-400"
+          />
+          Beat sync
+        </label>
+      </div>
+      {enabled && (
+        <div className="mt-1.5 flex items-center gap-1">
+          <input
+            type="number"
+            min={40}
+            max={220}
+            value={beat.bpmOverride ?? ""}
+            placeholder={detectedBpm ? `auto (${detectedBpm})` : "BPM"}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              setBeatSettings({ bpmOverride: Number.isFinite(v) && v >= 40 && v <= 220 ? v : null });
+            }}
+            title="Manual BPM — overrides the detected tempo"
+            className="w-20 rounded-lg border-0 bg-white/5 px-2 py-1 text-[10px] font-semibold text-zinc-200 outline-none ring-1 ring-white/10 transition [appearance:textfield] placeholder:text-zinc-600 focus:ring-emerald-400 [&::-webkit-inner-spin-button]:appearance-none"
+          />
+          <button
+            onClick={onTap}
+            className="rounded-lg bg-white/5 px-2 py-1 text-[10px] font-semibold text-zinc-300 ring-1 ring-white/10 transition hover:bg-white/10 active:bg-emerald-500/25"
+            title="Tap along with the song — 3+ taps set the BPM"
+          >
+            Tap tempo
+          </button>
+          {beat.bpmOverride && (
+            <button
+              onClick={() => setBeatSettings({ bpmOverride: null })}
+              className="rounded-lg px-2 py-1 text-[10px] font-medium text-zinc-500 transition hover:bg-white/10 hover:text-zinc-300"
+              title="Back to the detected tempo"
+            >
+              Use detected
+            </button>
+          )}
+          <span className="ml-auto text-[9px] text-zinc-600" title="Beat ticks show under the timeline ruler; drags snap onto them">
+            ticks on ruler
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function HighlightIcon({ kind }: { kind: HighlightMoment["kind"] }) {
   if (kind === "action") return <Zap size={11} className="shrink-0 text-amber-300" />;

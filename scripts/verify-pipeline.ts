@@ -21,10 +21,31 @@ import { analyzeAsset } from "@/lib/server/analyze";
 import { buildExportRequest } from "@/lib/export/request";
 import { startExportJob, readJobState, exportOutputPath } from "@/lib/export/exporter";
 
-const PROJECT_FILE = path.join(process.cwd(), "data", "projects", "8TumD2bjHd.json");
+const PROJECTS_DIR = path.join(process.cwd(), "data", "projects");
+
+/**
+ * Newest saved project that can exercise the whole pipeline (has clips and a
+ * transcript). This script verifies the talky-video path, so captions are
+ * required — run Auto Captions on a project first if none qualifies.
+ */
+function loadNewestProject(): Project {
+  const projects = fs
+    .readdirSync(PROJECTS_DIR)
+    .filter((f) => f.endsWith(".json"))
+    .map((f) => path.join(PROJECTS_DIR, f))
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)
+    .map((file) => JSON.parse(fs.readFileSync(file, "utf8")) as Project)
+    .filter(
+      (p) => p.media.length > 0 && (p.tracks?.some((t) => t.clips.length > 0) || p.clips?.length)
+    );
+  const withCaptions = projects.find((p) => p.captions.length > 0);
+  if (withCaptions) return withCaptions;
+  if (projects.length > 0) return projects[0];
+  throw new Error("no saved project with clips in data/projects — open the editor and add media first");
+}
 
 async function main() {
-  const project = JSON.parse(fs.readFileSync(PROJECT_FILE, "utf8")) as Project;
+  const project = loadNewestProject();
   const tracks = migrateTracks(project);
   const duration = tracksDuration(tracks);
   console.log(`Loaded project "${project.name}": ${duration.toFixed(1)}s, ${project.captions.length} captions`);

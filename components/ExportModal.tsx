@@ -1,14 +1,50 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ExportJobState, ExportPresetId } from "@/types";
+import type { ExportJobState, ExportPresetId, Track } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { formatTime } from "@/lib/video/timeline";
-import { tracksDuration } from "@/lib/timeline/tracks";
+import { mainVideoTrack, tracksDuration } from "@/lib/timeline/tracks";
 import { buildExportRequest } from "@/lib/export/request";
 import { EXPORT_PRESETS } from "@/lib/export/presets";
 import { FORMATS } from "@/lib/video/formats";
-import { CheckCircle2, Download, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, X } from "lucide-react";
+
+interface Preflight {
+  /** Names of media files whose bytes are gone from disk — blocks export. */
+  missingMedia: string[];
+  /** Non-blocking heads-ups (stabilization, blur-fit, …). */
+  notes: string[];
+  checking: boolean;
+}
+
+/** Render validation: verify every referenced media file still exists on disk. */
+async function runPreflight(tracks: Track[], media: { id: string; originalName: string }[]): Promise<string[]> {
+  const referenced = new Set<string>();
+  for (const track of tracks) {
+    for (const clip of track.clips) {
+      if (clip.assetId) referenced.add(clip.assetId);
+    }
+  }
+  const mediaById = new Map(media.map((m) => [m.id, m]));
+  const missing: string[] = [];
+  await Promise.all(
+    [...referenced].map(async (id) => {
+      const name = mediaById.get(id)?.originalName ?? id;
+      if (!mediaById.has(id)) {
+        missing.push(name);
+        return;
+      }
+      try {
+        const r = await fetch(`/api/media/${id}`, { headers: { Range: "bytes=0-0" } });
+        if (!r.ok) missing.push(name);
+      } catch {
+        missing.push(name);
+      }
+    })
+  );
+  return missing.sort();
+}
 
 type Phase =
   | { name: "idle" }
@@ -23,6 +59,7 @@ export default function ExportModal({ open, onClose }: { open: boolean; onClose:
   const [phase, setPhase] = useState<Phase>({ name: "idle" });
   const [presetId, setPresetId] = useState<ExportPresetId>("tiktok");
   const [lastOpen, setLastOpen] = useState(open);
+  const [preflight, setPreflight] = useState<Preflight>({ missingMedia: [], notes: [], checking: false });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [startedAt, setStartedAt] = useState(0);
 
@@ -40,8 +77,36 @@ export default function ExportModal({ open, onClose }: { open: boolean; onClose:
     if (open) {
       setPhase({ name: "idle" });
       setPresetId(FORMATS[format].presetId);
+      setPreflight({ missingMedia: [], notes: [], checking: true });
     }
   }
+
+  // Preflight on open: media presence on disk + honest effect notes.
+  useEffect(() => {
+    if (!open) return;
+    const s = useEditorStore.getState();
+    const mainTrack = mainVideoTrack(s.tracks);
+    const notes: string[] = [];
+    const stabilized = mainTrack.clips.filter((c) => c.stabilize).length;
+    if (stabilized > 0) {
+      notes.push(
+        `${stabilized} clip${stabilized > 1 ? "s" : ""} will be motion-smoothed (deshake) during rendering — the preview showed the framing only.`
+      );
+    }
+    const fitClips = mainTrack.clips.filter((c) => c.fit === "fit").length;
+    if (fitClips > 0) {
+      notes.push(
+        `${fitClips} clip${fitClips > 1 ? "s" : ""} render${fitClips === 1 ? "s" : ""} letterboxed over a blurred background (Fit mode).`
+      );
+    }
+    let cancelled = false;
+    void runPreflight(s.tracks, s.media).then((missingMedia) => {
+      if (!cancelled) setPreflight({ missingMedia, notes, checking: false });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open && pollRef.current) clearInterval(pollRef.current);
@@ -140,6 +205,17 @@ export default function ExportModal({ open, onClose }: { open: boolean; onClose:
 
         {phase.name === "idle" && (
           <>
+            {preflight.missingMedia.length > 0 && (
+              <div className="mb-3 rounded-lg bg-rose-500/10 px-3 py-2 text-[11px] leading-snug text-rose-300">
+                <p className="flex items-center gap-1.5 font-semibold">
+                  <AlertTriangle size={12} /> Missing media — export blocked
+                </p>
+                <p className="mt-1">
+                  These source files are no longer on disk. Re-upload them (or delete their clips)
+                  and try again: {preflight.missingMedia.join(", ")}
+                </p>
+              </div>
+            )}
             {aspect !== format && (
               <p className="mb-3 rounded-lg bg-sky-500/10 px-3 py-2 text-[11px] leading-snug text-sky-300">
                 Your project is set to {format} — this preset re-crops the footage to {aspect} around
@@ -147,6 +223,11 @@ export default function ExportModal({ open, onClose }: { open: boolean; onClose:
                 Inspector to preview {aspect} directly.
               </p>
             )}
+            {preflight.notes.map((note, i) => (
+              <p key={i} className="mb-3 rounded-lg bg-white/5 px-3 py-2 text-[11px] leading-snug text-zinc-400 ring-1 ring-white/8">
+                {note}
+              </p>
+            ))}
             {duration > 180 && (
               <p className="mb-3 rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] leading-snug text-amber-300">
                 This video is over 3 minutes — rendering may take several minutes.
@@ -154,9 +235,10 @@ export default function ExportModal({ open, onClose }: { open: boolean; onClose:
             )}
             <button
               onClick={() => void startExport()}
-              className="w-full rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 py-2.5 text-sm font-bold text-white shadow-lg shadow-fuchsia-500/25 transition hover:brightness-110 active:scale-[0.98]"
+              disabled={preflight.checking || preflight.missingMedia.length > 0}
+              className="w-full rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 py-2.5 text-sm font-bold text-white shadow-lg shadow-fuchsia-500/25 transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
             >
-              Start export
+              {preflight.checking ? "Checking media files…" : "Start export"}
             </button>
           </>
         )}

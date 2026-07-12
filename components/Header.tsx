@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Project, ProjectSummary } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { tracksDuration } from "@/lib/timeline/tracks";
+import { FORMATS } from "@/lib/video/formats";
 import {
   AlertTriangle,
   Check,
@@ -12,7 +13,10 @@ import {
   CloudUpload,
   Download,
   FilePlus2,
+  History,
   Redo2,
+  RotateCcw,
+  Save,
   Trash2,
   Undo2,
 } from "lucide-react";
@@ -151,6 +155,8 @@ export default function Header({ onExport }: { onExport: () => void }) {
         )}
       </div>
 
+      <VersionsMenu />
+
       <div className="mx-1 h-5 w-px bg-white/10" />
 
       <button
@@ -199,9 +205,7 @@ export default function Header({ onExport }: { onExport: () => void }) {
             </>
           )}
         </span>
-        <span className="rounded-full bg-white/5 px-2.5 py-1 font-mono text-[10px] text-zinc-500 ring-1 ring-white/10">
-          9:16 · 1080×1920
-        </span>
+        <FormatBadge />
         <button
           onClick={onExport}
           disabled={tracksDuration(tracks) <= 0}
@@ -211,5 +215,121 @@ export default function Header({ onExport }: { onExport: () => void }) {
         </button>
       </div>
     </header>
+  );
+}
+
+/** Live editing-format chip (follows the Inspector/transport format switch). */
+function FormatBadge() {
+  const format = useEditorStore((s) => s.format);
+  const spec = FORMATS[format];
+  return (
+    <span className="rounded-full bg-white/5 px-2.5 py-1 font-mono text-[10px] text-zinc-500 ring-1 ring-white/10">
+      {spec.label} · {spec.width}×{spec.height}
+    </span>
+  );
+}
+
+/**
+ * Versions dropdown: named restore points for the whole edit. Auto edits
+ * snapshot themselves ("Reset to auto edit"); "Save version" is manual.
+ */
+function VersionsMenu() {
+  const versions = useEditorStore((s) => s.versions);
+  const saveVersion = useEditorStore((s) => s.saveVersion);
+  const restoreVersion = useEditorStore((s) => s.restoreVersion);
+  const deleteVersion = useEditorStore((s) => s.deleteVersion);
+  const resetToAutoEdit = useEditorStore((s) => s.resetToAutoEdit);
+  const addToast = useEditorStore((s) => s.addToast);
+  const hasContent = useEditorStore((s) => tracksDuration(s.tracks) > 0);
+
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const hasAutoEdit = versions.some((v) => v.kind === "auto-edit");
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-zinc-400 transition hover:bg-white/8 hover:text-zinc-200"
+        title="Saved edit versions (restore points)"
+      >
+        <History size={13} /> Versions <ChevronDown size={13} />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-80 rounded-xl border border-white/10 bg-[#16161f] p-1.5 shadow-2xl shadow-black/60">
+          <button
+            onClick={() => {
+              if (!hasContent) {
+                addToast("info", "Nothing on the timeline to snapshot yet.");
+                return;
+              }
+              saveVersion(`Version ${new Date().toLocaleTimeString()}`);
+              addToast("success", "Version saved — restore it from this menu anytime.");
+              setOpen(false);
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-violet-300 transition hover:bg-white/8"
+          >
+            <Save size={14} /> Save version of current edit
+          </button>
+          <button
+            onClick={() => {
+              resetToAutoEdit();
+              setOpen(false);
+            }}
+            disabled={!hasAutoEdit}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-zinc-300 transition hover:bg-white/8 disabled:opacity-40"
+            title={hasAutoEdit ? "Back to the state right after the last auto edit" : "Run an auto edit first"}
+          >
+            <RotateCcw size={14} /> Reset to auto edit
+          </button>
+          {versions.length > 0 && <div className="my-1 h-px bg-white/8" />}
+          {versions.length === 0 && (
+            <p className="px-2.5 py-2 text-[11px] leading-snug text-zinc-600">
+              No versions yet. Auto edits create restore points automatically; save your own before
+              trying something risky.
+            </p>
+          )}
+          {versions.map((v) => (
+            <div
+              key={v.id}
+              className="group flex items-center gap-2 rounded-lg px-2.5 py-1.5 transition hover:bg-white/8"
+            >
+              <button
+                onClick={() => {
+                  restoreVersion(v.id);
+                  setOpen(false);
+                }}
+                className="min-w-0 flex-1 text-left"
+                title="Restore this version (current edit stays one Ctrl+Z away)"
+              >
+                <p className="truncate text-xs font-medium text-zinc-200">
+                  {v.name}
+                  {v.kind !== "manual" && (
+                    <span className="ml-1.5 text-[9px] text-emerald-400/80">auto</span>
+                  )}
+                </p>
+                <p className="text-[10px] text-zinc-500">{new Date(v.createdAt).toLocaleString()}</p>
+              </button>
+              <button
+                onClick={() => deleteVersion(v.id)}
+                className="rounded p-1 text-zinc-600 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-400 group-hover:opacity-100"
+                title="Delete this version"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

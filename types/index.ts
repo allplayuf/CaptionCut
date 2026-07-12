@@ -51,7 +51,17 @@ export interface Clip {
   sourceEnd: number;
   /** Playback rate (1 = normal). Timeline duration = source duration / speed. */
   speed?: number;
+  /** Canvas framing: cover-crop (default) or letterboxed with a blurred fill. */
+  fit?: ClipFit;
+  /** Apply shake reduction (deshake + slight over-zoom) on export. */
+  stabilize?: boolean;
 }
+
+/**
+ * How a main-track clip fills the format canvas: "fill" cover-crops (default),
+ * "fit" letterboxes the whole frame over a blurred copy of itself.
+ */
+export type ClipFit = "fill" | "fit";
 
 /* ------------------------------------------------------------------ */
 /* Multi-track timeline                                                */
@@ -93,14 +103,29 @@ export interface TextClipStyle {
   backgroundColor: string | null;
 }
 
-/** Visual effect applied by an effects-track clip over its time range. */
+/**
+ * Visual effect applied by an effects-track clip over its time range.
+ *
+ * Kinds:
+ *  - zoom       constant punch-in (zoomScale, anchors)
+ *  - slow-zoom  ramps 1 → zoomScale across the clip (Ken Burns / subtle motion)
+ *  - shake      deterministic handheld jitter (intensity 0..1)
+ *  - vignette   cinematic edge darkening + slight contrast boost (strength 0..1)
+ *  - impact     goal-impact combo: punch zoom + white flash + shake in one clip
+ *  - freeze     hold the frame at the clip's start while the timeline runs
+ *  - flash      soft white pop that decays over the clip
+ */
 export interface ClipEffect {
-  kind: "zoom" | "freeze" | "flash";
-  /** Punch-in factor for zoom (1 = none, 1.15 = subtle punch). */
+  kind: "zoom" | "slow-zoom" | "shake" | "vignette" | "impact" | "freeze" | "flash";
+  /** zoom/impact: punch factor; slow-zoom: END scale of the 1→scale ramp. */
   zoomScale?: number;
   /** Zoom anchor as canvas fraction (0.5/0.5 = center). */
   anchorX?: number;
   anchorY?: number;
+  /** shake/impact: jitter strength 0..1. */
+  intensity?: number;
+  /** vignette: darkening strength 0..1. */
+  strength?: number;
 }
 
 /** One clip on any track. Times are absolute timeline seconds. */
@@ -126,6 +151,10 @@ export interface TimelineClip {
   /** Audio fade lengths, seconds. */
   fadeIn?: number;
   fadeOut?: number;
+  /** Main-track framing: cover-crop (default) or blurred-fill letterbox. */
+  fit?: ClipFit;
+  /** Main-track shake reduction: deshake on export, matched framing in preview. */
+  stabilize?: boolean;
   metadata?: Record<string, unknown>;
 }
 
@@ -288,9 +317,18 @@ export interface TimelineSignals {
   hasAudio: boolean;
   /**
    * Where the beat grid came from: a music track, beats in the footage audio,
-   * or the energy-onset fallback grid (cuts land on impacts, not a tempo).
+   * the energy-onset fallback grid (cuts land on impacts, not a tempo), or a
+   * manual BPM the user typed/tapped in.
    */
-  beatSource?: "music" | "footage" | "energy";
+  beatSource?: "music" | "footage" | "energy" | "manual";
+}
+
+/** User-facing beat controls, persisted with the project. */
+export interface BeatSettings {
+  /** Manual tempo override; null/absent = use the detected grid. */
+  bpmOverride?: number | null;
+  /** false = auto edits ignore the beat grid entirely (default true). */
+  beatSyncEnabled?: boolean;
 }
 
 /** A detected "moment worth keeping": goal, celebration, laugh, key line. */
@@ -365,6 +403,21 @@ export interface CaptionStyle {
   emphasisColor?: string | null;
 }
 
+/**
+ * A named snapshot of the edit (timeline + captions + caption style) the user
+ * can restore. "pre-auto-edit"/"auto-edit" pairs are written automatically
+ * around every auto edit so "Reset to auto edit" always works.
+ */
+export interface EditVersion {
+  id: string;
+  name: string;
+  createdAt: number;
+  kind: "manual" | "auto-edit" | "pre-auto-edit";
+  tracks: Track[];
+  captions: Caption[];
+  style: CaptionStyle;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -380,6 +433,10 @@ export interface Project {
   editRecipe?: EditRecipe;
   /** Editing/preview aspect ratio. Absent on old saves (= "9:16"). */
   format?: AspectRatioId;
+  /** Saved edit versions (restore points). Absent on old saves. */
+  versions?: EditVersion[];
+  /** Beat-sync controls (manual BPM, on/off). Absent on old saves. */
+  beat?: BeatSettings;
 }
 
 export interface ProjectSummary {

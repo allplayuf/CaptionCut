@@ -1,5 +1,6 @@
 import type {
   AudioAnalysis,
+  BeatSettings,
   Clip,
   MediaAnalysis,
   MediaAsset,
@@ -44,7 +45,8 @@ export async function fetchAnalyses(
 export function buildTimelineSignals(
   tracks: Track[],
   media: MediaAsset[],
-  analyses: Record<string, MediaAnalysis | null>
+  analyses: Record<string, MediaAnalysis | null>,
+  beatSettings?: BeatSettings
 ): TimelineSignals | null {
   const clips = mainClips(tracks);
   const duration = tracksDuration(tracks);
@@ -110,7 +112,9 @@ export function buildTimelineSignals(
   const music = musicBeats(tracks, analyses);
   let beats = music?.beats.length ? music.beats : dedupeSorted(footageBeats);
   let bpm = music?.beats.length ? music.bpm : footageBeatsBpm(clips, analyses);
-  let beatSource: "music" | "footage" | "energy" = music?.beats.length ? "music" : "footage";
+  let beatSource: NonNullable<TimelineSignals["beatSource"]> = music?.beats.length
+    ? "music"
+    : "footage";
 
   // Fallback grid: footage without a confident musical beat (crowd noise,
   // speech, match audio) still gets beat-synced cuts — they land on energy
@@ -122,6 +126,17 @@ export function buildTimelineSignals(
       bpm = fallback.bpm;
       beatSource = "energy";
     }
+  }
+
+  // User beat controls win over everything detected.
+  if (beatSettings?.beatSyncEnabled === false) {
+    beats = [];
+    bpm = null;
+  } else if (beatSettings?.bpmOverride && beatSettings.bpmOverride > 0) {
+    const grid = manualBeatGrid(beatSettings.bpmOverride, beats, duration);
+    beats = grid;
+    bpm = beatSettings.bpmOverride;
+    beatSource = "manual";
   }
 
   return {
@@ -217,6 +232,61 @@ function footageBeatsBpm(
     if (audio?.bpm) return audio.bpm;
   }
   return null;
+}
+
+/**
+ * Evenly spaced grid at a manual BPM, phase-aligned to the first detected
+ * beat (or 0 when nothing was detected) so it still lines up with the music.
+ */
+function manualBeatGrid(bpm: number, detected: number[], duration: number): number[] {
+  const spacing = 60 / Math.min(300, Math.max(30, bpm));
+  const phase = detected.length > 0 ? detected[0] % spacing : 0;
+  const out: number[] = [];
+  for (let t = phase; t <= duration + 0.001; t += spacing) out.push(round3(t));
+  return out;
+}
+
+/**
+ * Beat instants for the timeline ruler: the soundtrack's detected (or
+ * manual-BPM) grid in timeline seconds, plus its confidence and origin.
+ * Returns null when beat sync is off or there is nothing to show.
+ */
+export function timelineBeatMarkers(
+  tracks: Track[],
+  analyses: Record<string, MediaAnalysis | null>,
+  beatSettings: BeatSettings | undefined,
+  duration: number
+): { beats: number[]; bpm: number | null; source: "music" | "manual"; confidence: number } | null {
+  if (duration <= 0.2 || beatSettings?.beatSyncEnabled === false) return null;
+  const music = musicBeats(tracks, analyses);
+  const confidence = musicBeatConfidence(tracks, analyses);
+  if (beatSettings?.bpmOverride && beatSettings.bpmOverride > 0) {
+    const beats = manualBeatGrid(beatSettings.bpmOverride, music?.beats ?? [], duration).filter(
+      (t) => t <= duration
+    );
+    return { beats, bpm: beatSettings.bpmOverride, source: "manual", confidence: 1 };
+  }
+  if (!music || music.beats.length === 0) return null;
+  return {
+    beats: music.beats.filter((t) => t <= duration),
+    bpm: music.bpm,
+    source: "music",
+    confidence,
+  };
+}
+
+/** Detection confidence (0..1) of the soundtrack's beat grid. */
+export function musicBeatConfidence(
+  tracks: Track[],
+  analyses: Record<string, MediaAnalysis | null>
+): number {
+  const track = findTrack(tracks, "music");
+  if (!track) return 0;
+  for (const clip of track.clips) {
+    const audio = clip.assetId ? analyses[clip.assetId]?.audio : null;
+    if (audio) return Math.max(0, Math.min(1, audio.beatConfidence));
+  }
+  return 0;
 }
 
 function dedupeSorted(times: number[]): number[] {

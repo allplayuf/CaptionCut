@@ -15,6 +15,7 @@ import { Copy, RotateCcw, SlidersHorizontal, Trash2 } from "lucide-react";
 export default function InspectorPanel() {
   const tracks = useEditorStore((s) => s.tracks);
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
+  const selectedClipIds = useEditorStore((s) => s.selectedClipIds);
   const selectedCaptionId = useEditorStore((s) => s.selectedCaptionId);
 
   let found: { track: Track; clip: TimelineClip } | null = null;
@@ -30,7 +31,9 @@ export default function InspectorPanel() {
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-3">
-      {found ? (
+      {selectedClipIds.length > 1 ? (
+        <MultiSelectionInspector />
+      ) : found ? (
         <ClipInspector track={found.track} clip={found.clip} />
       ) : selectedCaptionId ? (
         <CaptionInspector captionId={selectedCaptionId} />
@@ -38,6 +41,92 @@ export default function InspectorPanel() {
         <ProjectInspector />
       )}
     </div>
+  );
+}
+
+/* ---------------------------------------------------------------- */
+/* Multi-selection                                                   */
+/* ---------------------------------------------------------------- */
+
+function MultiSelectionInspector() {
+  const tracks = useEditorStore((s) => s.tracks);
+  const selectedClipIds = useEditorStore((s) => s.selectedClipIds);
+  const deleteSelectedClips = useEditorStore((s) => s.deleteSelectedClips);
+  const duplicateSelectedClips = useEditorStore((s) => s.duplicateSelectedClips);
+  const nudgeSelectedClips = useEditorStore((s) => s.nudgeSelectedClips);
+
+  const ids = new Set(selectedClipIds);
+  const byTrack = tracks
+    .map((t) => ({ track: t, count: t.clips.filter((c) => ids.has(c.id)).length }))
+    .filter((x) => x.count > 0);
+  const hasFree = byTrack.some((x) => x.track.type !== "video");
+
+  return (
+    <>
+      <header>
+        <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+          <SlidersHorizontal size={11} /> Multi-selection
+        </p>
+        <p className="mt-1 text-sm font-semibold text-zinc-100">
+          {selectedClipIds.length} clips selected
+        </p>
+      </header>
+
+      <Section title="Selection">
+        <div className="flex flex-col gap-1">
+          {byTrack.map(({ track, count }) => (
+            <div
+              key={track.id}
+              className="flex items-center justify-between rounded-lg bg-white/5 px-2.5 py-1.5 ring-1 ring-white/8"
+            >
+              <span className="text-[11px] font-medium text-zinc-300">{track.name}</span>
+              <span className="font-mono text-[11px] text-zinc-400">{count}</span>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      {hasFree && (
+        <Section title="Nudge (overlay/audio clips)">
+          <div className="flex gap-1.5">
+            <button
+              onClick={() => nudgeSelectedClips(-1 / 30)}
+              className="flex-1 rounded-lg bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-zinc-300 ring-1 ring-white/10 transition hover:bg-white/10"
+              title="Nudge 1 frame left (Alt+←)"
+            >
+              ← 1 frame
+            </button>
+            <button
+              onClick={() => nudgeSelectedClips(1 / 30)}
+              className="flex-1 rounded-lg bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-zinc-300 ring-1 ring-white/10 transition hover:bg-white/10"
+              title="Nudge 1 frame right (Alt+→)"
+            >
+              1 frame →
+            </button>
+          </div>
+        </Section>
+      )}
+
+      <div className="flex gap-1.5">
+        <button
+          onClick={duplicateSelectedClips}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-zinc-300 ring-1 ring-white/10 transition hover:bg-white/10 hover:text-white"
+        >
+          <Copy size={12} /> Duplicate all
+        </button>
+        <button
+          onClick={deleteSelectedClips}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-rose-500/10 px-2 py-1.5 text-[11px] font-semibold text-rose-300 ring-1 ring-rose-400/20 transition hover:bg-rose-500/20"
+        >
+          <Trash2 size={12} /> Delete all
+        </button>
+      </div>
+
+      <p className="text-[10px] leading-snug text-zinc-600">
+        Drag any selected overlay/audio clip to move the group together. Shift-click selects a
+        range, Ctrl-click toggles, dragging empty timeline space draws a selection box.
+      </p>
+    </>
   );
 }
 
@@ -60,9 +149,12 @@ function ClipInspector({ track, clip }: { track: Track; clip: TimelineClip }) {
   const isSticker = track.type === "sticker";
   const isImage = track.type === "image";
   const isBroll = track.type === "broll";
-  const isZoom = track.type === "effects" && clip.effect?.kind === "zoom";
-  const isFreeze = track.type === "effects" && clip.effect?.kind === "freeze";
-  const isFlash = track.type === "effects" && clip.effect?.kind === "flash";
+  const fxKind = track.type === "effects" ? clip.effect?.kind : undefined;
+  const isZoom = fxKind === "zoom" || fxKind === "slow-zoom" || fxKind === "impact";
+  const isShake = fxKind === "shake" || fxKind === "impact";
+  const isVignette = fxKind === "vignette";
+  const isFreeze = fxKind === "freeze";
+  const isFlash = fxKind === "flash";
   const hasTransform = isText || isSticker || isImage;
   const duration = clip.endTime - clip.startTime;
 
@@ -80,13 +172,17 @@ function ClipInspector({ track, clip }: { track: Track; clip: TimelineClip }) {
   const label =
     isText || isSticker
       ? clip.text ?? ""
-      : isZoom
-        ? "Punch-in zoom"
-        : isFreeze
-          ? "Freeze frame"
-          : isFlash
-            ? "Flash"
-            : asset?.originalName ?? track.name;
+      : fxKind
+        ? {
+            zoom: "Punch-in zoom",
+            "slow-zoom": "Slow zoom",
+            shake: "Handheld shake",
+            vignette: "Cinematic vignette",
+            impact: "Goal impact",
+            freeze: "Freeze frame",
+            flash: "Flash",
+          }[fxKind]
+        : asset?.originalName ?? track.name;
 
   return (
     <>
@@ -238,12 +334,58 @@ function ClipInspector({ track, clip }: { track: Track; clip: TimelineClip }) {
         </Section>
       )}
 
-      {/* zoom effect */}
+      {/* framing: fill/fit + stabilize (main video clips) */}
+      {isMain && (
+        <Section title="Framing">
+          <div className="flex gap-1">
+            {(["fill", "fit"] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => updateTimelineClip(clip.id, { fit: mode === "fill" ? undefined : mode })}
+                className={`flex-1 rounded-lg px-1 py-1.5 text-center ring-1 transition ${
+                  (clip.fit ?? "fill") === mode
+                    ? "bg-violet-500/20 text-violet-200 ring-violet-400"
+                    : "bg-white/5 text-zinc-400 ring-white/10 hover:bg-white/10"
+                }`}
+                title={
+                  mode === "fill"
+                    ? "Cover-crop to the canvas (smart-cropped around the action)"
+                    : "Show the whole frame over a blurred copy of itself"
+                }
+              >
+                <span className="block text-[11px] font-bold">{mode === "fill" ? "Fill" : "Fit"}</span>
+                <span className="block text-[9px] text-zinc-500">
+                  {mode === "fill" ? "smart crop" : "blur background"}
+                </span>
+              </button>
+            ))}
+          </div>
+          <label className="mt-1.5 flex cursor-pointer items-center justify-between rounded-lg bg-white/5 px-2.5 py-2 ring-1 ring-white/8">
+            <span className="text-[11px] font-medium text-zinc-300">Stabilize (reduce shake)</span>
+            <input
+              type="checkbox"
+              checked={Boolean(clip.stabilize)}
+              onChange={(e) =>
+                updateTimelineClip(clip.id, { stabilize: e.target.checked ? true : undefined })
+              }
+              className="h-3.5 w-3.5 accent-violet-400"
+            />
+          </label>
+          {clip.stabilize && (
+            <p className="mt-1 text-[10px] leading-snug text-zinc-600">
+              Motion smoothing (FFmpeg deshake + slight zoom) runs during export — the preview
+              shows the matching framing, not the smoothing itself.
+            </p>
+          )}
+        </Section>
+      )}
+
+      {/* zoom effect (punch / slow / impact) */}
       {isZoom && clip.effect && (
-        <Section title="Punch-in zoom">
+        <Section title={fxKind === "slow-zoom" ? "Slow zoom" : fxKind === "impact" ? "Impact zoom" : "Punch-in zoom"}>
           <SliderField
-            label="Zoom strength"
-            value={clip.effect.zoomScale ?? 1.15}
+            label={fxKind === "slow-zoom" ? "End zoom (ramps from 1×)" : "Zoom strength"}
+            value={clip.effect.zoomScale ?? (fxKind === "slow-zoom" ? 1.25 : fxKind === "impact" ? 1.22 : 1.15)}
             min={1.02}
             max={2}
             step={0.01}
@@ -268,6 +410,45 @@ function ClipInspector({ track, clip }: { track: Track; clip: TimelineClip }) {
             format={(v) => `${Math.round(v * 100)}%`}
             onChange={(v) => updateTimelineClip(clip.id, { effect: { ...clip.effect!, anchorY: v } })}
           />
+        </Section>
+      )}
+
+      {/* shake intensity (shake / impact) */}
+      {isShake && clip.effect && (
+        <Section title="Shake">
+          <SliderField
+            label="Intensity"
+            value={clip.effect.intensity ?? 0.6}
+            min={0.1}
+            max={1}
+            step={0.05}
+            format={(v) => `${Math.round(v * 100)}%`}
+            onChange={(v) => updateTimelineClip(clip.id, { effect: { ...clip.effect!, intensity: v } })}
+          />
+          {fxKind === "impact" && (
+            <p className="text-[10px] leading-snug text-zinc-500">
+              Goal impact = zoom + white flash + this shake, in one clip. The flash fires over the
+              first 0.35s.
+            </p>
+          )}
+        </Section>
+      )}
+
+      {/* vignette strength */}
+      {isVignette && clip.effect && (
+        <Section title="Vignette">
+          <SliderField
+            label="Strength"
+            value={clip.effect.strength ?? 0.5}
+            min={0.05}
+            max={1}
+            step={0.05}
+            format={(v) => `${Math.round(v * 100)}%`}
+            onChange={(v) => updateTimelineClip(clip.id, { effect: { ...clip.effect!, strength: v } })}
+          />
+          <p className="text-[10px] leading-snug text-zinc-500">
+            Darkens the edges and adds a slight contrast/saturation boost — same look in the export.
+          </p>
         </Section>
       )}
 

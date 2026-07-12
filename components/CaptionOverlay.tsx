@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { CSSProperties } from "react";
 import type { Caption, CaptionStyle } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
@@ -24,6 +25,9 @@ export default function CaptionOverlay({ scale }: { scale: number }) {
   const style = useEditorStore((s) => s.style);
   const format = useEditorStore((s) => s.format);
   const currentTime = useEditorStore((s) => s.currentTime);
+  const selectedCaptionId = useEditorStore((s) => s.selectedCaptionId);
+  /** Live position while the caption is being dragged between slots. */
+  const [dragPosition, setDragPosition] = useState<CaptionStyle["position"] | null>(null);
 
   const active = findActiveCaption(captions, currentTime);
   if (!active) return null;
@@ -33,8 +37,38 @@ export default function CaptionOverlay({ scale }: { scale: number }) {
   const xScale = (canvas.width / 1080) * scale;
   const yScale = (canvas.height / 1920) * scale;
 
-  const isCenter = style.position === "center";
-  const bottomMargin = POSITION_BOTTOM_MARGIN[style.position] * yScale;
+  const position = dragPosition ?? style.position;
+  const isCenter = position === "center";
+  const bottomMargin = POSITION_BOTTOM_MARGIN[position] * yScale;
+  const selected = selectedCaptionId === active.id;
+
+  /** Drag the caption vertically; it snaps between the three ASS-safe slots. */
+  const onPointerDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    useEditorStore.getState().selectCaption(active.id);
+    const frameEl = (e.currentTarget as HTMLElement).closest("[data-preview-frame]");
+    const rect = frameEl?.getBoundingClientRect();
+    if (!rect) return;
+    let last: CaptionStyle["position"] | null = null;
+    const slotFor = (clientY: number): CaptionStyle["position"] => {
+      const frac = (clientY - rect.top) / rect.height;
+      return frac < 0.62 ? "center" : frac < 0.8 ? "lower" : "bottom";
+    };
+    const move = (ev: PointerEvent) => {
+      last = slotFor(ev.clientY);
+      setDragPosition(last);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      setDragPosition(null);
+      const s = useEditorStore.getState();
+      if (last && last !== s.style.position) s.setStyle({ position: last });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
 
   const containerStyle: CSSProperties = {
     position: "absolute",
@@ -86,7 +120,17 @@ export default function CaptionOverlay({ scale }: { scale: number }) {
 
   return (
     <div style={containerStyle}>
-      <span style={textStyle}>
+      <span
+        style={{
+          ...textStyle,
+          pointerEvents: "auto",
+          cursor: dragPosition ? "grabbing" : "grab",
+          outline: selected || dragPosition ? "1.5px dashed rgba(255,255,255,0.6)" : undefined,
+          outlineOffset: 4,
+        }}
+        onPointerDown={onPointerDown}
+        title="Drag up/down to move captions between the safe positions"
+      >
         {active.words && (activeWordIndex >= 0 || hasEmphasis) ? (
           active.words.map((w, i) => {
             const wordStyle: CSSProperties = {};

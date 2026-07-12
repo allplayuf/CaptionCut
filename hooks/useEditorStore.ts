@@ -4,10 +4,12 @@ import { create } from "zustand";
 import { nanoid } from "nanoid";
 import type {
   AspectRatioId,
+  BeatSettings,
   Caption,
   CaptionStyle,
   ClipEffect,
   EditRecipe,
+  EditVersion,
   MediaAnalysis,
   MediaAsset,
   Project,
@@ -55,6 +57,10 @@ interface HistoryEntry {
 
 const HISTORY_LIMIT = 100;
 const MIN_CLIP = 0.15;
+const MAX_VERSIONS = 12;
+
+/** One-click football effect presets. */
+export type EffectPresetId = "goal-impact" | "reaction" | "ending-freeze";
 
 interface EditorState {
   // project
@@ -67,6 +73,10 @@ interface EditorState {
   style: CaptionStyle;
   /** Editing/preview aspect ratio (drives the preview canvas + export default). */
   format: AspectRatioId;
+  /** Saved edit versions (restore points). */
+  versions: EditVersion[];
+  /** Beat-sync controls (manual BPM, on/off), persisted with the project. */
+  beat: BeatSettings;
   editRecipe: EditRecipe | null;
   /** Revision at which editRecipe was applied — regenerate is only safe while
       no other edit happened since (-1 = never). */
@@ -110,6 +120,17 @@ interface EditorState {
   // history
   undo: () => void;
   redo: () => void;
+  /** Record the current state as one undo step. Call once at the start of a
+      pointer drag, then apply the drag's updates with `transient: true` so the
+      whole gesture undoes in a single Ctrl+Z. */
+  pushHistory: () => void;
+
+  // versions
+  saveVersion: (name: string, kind?: EditVersion["kind"]) => void;
+  restoreVersion: (id: string) => void;
+  deleteVersion: (id: string) => void;
+  /** Restore the snapshot taken right after the last auto edit. */
+  resetToAutoEdit: () => void;
 
   // media / clips
   addMedia: (asset: MediaAsset) => void;
@@ -122,19 +143,32 @@ interface EditorState {
   /** Delete every selected clip (falls back to the primary selection). */
   deleteSelectedClips: () => void;
   duplicateClip: (clipId: string) => void;
+  /** Duplicate the whole multi-selection in one undo step. */
+  duplicateSelectedClips: () => void;
+  /** Shift every selected free-track clip by `delta` seconds (keyboard nudge). */
+  nudgeSelectedClips: (delta: number) => void;
+  /** Group drag: move all selected free-track clips by the anchor's delta. */
+  moveSelectedClips: (anchorClipId: string, newStart: number, opts?: { transient?: boolean }) => void;
   copyClip: (clipId: string) => void;
   pasteClip: () => void;
   moveClip: (clipId: string, direction: -1 | 1) => void;
   /** Drag-reorder a main-track clip to a new index (ripple re-layout follows). */
   moveClipToIndex: (clipId: string, index: number) => void;
-  moveTimelineClip: (clipId: string, newStart: number) => void;
-  trimTimelineClip: (clipId: string, edge: "start" | "end", newTime: number) => void;
+  moveTimelineClip: (clipId: string, newStart: number, opts?: { transient?: boolean }) => void;
+  trimTimelineClip: (
+    clipId: string,
+    edge: "start" | "end",
+    newTime: number,
+    opts?: { transient?: boolean }
+  ) => void;
   splitAtPlayhead: () => void;
   updateTimelineClip: (clipId: string, patch: Partial<TimelineClip>) => void;
   addTextClip: (text: string, atTime?: number, duration?: number) => void;
   addStickerClip: (emoji: string, atTime?: number) => void;
-  /** Add a zoom/freeze/flash clip to the effects track. */
+  /** Add an effect clip (zoom/slow-zoom/shake/vignette/impact/freeze/flash). */
   addEffectClip: (atTime: number, duration: number, effect: ClipEffect) => void;
+  /** One-click football effect presets at the playhead / timeline end. */
+  applyEffectPreset: (preset: EffectPresetId) => void;
   /** Insert a slow-mo instant replay of the last few seconds at the playhead. */
   insertReplay: () => void;
 
@@ -146,7 +180,12 @@ interface EditorState {
   // captions
   setCaptions: (captions: Caption[]) => void;
   updateCaptionText: (id: string, text: string) => void;
-  updateCaptionTiming: (id: string, startTime: number, endTime: number) => void;
+  updateCaptionTiming: (
+    id: string,
+    startTime: number,
+    endTime: number,
+    opts?: { transient?: boolean }
+  ) => void;
   deleteCaption: (id: string) => void;
   addCaptionAtPlayhead: () => void;
   mergeCaptionWithNext: (id: string) => void;
@@ -164,11 +203,15 @@ interface EditorState {
   setStyle: (patch: Partial<CaptionStyle>) => void;
   applyPreset: (style: CaptionStyle) => void;
   setFormat: (format: AspectRatioId) => void;
+  setBeatSettings: (patch: Partial<BeatSettings>) => void;
 
   // playback / ui
   setCurrentTime: (time: number) => void;
   setPlaying: (playing: boolean) => void;
-  selectClip: (id: string | null, opts?: { additive?: boolean }) => void;
+  /** `additive` = Ctrl/Cmd-click toggle; `range` = Shift-click span select. */
+  selectClip: (id: string | null, opts?: { additive?: boolean; range?: boolean }) => void;
+  /** Replace the whole multi-selection (marquee select). */
+  setSelectedClips: (ids: string[]) => void;
   selectCaption: (id: string | null) => void;
   toggleSafeZones: () => void;
   setTranscribing: (value: boolean) => void;
@@ -200,6 +243,19 @@ export const useEditorStore = create<EditorState>((set, get) => {
         revision: s.revision + 1,
       };
     });
+
+  /** Content mutation WITHOUT a history entry — for live drag updates after a
+      pushHistory() at gesture start (one undo step per gesture, not per event). */
+  const transientSet = (fn: (s: EditorState) => Partial<EditorState>) =>
+    set((s) => {
+      const patch = fn(s);
+      if (Object.keys(patch).length === 0) return s;
+      return { ...patch, revision: s.revision + 1 };
+    });
+
+  /** commit or transientSet, by flag. */
+  const mutate = (transient: boolean | undefined, fn: (s: EditorState) => Partial<EditorState>) =>
+    (transient ? transientSet : commit)(fn);
 
   /** Locate a clip and its track anywhere on the timeline. */
   const locate = (
@@ -248,6 +304,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
     captions: [],
     style: { ...DEFAULT_STYLE },
     format: "9:16",
+    versions: [],
+    beat: { bpmOverride: null, beatSyncEnabled: true },
     editRecipe: null,
     editRecipeRevision: -1,
     revision: 0,
@@ -280,6 +338,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
         captions: [],
         style: { ...DEFAULT_STYLE },
         format: "9:16",
+        versions: [],
+        beat: { bpmOverride: null, beatSyncEnabled: true },
         editRecipe: null,
         editRecipeRevision: -1,
         revision: 0,
@@ -302,6 +362,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
         captions: project.captions ?? [],
         style: { ...DEFAULT_STYLE, ...project.style },
         format: project.format ?? "9:16",
+        versions: project.versions ?? [],
+        beat: { bpmOverride: null, beatSyncEnabled: true, ...project.beat },
         editRecipe: project.editRecipe ?? null,
         editRecipeRevision: -1,
         revision: 0,
@@ -343,6 +405,63 @@ export const useEditorStore = create<EditorState>((set, get) => {
           selectedCaptionId: null,
         };
       }),
+
+    pushHistory: () =>
+      set((s) => ({
+        past: [...s.past, snapshotOf(s)].slice(-HISTORY_LIMIT),
+        future: [],
+      })),
+
+    /* ---------------- versions ---------------- */
+
+    saveVersion: (name, kind = "manual") =>
+      set((s) => {
+        const version: EditVersion = {
+          id: nanoid(8),
+          name: name.trim() || `Version ${s.versions.length + 1}`,
+          createdAt: Date.now(),
+          kind,
+          tracks: s.tracks,
+          captions: s.captions,
+          style: s.style,
+        };
+        // Auto kinds keep only their newest snapshot; manual saves stack up.
+        const kept = kind === "manual" ? s.versions : s.versions.filter((v) => v.kind !== kind);
+        return {
+          versions: [version, ...kept].slice(0, MAX_VERSIONS),
+          revision: s.revision + 1,
+        };
+      }),
+
+    restoreVersion: (id) => {
+      const version = get().versions.find((v) => v.id === id);
+      if (!version) return;
+      commit(() => ({
+        tracks: version.tracks,
+        captions: version.captions,
+        style: version.style,
+        ...sel(null),
+        selectedCaptionId: null,
+        currentTime: 0,
+        isPlaying: false,
+      }));
+      get().addToast("success", `Restored "${version.name}". Ctrl+Z brings the previous edit back.`);
+    },
+
+    deleteVersion: (id) =>
+      set((s) => ({
+        versions: s.versions.filter((v) => v.id !== id),
+        revision: s.revision + 1,
+      })),
+
+    resetToAutoEdit: () => {
+      const version = get().versions.find((v) => v.kind === "auto-edit");
+      if (!version) {
+        get().addToast("info", "No auto edit to reset to — run Create montage or Auto Edit first.");
+        return;
+      }
+      get().restoreVersion(version.id);
+    },
 
     /* ---------------- media & clips ---------------- */
 
@@ -489,6 +608,80 @@ export const useEditorStore = create<EditorState>((set, get) => {
         };
       }),
 
+    duplicateSelectedClips: () => {
+      const ids = get().selectedClipIds;
+      if (ids.length <= 1) {
+        const one = ids[0] ?? get().selectedClipId;
+        if (one) get().duplicateClip(one);
+        return;
+      }
+      commit((s) => {
+        const idSet = new Set(ids);
+        let tracks = s.tracks;
+        let captions = s.captions;
+        const newIds: string[] = [];
+        s.tracks.forEach((track, ti) => {
+          if (track.locked || !track.clips.some((c) => idSet.has(c.id))) return;
+          if (track.type === "video") {
+            // Insert a copy right after each selected clip; ripple lays out.
+            const clips: TimelineClip[] = [];
+            for (const clip of track.clips) {
+              clips.push(clip);
+              if (idSet.has(clip.id)) {
+                const copy = { ...clip, id: nanoid(8) };
+                clips.push(copy);
+                newIds.push(copy.id);
+              }
+            }
+            const newMain = rippleMainTrack({ ...track, clips });
+            captions = remapCaptionsToMainTrack(tracks[ti].clips, newMain.clips, captions);
+            tracks = replaceTrack(tracks, ti, newMain);
+          } else {
+            // Free tracks: each copy lands in the first gap after its original.
+            let next: Track = { ...track, clips: [...track.clips] };
+            for (const clip of track.clips) {
+              if (!idSet.has(clip.id)) continue;
+              const dur = clip.endTime - clip.startTime;
+              const copy = placeWithoutOverlap(next, {
+                ...clip,
+                id: nanoid(8),
+                startTime: clip.endTime,
+                endTime: round3(clip.endTime + dur),
+              });
+              next = { ...next, clips: [...next.clips, copy] };
+              newIds.push(copy.id);
+            }
+            tracks = replaceTrack(tracks, ti, next);
+          }
+        });
+        if (newIds.length === 0) return {};
+        return {
+          tracks,
+          captions,
+          selectedClipIds: newIds,
+          selectedClipId: newIds[newIds.length - 1],
+        };
+      });
+    },
+
+    nudgeSelectedClips: (delta) =>
+      commit((s) => {
+        const ids = new Set(s.selectedClipIds.length ? s.selectedClipIds : s.selectedClipId ? [s.selectedClipId] : []);
+        if (ids.size === 0) return {};
+        return shiftSelectedFreeClips(s, ids, delta, get().addToast) ?? {};
+      }),
+
+    moveSelectedClips: (anchorClipId, newStart, opts) =>
+      mutate(opts?.transient, (s) => {
+        const loc = locate(s.tracks, anchorClipId);
+        if (!loc || loc.track.type === "video") return {};
+        const ids = new Set(s.selectedClipIds);
+        if (!ids.has(anchorClipId)) return {};
+        const delta = newStart - loc.clip.startTime;
+        if (Math.abs(delta) < 0.0005) return {};
+        return shiftSelectedFreeClips(s, ids, delta) ?? {};
+      }),
+
     copyClip: (clipId) => {
       const s = get();
       const loc = locate(s.tracks, clipId);
@@ -592,8 +785,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
         return mainEdit(s, loc.trackIndex, rippleMainTrack({ ...loc.track, clips }));
       }),
 
-    moveTimelineClip: (clipId, newStart) =>
-      commit((s) => {
+    moveTimelineClip: (clipId, newStart, opts) =>
+      mutate(opts?.transient, (s) => {
         const loc = locate(s.tracks, clipId);
         if (!loc || guardLocked(loc.track)) return {};
         if (loc.track.type === "video") return {}; // main track is ripple-ordered
@@ -605,8 +798,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
         return { tracks: replaceTrack(s.tracks, loc.trackIndex, { ...loc.track, clips }) };
       }),
 
-    trimTimelineClip: (clipId, edge, newTime) =>
-      commit((s) => {
+    trimTimelineClip: (clipId, edge, newTime, opts) =>
+      mutate(opts?.transient, (s) => {
         const loc = locate(s.tracks, clipId);
         if (!loc || guardLocked(loc.track)) return {};
         const { clip, track } = loc;
@@ -794,6 +987,84 @@ export const useEditorStore = create<EditorState>((set, get) => {
         };
       }),
 
+    applyEffectPreset: (preset) => {
+      const s = get();
+      const duration = tracksDuration(s.tracks);
+      if (duration <= 0.3) {
+        s.addToast("info", "Add a video to the timeline first.");
+        return;
+      }
+      const t = round3(Math.max(0, Math.min(s.currentTime, duration - 0.3)));
+      commit((st) => {
+        const ei = st.tracks.findIndex((tr) => tr.type === "effects");
+        if (ei < 0) return {};
+        let effects = st.tracks[ei];
+        if (guardLocked(effects)) return {};
+        const addFx = (start: number, dur: number, effect: ClipEffect): TimelineClip => {
+          const clip = placeWithoutOverlap(effects, {
+            id: nanoid(8),
+            type: "effects",
+            startTime: round3(start),
+            endTime: round3(Math.min(duration, start + dur)),
+            effect,
+            metadata: { preset },
+          });
+          effects = { ...effects, clips: [...effects.clips, clip] };
+          return clip;
+        };
+
+        let selectId: string | null = null;
+        let tracks = st.tracks;
+        if (preset === "goal-impact") {
+          selectId = addFx(t, 0.9, {
+            kind: "impact",
+            zoomScale: 1.22,
+            anchorX: 0.5,
+            anchorY: 0.45,
+            intensity: 0.7,
+          }).id;
+        } else if (preset === "reaction") {
+          selectId = addFx(t, 1.0, { kind: "zoom", zoomScale: 1.25, anchorX: 0.5, anchorY: 0.3 }).id;
+        } else if (preset === "ending-freeze") {
+          // Hold the frame going into the ending; add an editable outro text.
+          const hold = Math.min(1.6, Math.max(0.8, duration * 0.15));
+          const start = round3(Math.max(0, duration - hold));
+          selectId = addFx(start, hold, { kind: "freeze" }).id;
+          const txi = st.tracks.findIndex((tr) => tr.type === "text");
+          if (txi >= 0 && !st.tracks[txi].locked) {
+            const textTrack = st.tracks[txi];
+            const textClip = placeWithoutOverlap(textTrack, {
+              id: nanoid(8),
+              type: "text",
+              text: "FOLLOW FOR MORE ⚽",
+              startTime: start,
+              endTime: duration,
+              transform: { x: 0, y: 320, scale: 1, rotation: 0, opacity: 1 },
+              style: {
+                fontFamily: "Arial Black",
+                fontSize: 72,
+                fontWeight: 900,
+                color: "#FFFFFF",
+                strokeColor: "#000000",
+                strokeWidth: 6,
+                backgroundColor: null,
+              },
+            });
+            tracks = replaceTrack(tracks, txi, { ...textTrack, clips: [...textTrack.clips, textClip] });
+          }
+        }
+        tracks = replaceTrack(tracks, ei, effects);
+        return { tracks, ...(selectId ? sel(selectId) : {}) };
+      });
+      const note =
+        preset === "goal-impact"
+          ? "Goal impact added — punch zoom + flash + shake at the playhead."
+          : preset === "reaction"
+            ? "Reaction punch added — zoom-in framed for faces."
+            : "Ending freeze added — final frame holds with an editable outro text.";
+      get().addToast("success", note);
+    },
+
     insertReplay: () => {
       const s = get();
       const vi = s.tracks.findIndex((t) => t.type === "video");
@@ -898,8 +1169,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
         captions: s.captions.map((c) => (c.id === id ? { ...c, text, words: remapWords(c, text) } : c)),
       })),
 
-    updateCaptionTiming: (id, startTime, endTime) =>
-      commit((s) => ({
+    updateCaptionTiming: (id, startTime, endTime, opts) =>
+      mutate(opts?.transient, (s) => ({
         captions: s.captions
           .map((c) => {
             if (c.id !== id) return c;
@@ -1060,23 +1331,31 @@ export const useEditorStore = create<EditorState>((set, get) => {
     },
 
     applyEditRecipe: (recipe) => {
+      // Restore points around every auto edit: "pre-auto-edit" preserves the
+      // raw timeline, "auto-edit" (saved below) powers "Reset to auto edit".
+      get().saveVersion("Before auto edit", "pre-auto-edit");
+      let applied = false;
       commit((s) => {
         const result = applyEditRecipeToTimeline(s.tracks, s.captions, recipe);
         if (!result) {
           get().addToast("error", "Auto edit produced an empty timeline — skipped.");
           return {};
         }
+        applied = true;
         return {
           tracks: result.tracks,
           captions: result.captions,
           editRecipe: recipe,
-          editRecipeRevision: s.revision + 1, // commit() bumps to this value
+          // commit() bumps once, the "auto-edit" saveVersion below once more.
+          editRecipeRevision: s.revision + 2,
           currentTime: 0,
           isPlaying: false,
           ...sel(null),
           selectedCaptionId: null,
         };
       });
+      if (!applied) return;
+      get().saveVersion(`Auto edit — ${recipe.style}`, "auto-edit");
       get().addToast("success", recipe.reasoningSummary);
     },
 
@@ -1093,12 +1372,33 @@ export const useEditorStore = create<EditorState>((set, get) => {
     setStyle: (patch) => commit((s) => ({ style: { ...s.style, ...patch } })),
     applyPreset: (style) => commit(() => ({ style: { ...style } })),
     setFormat: (format) => commit(() => ({ format })),
+    setBeatSettings: (patch) =>
+      set((s) => ({ beat: { ...s.beat, ...patch }, revision: s.revision + 1 })),
 
     setCurrentTime: (time) => set({ currentTime: Math.max(0, time) }),
     setPlaying: (playing) => set({ isPlaying: playing }),
     selectClip: (id, opts) =>
       set((s) => {
         if (!id) return sel(null);
+        if (opts?.range && s.selectedClipId && s.selectedClipId !== id) {
+          // Shift-click: select the span between the anchor and the clicked
+          // clip when both live on the same track; otherwise just add.
+          for (const track of s.tracks) {
+            const ia = track.clips.findIndex((c) => c.id === s.selectedClipId);
+            const ib = track.clips.findIndex((c) => c.id === id);
+            if (ia >= 0 && ib >= 0) {
+              const ordered = [...track.clips].sort((a, b) => a.startTime - b.startTime);
+              const oa = ordered.findIndex((c) => c.id === s.selectedClipId);
+              const ob = ordered.findIndex((c) => c.id === id);
+              const [from, to] = oa < ob ? [oa, ob] : [ob, oa];
+              const span = ordered.slice(from, to + 1).map((c) => c.id);
+              const merged = [...new Set([...s.selectedClipIds, ...span])];
+              return { selectedClipIds: merged, selectedClipId: id };
+            }
+          }
+          const added = s.selectedClipIds.includes(id) ? s.selectedClipIds : [...s.selectedClipIds, id];
+          return { selectedClipIds: added, selectedClipId: id };
+        }
         if (opts?.additive) {
           const ids = s.selectedClipIds.includes(id)
             ? s.selectedClipIds.filter((x) => x !== id)
@@ -1107,6 +1407,11 @@ export const useEditorStore = create<EditorState>((set, get) => {
         }
         return sel(id);
       }),
+    setSelectedClips: (ids) =>
+      set(() => ({
+        selectedClipIds: ids,
+        selectedClipId: ids[ids.length - 1] ?? null,
+      })),
     selectCaption: (id) => set({ selectedCaptionId: id }),
     toggleSafeZones: () => set((s) => ({ showSafeZones: !s.showSafeZones })),
     setTranscribing: (value) => set({ isTranscribing: value }),
@@ -1167,6 +1472,61 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Shift every selected clip on the free (non-main, unlocked) tracks by
+ * `delta` seconds, as a group. The delta is clamped so nothing goes below 0;
+ * the move is rejected (null) if any shifted clip would overlap an
+ * unselected neighbor — predictable "bumps into the obstacle" behavior.
+ */
+function shiftSelectedFreeClips(
+  s: { tracks: Track[] },
+  ids: Set<string>,
+  delta: number,
+  toast?: (kind: Toast["kind"], message: string) => void
+): { tracks: Track[] } | null {
+  let minStart = Infinity;
+  let any = false;
+  for (const track of s.tracks) {
+    if (track.type === "video" || track.locked) continue;
+    for (const clip of track.clips) {
+      if (!ids.has(clip.id)) continue;
+      any = true;
+      minStart = Math.min(minStart, clip.startTime);
+    }
+  }
+  if (!any) return null;
+  const d = Math.max(delta, -minStart);
+  if (Math.abs(d) < 0.0005) return null;
+
+  const tracks = s.tracks.map((track) => {
+    if (track.type === "video" || track.locked || !track.clips.some((c) => ids.has(c.id))) {
+      return track;
+    }
+    const clips = track.clips.map((c) =>
+      ids.has(c.id)
+        ? { ...c, startTime: round3(c.startTime + d), endTime: round3(c.endTime + d) }
+        : c
+    );
+    return { ...track, clips };
+  });
+
+  // Reject moves that land a shifted clip on an unselected neighbor.
+  for (const track of tracks) {
+    if (track.type === "video") continue;
+    for (const clip of track.clips) {
+      if (!ids.has(clip.id)) continue;
+      for (const other of track.clips) {
+        if (other.id === clip.id || ids.has(other.id)) continue;
+        if (clip.startTime < other.endTime - 0.001 && clip.endTime > other.startTime + 0.001) {
+          toast?.("info", "Move blocked — a selected clip would overlap another clip.");
+          return null;
+        }
+      }
+    }
+  }
+  return { tracks };
+}
+
 /** Assemble the current editor state into a serializable Project. */
 export function buildProjectSnapshot(state: {
   projectId: string;
@@ -1177,6 +1537,8 @@ export function buildProjectSnapshot(state: {
   captions: Caption[];
   style: CaptionStyle;
   format: AspectRatioId;
+  versions: EditVersion[];
+  beat: BeatSettings;
   editRecipe: EditRecipe | null;
 }): Project {
   return {
@@ -1191,6 +1553,8 @@ export function buildProjectSnapshot(state: {
     captions: state.captions,
     style: state.style,
     format: state.format,
+    versions: state.versions,
+    beat: state.beat,
     editRecipe: state.editRecipe ?? undefined,
   };
 }

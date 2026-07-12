@@ -88,6 +88,8 @@ export function mainClips(tracks: Track[]): Clip[] {
     sourceStart: c.sourceStart ?? 0,
     sourceEnd: c.sourceEnd ?? 0,
     speed: c.speed,
+    fit: c.fit,
+    stabilize: c.stabilize,
   }));
 }
 
@@ -371,20 +373,84 @@ export function remapOverlayTracks(tracks: Track[], keptRanges: TimeRange[]): Tr
 /* Preview queries                                                     */
 /* ------------------------------------------------------------------ */
 
-/** Active punch-in zoom factor at a timeline time (1 = none). */
-export function zoomAt(tracks: Track[], time: number): { scale: number; anchorX: number; anchorY: number } {
+/* ------------------------------------------------------------------ */
+/* Effect state (shared preview/export math)                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Handheld-shake amplitude in reference-canvas (1080x1920) pixels at
+ * intensity 1. The exporter mirrors these exact constants in its crop-jitter
+ * expressions so the preview shows the exported motion.
+ */
+export const SHAKE_AMP = 18;
+
+/**
+ * Deterministic handheld jitter at `localT` seconds into a shake window —
+ * two detuned sines per axis read as organic camera wobble, and the same
+ * closed form runs in ffmpeg expressions (no per-frame randomness to sync).
+ * Returns offsets in reference-canvas pixels.
+ */
+export function shakeOffset(localT: number, intensity: number): { x: number; y: number } {
+  const a = SHAKE_AMP * Math.max(0, Math.min(1, intensity));
+  return {
+    x: a * (0.62 * Math.sin(2 * Math.PI * 8.3 * localT) + 0.38 * Math.sin(2 * Math.PI * 3.4 * localT + 1.7)),
+    y: a * (0.55 * Math.sin(2 * Math.PI * 7.1 * localT + 0.9) + 0.45 * Math.sin(2 * Math.PI * 2.8 * localT + 2.3)),
+  };
+}
+
+export interface EffectState {
+  /** Combined zoom factor (1 = none). */
+  scale: number;
+  anchorX: number;
+  anchorY: number;
+  /** Shake offsets in reference-canvas pixels. */
+  shakeX: number;
+  shakeY: number;
+  /** Vignette strength 0..1 (0 = off). */
+  vignette: number;
+}
+
+const NO_EFFECT: EffectState = { scale: 1, anchorX: 0.5, anchorY: 0.45, shakeX: 0, shakeY: 0, vignette: 0 };
+
+/** Visual effect state at a timeline time: zoom/slow-zoom/shake/vignette/impact. */
+export function effectStateAt(tracks: Track[], time: number): EffectState {
   const effects = findTrack(tracks, "effects");
-  if (!effects || effects.hidden) return { scale: 1, anchorX: 0.5, anchorY: 0.5 };
+  if (!effects || effects.hidden) return NO_EFFECT;
+  let state = NO_EFFECT;
   for (const clip of effects.clips) {
-    if (time >= clip.startTime && time < clip.endTime && clip.effect?.kind === "zoom") {
-      return {
-        scale: clip.effect.zoomScale ?? 1.15,
-        anchorX: clip.effect.anchorX ?? 0.5,
-        anchorY: clip.effect.anchorY ?? 0.45,
-      };
+    if (time < clip.startTime || time >= clip.endTime || !clip.effect) continue;
+    const fx = clip.effect;
+    const localT = time - clip.startTime;
+    const dur = Math.max(0.05, clip.endTime - clip.startTime);
+    if (state === NO_EFFECT) state = { ...NO_EFFECT };
+
+    if (fx.kind === "zoom" || fx.kind === "impact") {
+      state.scale = Math.max(state.scale, fx.zoomScale ?? (fx.kind === "impact" ? 1.2 : 1.15));
+      state.anchorX = fx.anchorX ?? 0.5;
+      state.anchorY = fx.anchorY ?? 0.45;
+    } else if (fx.kind === "slow-zoom") {
+      const end = fx.zoomScale ?? 1.25;
+      const k = 1 + (end - 1) * Math.min(1, localT / dur);
+      state.scale = Math.max(state.scale, k);
+      state.anchorX = fx.anchorX ?? 0.5;
+      state.anchorY = fx.anchorY ?? 0.45;
+    }
+    if (fx.kind === "shake" || fx.kind === "impact") {
+      const jitter = shakeOffset(localT, fx.intensity ?? 0.6);
+      state.shakeX += jitter.x;
+      state.shakeY += jitter.y;
+    }
+    if (fx.kind === "vignette") {
+      state.vignette = Math.max(state.vignette, fx.strength ?? 0.5);
     }
   }
-  return { scale: 1, anchorX: 0.5, anchorY: 0.5 };
+  return state;
+}
+
+/** Active punch-in zoom factor at a timeline time (1 = none). */
+export function zoomAt(tracks: Track[], time: number): { scale: number; anchorX: number; anchorY: number } {
+  const { scale, anchorX, anchorY } = effectStateAt(tracks, time);
+  return { scale, anchorX, anchorY };
 }
 
 /** Active freeze-frame effect clip at a timeline time (null = none). */
@@ -403,22 +469,28 @@ export function freezeAt(tracks: Track[], time: number): TimelineClip | null {
 export const FLASH_PEAK = 0.75;
 export const FLASH_ATTACK = 0.04;
 
+/** How long the flash component of an "impact" effect lasts. */
+export const IMPACT_FLASH_DUR = 0.35;
+
 /** White-flash opacity at a timeline time: 40ms attack to 0.75, then decay. */
 export function flashOpacityAt(tracks: Track[], time: number): number {
   const effects = findTrack(tracks, "effects");
   if (!effects || effects.hidden) return 0;
   let opacity = 0;
   for (const clip of effects.clips) {
-    if (time >= clip.startTime && time < clip.endTime && clip.effect?.kind === "flash") {
-      const dur = Math.max(0.05, clip.endTime - clip.startTime);
-      const p = time - clip.startTime;
-      // Matches the export's fade-in/fade-out alpha ramp on a 0.75-alpha white.
-      const value =
-        p < FLASH_ATTACK
-          ? FLASH_PEAK * (p / FLASH_ATTACK)
-          : FLASH_PEAK * Math.max(0, 1 - (p - FLASH_ATTACK) / Math.max(0.01, dur - FLASH_ATTACK));
-      opacity = Math.max(opacity, value);
-    }
+    const kind = clip.effect?.kind;
+    if (kind !== "flash" && kind !== "impact") continue;
+    // Impact clips flash only over their opening moments.
+    const end = kind === "impact" ? Math.min(clip.endTime, clip.startTime + IMPACT_FLASH_DUR) : clip.endTime;
+    if (time < clip.startTime || time >= end) continue;
+    const dur = Math.max(0.05, end - clip.startTime);
+    const p = time - clip.startTime;
+    // Matches the export's fade-in/fade-out alpha ramp on a 0.75-alpha white.
+    const value =
+      p < FLASH_ATTACK
+        ? FLASH_PEAK * (p / FLASH_ATTACK)
+        : FLASH_PEAK * Math.max(0, 1 - (p - FLASH_ATTACK) / Math.max(0.01, dur - FLASH_ATTACK));
+    opacity = Math.max(opacity, value);
   }
   return opacity;
 }

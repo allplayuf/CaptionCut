@@ -86,7 +86,7 @@ export default function EditorPage() {
         s.splitAtPlayhead();
       } else if (mod && (e.key === "d" || e.key === "D")) {
         e.preventDefault();
-        if (s.selectedClipId) s.duplicateClip(s.selectedClipId);
+        if (s.selectedClipIds.length > 0 || s.selectedClipId) s.duplicateSelectedClips();
       } else if (mod && (e.key === "c" || e.key === "C")) {
         // Only hijack copy when a clip is selected (text selection still works).
         if (s.selectedClipId && !window.getSelection()?.toString()) {
@@ -116,11 +116,16 @@ export default function EditorPage() {
         (s.selectedClipIds.length > 0 || s.selectedClipId)
       ) {
         s.deleteSelectedClips();
-      } else if (e.key === "ArrowLeft") {
-        // plain = 1s, shift = 1 frame
-        stepFrame(-1, e.shiftKey);
-      } else if (e.key === "ArrowRight") {
-        stepFrame(1, e.shiftKey);
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        const dir = e.key === "ArrowLeft" ? -1 : 1;
+        if (e.altKey && (s.selectedClipIds.length > 0 || s.selectedClipId)) {
+          // Alt = nudge selected overlay/audio clips (1 frame; +Shift = 10).
+          e.preventDefault();
+          s.nudgeSelectedClips(dir * (e.shiftKey ? 10 / 30 : 1 / 30));
+        } else {
+          // plain = 1s, shift = 1 frame
+          stepFrame(dir as -1 | 1, e.shiftKey);
+        }
       }
     };
     window.addEventListener("keydown", onKey);

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { mediaUrl } from "@/lib/video/client";
 import { clipDuration, clipSpeed, formatTime, timelineToSource, totalDuration } from "@/lib/video/timeline";
-import { flashOpacityAt, freezeAt, mainClips, mainVideoTrack, zoomAt } from "@/lib/timeline/tracks";
+import { effectStateAt, flashOpacityAt, freezeAt, mainClips, mainVideoTrack } from "@/lib/timeline/tracks";
 import { FORMATS, FORMAT_IDS } from "@/lib/video/formats";
 import CaptionOverlay from "./CaptionOverlay";
 import SafeZoneOverlay from "./SafeZoneOverlay";
@@ -226,8 +226,23 @@ export default function VideoPreview() {
   }, [pos, media, analyses, canvas.width, canvas.height]);
 
   // Effects at the playhead (visual layers only).
-  const zoom = zoomAt(tracks, currentTime);
+  const fx = effectStateAt(tracks, currentTime);
   const flash = flashOpacityAt(tracks, currentTime);
+
+  // Per-clip framing of the clip under the playhead.
+  const activeMainClip = pos
+    ? videoTrack.clips.find((c) => displayTime >= c.startTime && displayTime < c.endTime) ?? null
+    : null;
+  const fitMode = activeMainClip?.fit === "fit";
+  const stabilized = Boolean(activeMainClip?.stabilize);
+
+  // Shake offsets live on the 1080x1920 reference canvas; scale to screen px
+  // exactly like the exporter scales them to its canvas.
+  const shakePxX = fx.shakeX * (canvas.width / 1080) * scale;
+  const shakePxY = fx.shakeY * (canvas.height / 1920) * scale;
+  // Stabilize preview: the same 1.03 over-zoom the export uses to hide
+  // deshake borders, so the framing matches (smoothing itself is export-only).
+  const visualScale = fx.scale * (stabilized ? 1.03 : 1);
 
   const togglePlay = () => {
     if (!hasContent) return;
@@ -260,6 +275,7 @@ export default function VideoPreview() {
     <div className="flex h-full min-h-0 flex-col items-center bg-[#08080d]">
       <div ref={wrapperRef} className="flex min-h-0 w-full flex-1 items-center justify-center">
         <div
+          data-preview-frame
           className="relative overflow-hidden rounded-2xl bg-black shadow-2xl shadow-black/60 ring-1 ring-white/10"
           style={{ width: frameWidth, height: frameHeight }}
         >
@@ -269,18 +285,29 @@ export default function VideoPreview() {
               <div
                 className="absolute inset-0"
                 style={{
-                  transform: `scale(${zoom.scale})`,
-                  transformOrigin: `${zoom.anchorX * 100}% ${zoom.anchorY * 100}%`,
+                  transform: `translate(${shakePxX.toFixed(2)}px, ${shakePxY.toFixed(2)}px) scale(${visualScale})`,
+                  transformOrigin: `${fx.anchorX * 100}% ${fx.anchorY * 100}%`,
                   // Short + sharp: the export punches instantly on the cut, so
-                  // the preview shouldn't ease in slowly.
-                  transition: "transform 70ms ease-out",
+                  // the preview shouldn't ease in slowly. No easing while a
+                  // shake/slow-zoom animates every frame.
+                  transition: fx.shakeX || fx.shakeY ? "none" : "transform 70ms ease-out",
                   willChange: "transform",
+                  // Mirrors the export's vignette eq boost (contrast/saturation).
+                  filter: fx.vignette > 0 ? "contrast(1.05) saturate(1.12)" : undefined,
                 }}
               >
+                {fitMode && (
+                  <BlurredFitBackground
+                    mediaId={activeMediaId}
+                    sourceTime={pos?.sourceTime ?? 0}
+                    playing={isPlaying}
+                    hidden={videoTrack.hidden}
+                  />
+                )}
                 <video
                   ref={videoRef}
-                  className={`h-full w-full object-cover ${videoTrack.hidden ? "opacity-0" : ""}`}
-                  style={{ objectPosition: `${(cropX * 100).toFixed(1)}% 50%` }}
+                  className={`relative h-full w-full ${fitMode ? "object-contain" : "object-cover"} ${videoTrack.hidden ? "opacity-0" : ""}`}
+                  style={fitMode ? undefined : { objectPosition: `${(cropX * 100).toFixed(1)}% 50%` }}
                   playsInline
                   preload="auto"
                   onClick={togglePlay}
@@ -292,6 +319,16 @@ export default function VideoPreview() {
                 />
                 <VisualOverlays scale={scale} canvasW={canvas.width} canvasH={canvas.height} />
               </div>
+
+              {/* vignette darkening — matches the export's vignette filter */}
+              {fx.vignette > 0 && (
+                <div
+                  className="pointer-events-none absolute inset-0"
+                  style={{
+                    background: `radial-gradient(ellipse at center, transparent 42%, rgba(0,0,0,${(0.55 * fx.vignette).toFixed(3)}) 100%)`,
+                  }}
+                />
+              )}
 
               {/* flash sits above the footage but below text/captions — same
                   stacking as the export (overlay before libass burn-in) */}
@@ -306,6 +343,14 @@ export default function VideoPreview() {
               {buffering && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
+                </div>
+              )}
+              {stabilized && (
+                <div
+                  className="pointer-events-none absolute bottom-2 left-2 rounded-full bg-black/60 px-2 py-0.5 text-[9px] font-semibold text-emerald-300 ring-1 ring-emerald-400/30"
+                  title="Framing matches the export; the motion smoothing itself (deshake) is applied during rendering."
+                >
+                  Stabilized · smoothing applies on export
                 </div>
               )}
             </>
@@ -403,5 +448,49 @@ export default function VideoPreview() {
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Blurred cover-crop of the active clip behind a letterboxed ("fit") frame —
+ * the preview twin of the export's boxblur background fill. It loosely tracks
+ * the main video's clock; sub-100ms drift is invisible under the blur.
+ */
+function BlurredFitBackground({
+  mediaId,
+  sourceTime,
+  playing,
+  hidden,
+}: {
+  mediaId: string | null;
+  sourceTime: number;
+  playing: boolean;
+  hidden: boolean;
+}) {
+  const ref = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !mediaId) return;
+    const src = mediaUrl(mediaId);
+    if (el.dataset.mediaId !== mediaId) {
+      el.dataset.mediaId = mediaId;
+      el.src = src;
+    }
+    if (Math.abs(el.currentTime - sourceTime) > 0.2) el.currentTime = sourceTime;
+    if (playing && el.paused) void el.play().catch(() => {});
+    else if (!playing && !el.paused) el.pause();
+  }, [mediaId, sourceTime, playing]);
+
+  if (!mediaId) return null;
+  return (
+    <video
+      ref={ref}
+      className={`absolute inset-0 h-full w-full object-cover ${hidden ? "opacity-0" : ""}`}
+      style={{ filter: "blur(14px)", transform: "scale(1.06)" }}
+      muted
+      playsInline
+      preload="auto"
+    />
   );
 }

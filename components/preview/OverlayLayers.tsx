@@ -137,13 +137,32 @@ function useMediaSync(
   }, [ref, isPlaying]);
 }
 
+/** Snap targets on the reference canvas: center, rule-of-thirds lines. */
+const SNAP_X = [0, -REF_W / 6, REF_W / 6];
+const SNAP_Y = [0, -REF_H / 6, REF_H / 6];
+/** Snap radius in reference pixels. */
+const SNAP_DIST = 26;
+/** Overlays can't be dragged fully off the canvas. */
+const CLAMP_X = REF_W * 0.55;
+const CLAMP_Y = REF_H * 0.55;
+
+export interface OverlayDragState {
+  /** Live position in reference coordinates (already snapped + clamped). */
+  refX: number;
+  refY: number;
+  /** Guide line the position snapped to (reference coords), if any. */
+  snapX: number | null;
+  snapY: number | null;
+}
+
 /**
- * Drag an overlay around the preview; the transform commits once on release
- * (a single undo step). Pixel deltas convert back to reference coordinates
- * through the same x/y scales used to place the element.
+ * Drag an overlay around the preview with center/thirds snapping and
+ * canvas-bounds clamping; the transform commits once on release (a single
+ * undo step). Pixel deltas convert back to reference coordinates through the
+ * same x/y scales used to place the element.
  */
 function useOverlayDrag(clip: TimelineClip, xScalePx: number, yScalePx: number, defaultScale: number) {
-  const [drag, setDrag] = useState<{ dx: number; dy: number } | null>(null);
+  const [drag, setDrag] = useState<OverlayDragState | null>(null);
 
   const onPointerDown = (e: React.PointerEvent) => {
     e.stopPropagation();
@@ -152,22 +171,54 @@ function useOverlayDrag(clip: TimelineClip, xScalePx: number, yScalePx: number, 
     store.selectClip(clip.id);
     const sx = e.clientX;
     const sy = e.clientY;
-    const move = (ev: PointerEvent) => setDrag({ dx: ev.clientX - sx, dy: ev.clientY - sy });
-    const up = (ev: PointerEvent) => {
+    const t0 = clip.transform ?? {};
+    const baseX = t0.x ?? 0;
+    const baseY = t0.y ?? 0;
+
+    const position = (ev: PointerEvent): OverlayDragState => {
+      let refX = baseX + (ev.clientX - sx) / xScalePx;
+      let refY = baseY + (ev.clientY - sy) / yScalePx;
+      refX = Math.max(-CLAMP_X, Math.min(CLAMP_X, refX));
+      refY = Math.max(-CLAMP_Y, Math.min(CLAMP_Y, refY));
+      let snapX: number | null = null;
+      let snapY: number | null = null;
+      if (!ev.shiftKey) {
+        for (const target of SNAP_X) {
+          if (Math.abs(refX - target) < SNAP_DIST) {
+            refX = target;
+            snapX = target;
+            break;
+          }
+        }
+        for (const target of SNAP_Y) {
+          if (Math.abs(refY - target) < SNAP_DIST) {
+            refY = target;
+            snapY = target;
+            break;
+          }
+        }
+      }
+      return { refX: Math.round(refX), refY: Math.round(refY), snapX, snapY };
+    };
+
+    let last: OverlayDragState | null = null;
+    const move = (ev: PointerEvent) => {
+      if (!last && Math.abs(ev.clientX - sx) < 3 && Math.abs(ev.clientY - sy) < 3) return;
+      last = position(ev);
+      setDrag(last);
+    };
+    const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       setDrag(null);
-      const dx = ev.clientX - sx;
-      const dy = ev.clientY - sy;
-      if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
-      const t = clip.transform ?? {};
+      if (!last) return; // plain click — selection only
       useEditorStore.getState().updateTimelineClip(clip.id, {
         transform: {
-          x: Math.round((t.x ?? 0) + dx / xScalePx),
-          y: Math.round((t.y ?? 0) + dy / yScalePx),
-          scale: t.scale ?? defaultScale,
-          rotation: t.rotation ?? 0,
-          opacity: t.opacity ?? 1,
+          x: last.refX,
+          y: last.refY,
+          scale: t0.scale ?? defaultScale,
+          rotation: t0.rotation ?? 0,
+          opacity: t0.opacity ?? 1,
         },
       });
     };
@@ -176,6 +227,39 @@ function useOverlayDrag(clip: TimelineClip, xScalePx: number, yScalePx: number, 
   };
 
   return { drag, onPointerDown };
+}
+
+/** Center/thirds guide lines + safe-margin frame shown while dragging. */
+function DragGuides({
+  drag,
+  xScalePx,
+  yScalePx,
+}: {
+  drag: OverlayDragState;
+  xScalePx: number;
+  yScalePx: number;
+}) {
+  return (
+    <div className="pointer-events-none absolute inset-0 z-10">
+      {/* safe margins (70px reference inset, like the caption box) */}
+      <div
+        className="absolute border border-dashed border-white/25"
+        style={{ left: 70 * xScalePx, right: 70 * xScalePx, top: 70 * yScalePx, bottom: 70 * yScalePx }}
+      />
+      {drag.snapX !== null && (
+        <div
+          className="absolute inset-y-0 w-px bg-fuchsia-400"
+          style={{ left: `calc(50% + ${drag.snapX * xScalePx}px)` }}
+        />
+      )}
+      {drag.snapY !== null && (
+        <div
+          className="absolute inset-x-0 h-px bg-fuchsia-400"
+          style={{ top: `calc(50% + ${drag.snapY * yScalePx}px)` }}
+        />
+      )}
+    </div>
+  );
 }
 
 function BrollVideo({ clip, asset, muted }: { clip: TimelineClip; asset: MediaAsset; muted: boolean }) {
@@ -210,10 +294,12 @@ function ImageOverlay({
   const yScalePx = (canvasH / REF_H) * scale;
   const { drag, onPointerDown } = useOverlayDrag(clip, xScalePx, yScalePx, 0.8);
   const width = canvasW * (t.scale ?? 0.8) * scale;
+  const posX = drag ? drag.refX : t.x ?? 0;
+  const posY = drag ? drag.refY : t.y ?? 0;
   const style: CSSProperties = {
     position: "absolute",
-    left: `calc(50% + ${(t.x ?? 0) * xScalePx + (drag?.dx ?? 0)}px)`,
-    top: `calc(50% + ${(t.y ?? 0) * yScalePx + (drag?.dy ?? 0)}px)`,
+    left: `calc(50% + ${posX * xScalePx}px)`,
+    top: `calc(50% + ${posY * yScalePx}px)`,
     width,
     transform: `translate(-50%, -50%) rotate(${t.rotation ?? 0}deg)`,
     opacity: t.opacity ?? 1,
@@ -222,8 +308,13 @@ function ImageOverlay({
     outline: selected ? "1.5px dashed rgba(255,255,255,0.75)" : undefined,
     outlineOffset: 2,
   };
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img src={mediaUrl(asset.id)} alt="" style={style} draggable={false} onPointerDown={onPointerDown} />;
+  return (
+    <>
+      {drag && <DragGuides drag={drag} xScalePx={xScalePx} yScalePx={yScalePx} />}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={mediaUrl(asset.id)} alt="" style={style} draggable={false} onPointerDown={onPointerDown} />
+    </>
+  );
 }
 
 function TextSticker({
@@ -242,11 +333,13 @@ function TextSticker({
   // Font size scales with canvas height, matching the ASS export.
   const fontSize = (s.fontSize ?? (sticker ? 160 : 64)) * (t.scale ?? 1) * (canvasH / REF_H) * scale;
   const hasBox = !sticker && s.backgroundColor != null;
+  const posX = drag ? drag.refX : t.x ?? 0;
+  const posY = drag ? drag.refY : t.y ?? 0;
 
   const style: CSSProperties = {
     position: "absolute",
-    left: `calc(50% + ${(t.x ?? 0) * xScalePx + (drag?.dx ?? 0)}px)`,
-    top: `calc(50% + ${(t.y ?? 0) * yScalePx + (drag?.dy ?? 0)}px)`,
+    left: `calc(50% + ${posX * xScalePx}px)`,
+    top: `calc(50% + ${posY * yScalePx}px)`,
     transform: `translate(-50%, -50%) rotate(${t.rotation ?? 0}deg)`,
     opacity: t.opacity ?? 1,
     fontSize,
@@ -278,9 +371,12 @@ function TextSticker({
         }),
   };
   return (
-    <div style={style} onPointerDown={onPointerDown} title="Drag to reposition">
-      {clip.text}
-    </div>
+    <>
+      {drag && <DragGuides drag={drag} xScalePx={xScalePx} yScalePx={yScalePx} />}
+      <div style={style} onPointerDown={onPointerDown} title="Drag to reposition (Shift = no snapping)">
+        {clip.text}
+      </div>
+    </>
   );
 }
 

@@ -47,6 +47,24 @@ export interface ZoomPayload {
   scale: number;
   anchorX: number;
   anchorY: number;
+  /** When set, the zoom ramps scale → endScale across the window (slow zoom). */
+  endScale?: number;
+}
+
+/** Handheld-shake window: deterministic jitter, mirrors shakeOffset(). */
+export interface ShakePayload {
+  start: number;
+  end: number;
+  /** 0..1 */
+  intensity: number;
+}
+
+/** Vignette + slight contrast-boost window. */
+export interface VignettePayload {
+  start: number;
+  end: number;
+  /** 0..1 */
+  strength: number;
 }
 
 /** Freeze-frame window: video holds the frame at `start`, main audio silent. */
@@ -73,6 +91,8 @@ export interface ExportRequest {
   zooms?: ZoomPayload[];
   freezes?: FreezePayload[];
   flashes?: FlashPayload[];
+  shakes?: ShakePayload[];
+  vignettes?: VignettePayload[];
   presetId?: ExportPresetId;
   mainAudioMuted?: boolean;
 }
@@ -186,31 +206,63 @@ export function buildExportRequest(input: {
   const zooms: ZoomPayload[] = [];
   const freezes: FreezePayload[] = [];
   const flashes: FlashPayload[] = [];
+  const shakes: ShakePayload[] = [];
+  const vignettes: VignettePayload[] = [];
   const effects = findTrack(tracks, "effects");
   if (effects && !effects.hidden) {
+    const IMPACT_FLASH = 0.35; // mirrors IMPACT_FLASH_DUR in lib/timeline/tracks
     for (const clip of effects.clips) {
       const start = clamp(clip.startTime);
       const end = clamp(clip.endTime);
       if (end - start < 0.05) continue;
-      if (clip.effect?.kind === "zoom") {
-        const scale = clip.effect.zoomScale ?? 1;
+      const fx = clip.effect;
+      if (!fx) continue;
+      if (fx.kind === "zoom") {
+        const scale = fx.zoomScale ?? 1;
         if (scale <= 1.001) continue;
         zooms.push({
           start,
           end,
           scale: Math.min(2.5, scale),
-          anchorX: clip.effect.anchorX ?? 0.5,
-          anchorY: clip.effect.anchorY ?? 0.45,
+          anchorX: fx.anchorX ?? 0.5,
+          anchorY: fx.anchorY ?? 0.45,
         });
-      } else if (clip.effect?.kind === "freeze") {
+      } else if (fx.kind === "slow-zoom") {
+        const endScale = Math.min(2.5, Math.max(1.01, fx.zoomScale ?? 1.25));
+        zooms.push({
+          start,
+          end,
+          scale: 1,
+          endScale,
+          anchorX: fx.anchorX ?? 0.5,
+          anchorY: fx.anchorY ?? 0.45,
+        });
+      } else if (fx.kind === "impact") {
+        // One clip explodes into its zoom + shake + flash components.
+        zooms.push({
+          start,
+          end,
+          scale: Math.min(2.5, fx.zoomScale ?? 1.2),
+          anchorX: fx.anchorX ?? 0.5,
+          anchorY: fx.anchorY ?? 0.45,
+        });
+        shakes.push({ start, end, intensity: Math.min(1, Math.max(0.1, fx.intensity ?? 0.6)) });
+        flashes.push({ start, end: Math.min(end, start + IMPACT_FLASH) });
+      } else if (fx.kind === "shake") {
+        shakes.push({ start, end, intensity: Math.min(1, Math.max(0.1, fx.intensity ?? 0.6)) });
+      } else if (fx.kind === "vignette") {
+        vignettes.push({ start, end, strength: Math.min(1, Math.max(0.05, fx.strength ?? 0.5)) });
+      } else if (fx.kind === "freeze") {
         freezes.push({ start, end });
-      } else if (clip.effect?.kind === "flash") {
+      } else if (fx.kind === "flash") {
         flashes.push({ start, end });
       }
     }
     zooms.sort((a, b) => a.start - b.start);
     freezes.sort((a, b) => a.start - b.start);
     flashes.sort((a, b) => a.start - b.start);
+    shakes.sort((a, b) => a.start - b.start);
+    vignettes.sort((a, b) => a.start - b.start);
   }
 
   return {
@@ -224,6 +276,8 @@ export function buildExportRequest(input: {
     zooms,
     freezes,
     flashes,
+    shakes,
+    vignettes,
     presetId,
     mainAudioMuted: findTrack(tracks, "video")?.muted ?? false,
   };
