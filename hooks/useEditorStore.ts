@@ -213,6 +213,9 @@ interface EditorState {
 
   // auto edit
   applyRearrange: (keptRanges: TimeRange[], summary?: string) => void;
+  /** Build a rapid vox-pop from answer-only ranges and optionally pin the
+      question on screen, all as one undoable timeline change. */
+  applyFastInterview: (keptRanges: TimeRange[], question: string, showQuestion: boolean) => void;
   applyEditRecipe: (recipe: EditRecipe) => void;
   cleanAllCaptions: () => void;
   setEditRecipe: (recipe: EditRecipe | null) => void;
@@ -1416,6 +1419,77 @@ export const useEditorStore = create<EditorState>((set, get) => {
         };
       });
       if (summary) get().addToast("success", summary);
+    },
+
+    applyFastInterview: (keptRanges, question, showQuestion) => {
+      const ranges = keptRanges.filter((range) => range.end - range.start >= MIN_CLIP);
+      let applied = false;
+      let titleSkipped = false;
+      commit((s) => {
+        const vi = s.tracks.findIndex((track) => track.type === "video");
+        if (vi < 0 || ranges.length === 0) return {};
+        const video = s.tracks[vi];
+        if (guardLocked(video)) return {};
+        const newMain = rearrangeMainTrack(video, ranges);
+        if (newMain.clips.length === 0) return {};
+
+        const tracks = remapOverlayTracks(s.tracks, ranges);
+        tracks[vi] = newMain;
+        const totalDuration = tracksDuration(tracks);
+        const existingTitleTrack = tracks.findIndex((track) => track.type === "text");
+        if (existingTitleTrack >= 0 && !tracks[existingTitleTrack].locked) {
+          tracks[existingTitleTrack] = {
+            ...tracks[existingTitleTrack],
+            clips: tracks[existingTitleTrack].clips.filter(
+              (clip) => clip.metadata?.role !== "fast-interview-question"
+            ),
+          };
+        }
+        if (showQuestion && question.trim() && totalDuration > 0.15) {
+          const ti = tracks.findIndex((track) => track.type === "text");
+          if (ti >= 0 && !tracks[ti].locked) {
+            const questionClip: TimelineClip = {
+              id: nanoid(8),
+              type: "text",
+              text: question.trim(),
+              startTime: 0,
+              endTime: round3(totalDuration),
+              transform: { x: 0, y: -590, scale: 1, rotation: 0, opacity: 1 },
+              style: {
+                fontFamily: "Arial",
+                fontSize: 58,
+                fontWeight: 900,
+                color: "#FFF7ED",
+                strokeColor: "#09090B",
+                strokeWidth: 4,
+                backgroundColor: "#C2410C",
+              },
+              metadata: { role: "fast-interview-question" },
+            };
+            tracks[ti] = { ...tracks[ti], clips: [...tracks[ti].clips, questionClip] };
+          } else {
+            titleSkipped = true;
+          }
+        }
+        applied = true;
+        return {
+          tracks,
+          captions: remapCaptions(s.captions, ranges),
+          currentTime: 0,
+          isPlaying: false,
+          ...sel(null),
+          selectedCaptionId: null,
+        };
+      });
+      if (!applied) {
+        get().addToast("error", "No answer clips could be placed on the timeline.");
+        return;
+      }
+      get().addToast(
+        "success",
+        `Fast interview built — ${ranges.length} clean answer${ranges.length === 1 ? "" : "s"}, repeated questions removed.`
+      );
+      if (titleSkipped) get().addToast("info", "The question title was skipped because the Text track is locked.");
     },
 
     applyEditRecipe: (recipe) => {

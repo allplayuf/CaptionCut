@@ -5,15 +5,16 @@ import { useEditorStore } from "@/hooks/useEditorStore";
 import AIPanel from "./AIPanel";
 import CaptionsPanel from "./CaptionsPanel";
 import InspectorPanel from "./InspectorPanel";
+import SequenceBuilderPanel from "./SequenceBuilderPanel";
 import StylePanel from "./StylePanel";
 
-type Tab = "ai" | "inspect" | "captions" | "style";
+type Tab = "build" | "ai" | "inspect" | "captions" | "style";
 
-/** Right sidebar: AI Edit / Inspector / Captions / Style tabs. Selecting a
+/** Right sidebar: Build / AI Edit / Inspector / Captions / Style tabs. Selecting a
  *  clip or caption anywhere jumps to the Inspector so its settings are one
  *  glance away (like Premiere's Essential panel). */
 export default function RightPanel() {
-  const [tab, setTab] = useState<Tab>("ai");
+  const [tab, setTab] = useState<Tab>("build");
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const selectedCaptionId = useEditorStore((s) => s.selectedCaptionId);
 
@@ -31,8 +32,9 @@ export default function RightPanel() {
       <div className="flex border-b border-white/8">
         {(
           [
+            ["build", "Build"],
             ["ai", "AI Edit"],
-            ["inspect", "Inspector"],
+            ["inspect", "Inspect"],
             ["captions", "Captions"],
             ["style", "Style"],
           ] as const
@@ -42,7 +44,7 @@ export default function RightPanel() {
             onClick={() => setTab(value)}
             className={`flex-1 py-2.5 text-xs font-semibold transition ${
               tab === value
-                ? "border-b-2 border-fuchsia-400 text-zinc-100"
+                ? `border-b-2 text-zinc-100 ${value === "build" ? "border-orange-400" : "border-fuchsia-400"}`
                 : "border-b-2 border-transparent text-zinc-500 hover:text-zinc-300"
             }`}
           >
@@ -54,6 +56,9 @@ export default function RightPanel() {
         {/* Keep panels mounted while switching tabs. AI drafts, source roles,
             caption glossary and review filters are working state — changing
             tabs must not silently throw them away. */}
+        <div className={tab === "build" ? "h-full" : "hidden"}>
+          <SequenceBuilderPanel />
+        </div>
         <div className={tab === "ai" ? "h-full" : "hidden"}>
           <AIPanel />
         </div>
