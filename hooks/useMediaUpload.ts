@@ -8,10 +8,10 @@ import { assetKind } from "@/lib/timeline/tracks";
 import { fetchAnalyses } from "@/lib/autoEdit/signals";
 
 export const UPLOAD_ACCEPT =
-  "video/*,audio/*,image/*,.mp4,.mov,.webm,.m4v,.mkv,.mp3,.wav,.m4a,.aac,.ogg,.flac,.png,.jpg,.jpeg,.webp,.gif";
+  "video/*,audio/*,image/*,.mp4,.mov,.webm,.m4v,.mkv,.mp3,.wav,.m4a,.aac,.ogg,.flac,.png,.jpg,.jpeg,.webp,.gif,.bmp,.avif";
 
 const SUPPORTED_NAME =
-  /\.(mp4|mov|webm|m4v|mkv|avi|mp3|wav|m4a|aac|ogg|flac|png|jpe?g|webp|gif|bmp)$/i;
+  /\.(mp4|mov|webm|m4v|mkv|avi|mp3|wav|m4a|aac|ogg|flac|png|jpe?g|webp|gif|bmp|avif)$/i;
 
 export interface UploadProgress {
   name: string;
@@ -20,6 +20,40 @@ export interface UploadProgress {
   /** 1-based index of the current file in this batch. */
   index: number;
   total: number;
+}
+
+/** Register an already-imported asset and run the same post-import work as a
+ * device upload (timeline placement, analysis warmup and useful notices). */
+export function registerImportedMedia(
+  asset: MediaAsset,
+  opts?: { silentAudioTip?: boolean }
+): void {
+  const store = useEditorStore.getState();
+  store.addMedia(asset);
+  const kind = assetKind(asset);
+  if (kind !== "image") {
+    void fetchAnalyses([asset])
+      .then((fresh) => useEditorStore.getState().mergeAnalyses(fresh))
+      .catch(() => {});
+  }
+  if (kind === "video" && asset.duration > 180) {
+    store.addToast(
+      "info",
+      "Heads up: videos over 3 minutes work, but captions and export take noticeably longer."
+    );
+  }
+  if (kind === "video" && !asset.hasAudio) {
+    store.addToast(
+      "info",
+      `"${asset.originalName}" has no camera audio — pair a separate audio file for captions.`
+    );
+  }
+  if (kind === "audio" && !opts?.silentAudioTip) {
+    store.addToast(
+      "success",
+      `"${asset.originalName}" added — pair it to a video or place it on an audio track.`
+    );
+  }
 }
 
 /**
@@ -53,28 +87,8 @@ export function useMediaUpload() {
         const asset = await uploadVideo(file, (p) =>
           setUploading({ name: file.name, progress: p, index: i + 1, total: list.length })
         );
-        useEditorStore.getState().addMedia(asset);
+        registerImportedMedia(asset, opts);
         uploaded.push(asset);
-        const kind = assetKind(asset);
-        if (kind !== "image") {
-          // Warm the analysis cache in the background: smart crop, montage
-          // ranking and beat detection are instant by the time they're needed.
-          void fetchAnalyses([asset])
-            .then((fresh) => useEditorStore.getState().mergeAnalyses(fresh))
-            .catch(() => {});
-        }
-        if (kind === "video" && asset.duration > 180) {
-          addToast(
-            "info",
-            "Heads up: videos over 3 minutes work, but captions and export take noticeably longer."
-          );
-        }
-        if (kind === "video" && !asset.hasAudio) {
-          addToast("info", `"${file.name}" has no audio track — auto captions won't find speech in it.`);
-        }
-        if (kind === "audio" && !opts?.silentAudioTip) {
-          addToast("success", `"${file.name}" added — drop it on Music, SFX or Voiceover.`);
-        }
       } catch (err) {
         addToast("error", err instanceof Error ? err.message : "Upload failed.");
       } finally {

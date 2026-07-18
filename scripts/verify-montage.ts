@@ -151,11 +151,11 @@ async function main() {
   const speedClips = req.clips.filter((c) => c.speed && Math.abs(c.speed - 1) > 0.01).length;
   console.log(`Exporting: ${req.clips.length} clips (${speedClips} speed-ramped), ${req.zooms?.length} zooms, ${req.textOverlays?.length} text overlays`);
 
-  const job = startExportJob(req);
+  const { state: job } = await startExportJob(req);
   const t0 = Date.now();
   for (;;) {
     await new Promise((r) => setTimeout(r, 1000));
-    const state = readJobState(job.id);
+    const state = await readJobState(job.id);
     if (!state) throw new Error("job state lost");
     if (state.status === "done") break;
     if (state.status === "error") throw new Error(`export failed: ${state.error}`);

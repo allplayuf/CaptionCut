@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
         hasAudio: Boolean(asset.hasAudio),
         hasVideo: kind === "video",
         duration: asset.duration ?? 0,
-      });
+      }, asset.storageUrl);
     } catch (err) {
       console.error(`analysis failed for ${asset.id}:`, err);
       analyses[asset.id] = null;

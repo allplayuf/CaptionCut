@@ -6,6 +6,7 @@ import { useEditorStore } from "@/hooks/useEditorStore";
 import { tracksDuration } from "@/lib/timeline/tracks";
 import { useTranscription } from "@/hooks/useTranscription";
 import {
+  AlertTriangle,
   ChevronsLeft,
   ChevronsRight,
   Merge,
@@ -21,6 +22,7 @@ import {
 export default function CaptionsPanel() {
   const captions = useEditorStore((s) => s.captions);
   const tracks = useEditorStore((s) => s.tracks);
+  const selectedClipIds = useEditorStore((s) => s.selectedClipIds);
   const currentTime = useEditorStore((s) => s.currentTime);
   const selectedCaptionId = useEditorStore((s) => s.selectedCaptionId);
   const isTranscribing = useEditorStore((s) => s.isTranscribing);
@@ -31,13 +33,36 @@ export default function CaptionsPanel() {
   const searchReplaceCaptions = useEditorStore((s) => s.searchReplaceCaptions);
   const addToast = useEditorStore((s) => s.addToast);
 
-  const { runTranscription, language, setLanguage } = useTranscription();
+  const {
+    runTranscription,
+    language,
+    setLanguage,
+    quality,
+    setQuality,
+    scope,
+    setScope,
+    prompt,
+    setPrompt,
+  } = useTranscription();
   const duration = tracksDuration(tracks);
   const hasClips = duration > 0;
+  const selectedIds = new Set(selectedClipIds);
+  const selectedMainClipCount =
+    tracks.find((track) => track.type === "video")?.clips.filter((clip) => selectedIds.has(clip.id))
+      .length ?? 0;
+  const canTranscribe = hasClips && (scope === "timeline" || selectedMainClipCount > 0);
 
   const [showReplace, setShowReplace] = useState(false);
+  const [reviewLowConfidence, setReviewLowConfidence] = useState(false);
+  /** Snapshot the queue so a row stays mounted while editing clears confidence. */
+  const [reviewQueueIds, setReviewQueueIds] = useState<string[]>([]);
   const [findText, setFindText] = useState("");
   const [replaceText, setReplaceText] = useState("");
+  const lowConfidenceCount = captions.filter(captionNeedsReview).length;
+  const reviewQueue = new Set(reviewQueueIds);
+  const visibleCaptions = reviewLowConfidence
+    ? captions.filter((caption) => reviewQueue.has(caption.id))
+    : captions;
 
   const runReplace = () => {
     const count = searchReplaceCaptions(findText, replaceText);
@@ -47,7 +72,7 @@ export default function CaptionsPanel() {
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-white/8 p-3">
-        <div className="mb-2 flex items-center gap-2">
+        <div className="mb-2 grid grid-cols-2 gap-2">
           <select
             value={language}
             onChange={(e) => setLanguage(e.target.value as typeof language)}
@@ -58,10 +83,38 @@ export default function CaptionsPanel() {
             <option value="en">English</option>
             <option value="sv">Svenska</option>
           </select>
+          <select
+            value={quality}
+            onChange={(e) => setQuality(e.target.value as typeof quality)}
+            className="min-w-0 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-zinc-200 outline-none focus:border-violet-400"
+            title="Speech model quality. WHISPER_MODEL can override this local model mapping."
+          >
+            <option value="accurate">Accurate · small</option>
+            <option value="fast">Fast · base</option>
+          </select>
         </div>
+        <select
+          value={scope}
+          onChange={(e) => setScope(e.target.value as typeof scope)}
+          className="mb-2 w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-zinc-200 outline-none focus:border-violet-400"
+          title="Caption the whole timeline or only selected clips on the main video track"
+        >
+          <option value="timeline">Entire timeline</option>
+          <option value="selected" disabled={selectedMainClipCount === 0}>
+            Selected main clips ({selectedMainClipCount})
+          </option>
+        </select>
+        <input
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          maxLength={500}
+          placeholder="Names & jargon, e.g. CaptionCut, Matij…"
+          title="Optional glossary or context to help Whisper spell unusual words correctly"
+          className="mb-2 w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-violet-400"
+        />
         <button
           onClick={() => void runTranscription()}
-          disabled={isTranscribing || !hasClips}
+          disabled={isTranscribing || !canTranscribe}
           className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-fuchsia-500/25 transition hover:brightness-110 active:scale-[0.98] disabled:opacity-40"
         >
           {isTranscribing ? (
@@ -72,10 +125,15 @@ export default function CaptionsPanel() {
           ) : (
             <>
               <Sparkles size={16} />
-              Auto Captions
+              {scope === "selected" ? "Caption selected clips" : "Auto Captions"}
             </>
           )}
         </button>
+        {scope === "selected" && selectedMainClipCount === 0 && (
+          <p className="mt-2 text-center text-[11px] text-amber-400/80">
+            Select one or more clips on the main video track.
+          </p>
+        )}
         {isTranscribing && (
           <p className="mt-2 text-center text-[11px] text-zinc-500">
             {duration > 180
@@ -101,7 +159,31 @@ export default function CaptionsPanel() {
             <ToolIcon title="Search & replace" onClick={() => setShowReplace((v) => !v)} active={showReplace}>
               <Replace size={13} />
             </ToolIcon>
-            <span className="ml-auto text-[10px] text-zinc-600">{captions.length} lines</span>
+            <ToolIcon
+              title={
+                lowConfidenceCount > 0
+                  ? `Review ${lowConfidenceCount} low-confidence caption${lowConfidenceCount === 1 ? "" : "s"}`
+                  : "No low-confidence captions"
+              }
+              onClick={() => {
+                if (reviewLowConfidence) {
+                  setReviewLowConfidence(false);
+                  setReviewQueueIds([]);
+                } else {
+                  setReviewQueueIds(
+                    captions.filter(captionNeedsReview).map((caption) => caption.id)
+                  );
+                  setReviewLowConfidence(true);
+                }
+              }}
+              active={reviewLowConfidence}
+            >
+              <AlertTriangle size={13} />
+            </ToolIcon>
+            <span className="ml-auto text-[10px] text-zinc-600">
+              {reviewLowConfidence ? `${visibleCaptions.length} of ` : ""}
+              {captions.length} lines
+            </span>
           </div>
           {showReplace && (
             <div className="mt-1.5 flex items-center gap-1">
@@ -137,13 +219,17 @@ export default function CaptionsPanel() {
             Hit <span className="font-semibold text-zinc-400">Auto Captions</span> to transcribe
             your video into punchy TikTok-style lines.
           </div>
+        ) : visibleCaptions.length === 0 ? (
+          <div className="px-4 py-8 text-center text-xs leading-relaxed text-zinc-600">
+            No low-confidence captions left to review.
+          </div>
         ) : (
           <div className="flex flex-col gap-1">
-            {captions.map((cap, i) => (
+            {visibleCaptions.map((cap) => (
               <CaptionRow
                 key={cap.id}
                 caption={cap}
-                isLast={i === captions.length - 1}
+                isLast={captions[captions.length - 1]?.id === cap.id}
                 active={currentTime >= cap.startTime && currentTime < cap.endTime}
                 selected={cap.id === selectedCaptionId}
               />
@@ -206,6 +292,11 @@ function CaptionRow({
   const selectCaption = useEditorStore((s) => s.selectCaption);
   const setCurrentTime = useEditorStore((s) => s.setCurrentTime);
   const setPlaying = useEditorStore((s) => s.setPlaying);
+  const lowConfidenceWords =
+    caption.words?.filter(
+      (word) => word.confidence !== undefined && word.confidence < LOW_WORD_CONFIDENCE
+    ) ?? [];
+  const needsReview = captionNeedsReview(caption);
 
   const rowRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -255,6 +346,21 @@ function CaptionRow({
             words
           </span>
         )}
+        {needsReview && (
+          <span
+            className="ml-1 inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1 text-[8px] font-semibold uppercase tracking-wide text-amber-300"
+            title={
+              lowConfidenceWords.length > 0
+                ? `${lowConfidenceWords.length} word${lowConfidenceWords.length === 1 ? "" : "s"} below ${Math.round(LOW_WORD_CONFIDENCE * 100)}% confidence`
+                : "This caption has low average transcription confidence"
+            }
+          >
+            <AlertTriangle size={8} />
+            {caption.confidence === undefined
+              ? "review"
+              : `${Math.round(caption.confidence * 100)}%`}
+          </span>
+        )}
         <div className="ml-auto flex items-center opacity-0 transition group-hover:opacity-100">
           <button
             onClick={(e) => {
@@ -291,6 +397,20 @@ function CaptionRow({
         </div>
       </div>
     </div>
+  );
+}
+
+const LOW_CAPTION_CONFIDENCE = 0.72;
+const LOW_WORD_CONFIDENCE = 0.5;
+
+function captionNeedsReview(caption: Caption): boolean {
+  if (caption.confidence !== undefined && caption.confidence < LOW_CAPTION_CONFIDENCE) {
+    return true;
+  }
+  return Boolean(
+    caption.words?.some(
+      (word) => word.confidence !== undefined && word.confidence < LOW_WORD_CONFIDENCE
+    )
   );
 }
 

@@ -1,23 +1,23 @@
-import type { Caption, TranscriptionLanguage } from "@/types";
-import type { TranscriptionProvider } from "./types";
+import type { Caption, TranscriptionQuality } from "@/types";
+import type { TranscriptionOptions, TranscriptionProvider } from "./types";
 import { localWhisperProvider } from "./providers/localWhisper";
 import { openAiProvider } from "./providers/openai";
 import { mockProvider } from "./providers/mock";
 
 export { TranscriptionError } from "./types";
-export type { TranscriptionProvider } from "./types";
+export type { TranscriptionOptions, TranscriptionProvider } from "./types";
 
 /**
  * Transcription entry point.
  *
  * The default provider is **local-whisper** (whisper.cpp): completely free,
  * runs on-device, and needs no API key. The binary (~8 MB) and the ggml model
- * (~150 MB for "base") are downloaded automatically on first use, or ahead of
- * time with `npm run setup-whisper`.
+ * are downloaded automatically on first use, or ahead of time with
+ * `npm run setup-whisper`. Accurate uses `small` by default; Fast uses `base`.
  *
  * Env:
  *   TRANSCRIPTION_PROVIDER = "local-whisper" (default) | "openai" | "mock"
- *   WHISPER_MODEL          = ggml model for local-whisper (default "base")
+ *   WHISPER_MODEL          = optional override for the Fast/Accurate model mapping
  *   WHISPER_CPP_PATH       = existing whisper-cli executable (optional)
  *   OPENAI_API_KEY         = only if you opt into the openai provider
  *
@@ -42,15 +42,31 @@ export function resolveProvider(): TranscriptionProvider {
 export async function transcribeAudio(
   audioPath: string,
   durationSeconds: number,
-  language: TranscriptionLanguage = "auto"
-): Promise<{ captions: Caption[]; provider: string }> {
+  options: TranscriptionOptions
+): Promise<{ captions: Caption[]; provider: string; model: string }> {
   const provider = resolveProvider();
-  const captions = await provider.transcribe(audioPath, durationSeconds, language);
-  return { captions, provider: provider.name };
+  const captions = await provider.transcribe(audioPath, durationSeconds, options);
+  return {
+    captions,
+    provider: provider.name,
+    model: provider.modelName(options.quality),
+  };
 }
 
 /** Status for the UI: which provider is active and whether it can run now. */
-export async function transcriptionStatus(): Promise<{ provider: string; ready: boolean }> {
+export async function transcriptionStatus(
+  quality: TranscriptionQuality = "accurate"
+): Promise<{
+  provider: string;
+  ready: boolean;
+  quality: TranscriptionQuality;
+  model: string;
+}> {
   const provider = resolveProvider();
-  return { provider: provider.name, ready: await provider.isReady() };
+  return {
+    provider: provider.name,
+    ready: await provider.isReady(quality),
+    quality,
+    model: provider.modelName(quality),
+  };
 }

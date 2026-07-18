@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { MediaAsset } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { mediaUrl } from "@/lib/video/client";
 import { clipDuration, clipSpeed, formatTime, timelineToSource, totalDuration } from "@/lib/video/timeline";
@@ -53,6 +54,11 @@ export default function VideoPreview() {
   const displayTime = freeze ? freeze.startTime : currentTime;
   const pos = timelineToSource(clips, displayTime);
   const activeMediaId = pos?.clip.mediaId ?? null;
+  const activeMedia = activeMediaId ? media.find((asset) => asset.id === activeMediaId) : undefined;
+  const linkedAudio = activeMedia?.linkedAudio;
+  const linkedAudioAsset = linkedAudio
+    ? media.find((asset) => asset.id === linkedAudio.audioAssetId)
+    : undefined;
 
   // Fit the format's frame into the available center area.
   useEffect(() => {
@@ -93,7 +99,7 @@ export default function VideoPreview() {
 
     if (video.dataset.mediaId !== pos.clip.mediaId) {
       video.dataset.mediaId = pos.clip.mediaId;
-      video.src = mediaUrl(pos.clip.mediaId);
+      video.src = mediaUrl(activeMedia ?? pos.clip.mediaId);
       video.currentTime = pos.sourceTime;
       if (playingRef.current) void video.play().catch(() => setPlaying(false));
       internalTimeRef.current = currentTime;
@@ -108,13 +114,18 @@ export default function VideoPreview() {
       internalTimeRef.current = currentTime;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentTime, activeMediaId, clips]);
+  }, [currentTime, activeMediaId, activeMedia, clips]);
 
-  // Main track mute follows the track control.
+  // Main track mute follows the track control. A linked recorder can replace
+  // the camera scratch track per source without muting every other video.
   useEffect(() => {
     const video = videoRef.current;
-    if (video) video.muted = videoTrack.muted;
-  }, [videoTrack.muted]);
+    if (video) {
+      video.muted =
+        videoTrack.muted ||
+        Boolean(linkedAudio?.muteCameraAudio && linkedAudioAsset?.hasAudio);
+    }
+  }, [videoTrack.muted, linkedAudio?.muteCameraAudio, linkedAudioAsset?.hasAudio]);
 
   // Playback loop: advance the timeline from the video's clock, hopping
   // across clip boundaries.
@@ -299,6 +310,7 @@ export default function VideoPreview() {
                 {fitMode && (
                   <BlurredFitBackground
                     mediaId={activeMediaId}
+                    storageUrl={activeMedia?.storageUrl}
                     sourceTime={pos?.sourceTime ?? 0}
                     playing={isPlaying}
                     hidden={videoTrack.hidden}
@@ -340,6 +352,15 @@ export default function VideoPreview() {
               )}
               <TextOverlays scale={scale} canvasW={canvas.width} canvasH={canvas.height} />
               <AudioTracks />
+              {linkedAudio && linkedAudioAsset?.hasAudio && pos && (
+                <LinkedAudioPlayer
+                  asset={linkedAudioAsset}
+                  sourceTime={pos.sourceTime - linkedAudio.offsetSeconds}
+                  playbackRate={clipSpeed(pos.clip)}
+                  playing={isPlaying && !freeze}
+                  muted={videoTrack.muted}
+                />
+              )}
               {buffering && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
@@ -456,13 +477,57 @@ export default function VideoPreview() {
  * the preview twin of the export's boxblur background fill. It loosely tracks
  * the main video's clock; sub-100ms drift is invisible under the blur.
  */
+/** Separate recorder audio resolved from the active video's source time. */
+function LinkedAudioPlayer({
+  asset,
+  sourceTime,
+  playbackRate,
+  playing,
+  muted,
+}: {
+  asset: MediaAsset;
+  sourceTime: number;
+  playbackRate: number;
+  playing: boolean;
+  muted: boolean;
+}) {
+  const ref = useRef<HTMLAudioElement>(null);
+  const inRange = sourceTime >= 0 && sourceTime < asset.duration - 0.01;
+
+  useEffect(() => {
+    const audio = ref.current;
+    if (!audio) return;
+    audio.muted = muted;
+    audio.volume = 1;
+    audio.playbackRate = playbackRate;
+  }, [muted, playbackRate]);
+
+  useEffect(() => {
+    const audio = ref.current;
+    if (!audio) return;
+    if (!inRange) {
+      audio.pause();
+      return;
+    }
+    if (Math.abs(audio.currentTime - sourceTime) > 0.04) {
+      audio.currentTime = Math.max(0, Math.min(asset.duration, sourceTime));
+    }
+    if (playing) void audio.play().catch(() => {});
+    else audio.pause();
+  }, [asset.duration, inRange, playing, sourceTime]);
+
+  return <audio ref={ref} src={mediaUrl(asset)} preload="auto" />;
+}
+
 function BlurredFitBackground({
   mediaId,
+  storageUrl,
   sourceTime,
   playing,
   hidden,
 }: {
   mediaId: string | null;
+  storageUrl?: string;
   sourceTime: number;
   playing: boolean;
   hidden: boolean;
@@ -472,7 +537,7 @@ function BlurredFitBackground({
   useEffect(() => {
     const el = ref.current;
     if (!el || !mediaId) return;
-    const src = mediaUrl(mediaId);
+    const src = mediaUrl({ id: mediaId, storageUrl });
     if (el.dataset.mediaId !== mediaId) {
       el.dataset.mediaId = mediaId;
       el.src = src;
@@ -480,7 +545,7 @@ function BlurredFitBackground({
     if (Math.abs(el.currentTime - sourceTime) > 0.2) el.currentTime = sourceTime;
     if (playing && el.paused) void el.play().catch(() => {});
     else if (!playing && !el.paused) el.pause();
-  }, [mediaId, sourceTime, playing]);
+  }, [mediaId, storageUrl, sourceTime, playing]);
 
   if (!mediaId) return null;
   return (

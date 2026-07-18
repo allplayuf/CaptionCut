@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import type { ExportJobState, MediaAnalysis, MediaAsset } from "@/types";
 import { ANALYSIS_DIR, EXPORTS_DIR, MEDIA_DIR, TMP_DIR, ensureDataDirs, safeId } from "@/lib/server/paths";
 import { runFfmpeg } from "@/lib/server/ffmpeg";
+import { materializeMedia } from "@/lib/server/media";
 import { clipSpeed, totalDuration } from "@/lib/video/timeline";
 import { buildAss } from "./ass";
 import { getExportPreset } from "./presets";
@@ -34,16 +35,17 @@ const MAX_ZOOM_SEGMENTS = 80;
  */
 const LOUDNORM = "loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000";
 
-export function startExportJob(req: ExportRequest): ExportJobState {
+export async function startExportJob(
+  req: ExportRequest
+): Promise<{ state: ExportJobState; task: Promise<void> }> {
   ensureDataDirs();
   const jobId = nanoid(10);
   const state: ExportJobState = { id: jobId, status: "processing", progress: 0 };
-  writeJobState(state);
+  await writeJobState(state);
 
-  // Fire and forget; the client polls /api/export/[jobId] for progress.
-  runExport(jobId, req).catch((err) => {
+  const task = runExport(jobId, req).catch(async (err) => {
     console.error(`export ${jobId} failed:`, err);
-    writeJobState({
+    await writeJobState({
       id: jobId,
       status: "error",
       progress: 0,
@@ -51,10 +53,17 @@ export function startExportJob(req: ExportRequest): ExportJobState {
     });
   });
 
-  return state;
+  return { state, task };
 }
 
-export function readJobState(jobId: string): ExportJobState | null {
+export async function readJobState(jobId: string): Promise<ExportJobState | null> {
+  const id = safeId(jobId);
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    const { get } = await import("@vercel/blob");
+    const result = await get(`exports/${id}.json`, { access: "public", useCache: false });
+    if (!result || result.statusCode !== 200) return null;
+    return JSON.parse(await new Response(result.stream).text()) as ExportJobState;
+  }
   const file = path.join(EXPORTS_DIR, `${safeId(jobId)}.json`);
   try {
     return JSON.parse(fs.readFileSync(file, "utf8")) as ExportJobState;
@@ -84,10 +93,28 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
   fs.mkdirSync(jobDir, { recursive: true });
 
   try {
+    const usedIds = new Set([
+      ...clips.map((clip) => clip.mediaId),
+      ...clips.flatMap((clip) => {
+        const linkedId = mediaById.get(clip.mediaId)?.linkedAudio?.audioAssetId;
+        return linkedId ? [linkedId] : [];
+      }),
+      ...(req.overlays ?? []).map((overlay) => overlay.assetId),
+      ...(req.audioClips ?? []).map((audio) => audio.assetId),
+    ]);
+    const localFiles = new Map<string, string>();
+    await Promise.all(
+      [...usedIds].map(async (id) => {
+        const asset = mediaById.get(id);
+        if (!asset) throw new Error("MEDIA_MISSING");
+        localFiles.set(id, await materializeMedia(asset));
+      })
+    );
+
     const assetFile = (id: string): { asset: MediaAsset; file: string } => {
       const asset = mediaById.get(id);
       if (!asset) throw new Error("MEDIA_MISSING");
-      const file = path.join(MEDIA_DIR, asset.filename);
+      const file = localFiles.get(id) ?? path.join(MEDIA_DIR, asset.filename);
       if (!fs.existsSync(file)) throw new Error("MEDIA_MISSING");
       return { asset, file };
     };
@@ -97,7 +124,14 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
     const inputArgs: string[] = [];
     let inputCount = 0;
 
-    const mainIds = [...new Set(clips.map((c) => c.mediaId))];
+    const mainIds = [
+      ...new Set(
+        clips.flatMap((clip) => {
+          const linkedId = mediaById.get(clip.mediaId)?.linkedAudio?.audioAssetId;
+          return linkedId ? [clip.mediaId, linkedId] : [clip.mediaId];
+        })
+      ),
+    ];
     const mainInputIndex = new Map<string, number>();
     for (const id of mainIds) {
       const { file } = assetFile(id);
@@ -259,17 +293,63 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
       }
       filters.push(`${chain}[v${i}]`);
 
-      if (asset.hasAudio && piece.freezeSrc === null) {
-        const tempo = speed !== 1 ? `,atempo=${speed.toFixed(4)}` : "";
-        filters.push(
-          `[${idx}:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS${tempo},` +
-            `aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a${i}]`
-        );
+      const outDur = piece.outDur.toFixed(3);
+      const silence = (label: string) =>
+        `anullsrc=r=48000:cl=stereo,atrim=start=0:end=${outDur},asetpts=PTS-STARTPTS[${label}]`;
+
+      if (piece.freezeSrc !== null) {
+        // Freeze pieces silence every source-level main audio stream.
+        filters.push(silence(`a${i}`));
       } else {
-        // Silent pieces still need an audio stream so concat timing stays aligned.
-        filters.push(
-          `anullsrc=r=48000:cl=stereo,atrim=start=0:end=${piece.outDur.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`
-        );
+        const tempo = speed !== 1 ? `,atempo=${speed.toFixed(4)}` : "";
+        const pair = asset.linkedAudio;
+        const pairAsset = pair ? mediaById.get(pair.audioAssetId) : undefined;
+        const pairIdx = pair ? mainInputIndex.get(pair.audioAssetId) : undefined;
+        const hasPair = Boolean(pair && pairAsset && pairIdx !== undefined && pairAsset.hasAudio);
+
+        if (hasPair && pair && pairAsset && pairIdx !== undefined) {
+          // externalTime = videoSourceTime - offsetSeconds. Trim the overlap,
+          // add any leading silence caused by a positive delay, then pad to the
+          // exact piece duration so concat remains sample-aligned.
+          const pairStart = piece.srcStart - pair.offsetSeconds;
+          const pairEnd = piece.srcEnd - pair.offsetSeconds;
+          const overlapStart = Math.max(0, pairStart);
+          const overlapEnd = Math.min(pairAsset.duration, pairEnd);
+          if (overlapEnd - overlapStart > 0.005) {
+            const leadMs = Math.max(0, Math.round((Math.max(0, -pairStart) / speed) * 1000));
+            filters.push(
+              `[${pairIdx}:a]atrim=start=${overlapStart.toFixed(3)}:end=${overlapEnd.toFixed(3)},` +
+                `asetpts=PTS-STARTPTS${tempo},` +
+                `aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,` +
+                `${leadMs > 0 ? `adelay=${leadMs}|${leadMs},` : ""}` +
+                `apad,atrim=start=0:end=${outDur},asetpts=PTS-STARTPTS[apair${i}]`
+            );
+          } else {
+            filters.push(silence(`apair${i}`));
+          }
+
+          if (!pair.muteCameraAudio && asset.hasAudio) {
+            filters.push(
+              `[${idx}:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS${tempo},` +
+                `aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,` +
+                `apad,atrim=start=0:end=${outDur}[acam${i}]`
+            );
+            filters.push(
+              `[acam${i}][apair${i}]amix=inputs=2:duration=longest:normalize=0,` +
+                `atrim=start=0:end=${outDur}[a${i}]`
+            );
+          } else {
+            filters.push(`[apair${i}]anull[a${i}]`);
+          }
+        } else if (asset.hasAudio) {
+          filters.push(
+            `[${idx}:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS${tempo},` +
+              `aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a${i}]`
+          );
+        } else {
+          // Silent pieces still need an audio stream so concat timing stays aligned.
+          filters.push(silence(`a${i}`));
+        }
       }
     });
 
@@ -391,6 +471,7 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
 
     /* ---------------- encode ---------------- */
     const outPath = exportOutputPath(jobId);
+    let lastSavedProgress = 0;
     const args = [
       "-y",
       ...inputArgs,
@@ -421,12 +502,16 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
         const now = Date.now();
         if (now - lastWrite > 400) {
           lastWrite = now;
-          writeJobState({ id: jobId, status: "processing", progress: fraction });
+          if (fraction - lastSavedProgress >= 0.025) {
+            lastSavedProgress = fraction;
+            void writeJobState({ id: jobId, status: "processing", progress: fraction });
+          }
         }
       },
     });
 
-    writeJobState({ id: jobId, status: "done", progress: 1 });
+    const downloadUrl = await persistExport(jobId, outPath);
+    await writeJobState({ id: jobId, status: "done", progress: 1, downloadUrl });
   } finally {
     fs.rmSync(jobDir, { recursive: true, force: true });
   }
@@ -621,9 +706,46 @@ function buildPieces(
   return pieces;
 }
 
-function writeJobState(state: ExportJobState): void {
+const stateWriteQueues = new Map<string, Promise<void>>();
+
+async function writeJobState(state: ExportJobState): Promise<void> {
+  const previous = stateWriteQueues.get(state.id) ?? Promise.resolve();
+  const next = previous.catch(() => {}).then(() => writeJobStateRaw(state));
+  stateWriteQueues.set(state.id, next);
+  try {
+    await next;
+  } finally {
+    if (stateWriteQueues.get(state.id) === next) stateWriteQueues.delete(state.id);
+  }
+}
+
+async function writeJobStateRaw(state: ExportJobState): Promise<void> {
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    const { put } = await import("@vercel/blob");
+    await put(`exports/${safeId(state.id)}.json`, JSON.stringify(state), {
+      access: "public",
+      contentType: "application/json",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      cacheControlMaxAge: 60,
+    });
+    return;
+  }
   const file = path.join(EXPORTS_DIR, `${state.id}.json`);
-  fs.writeFileSync(file, JSON.stringify(state), "utf8");
+  await fs.promises.writeFile(file, JSON.stringify(state), "utf8");
+}
+
+async function persistExport(jobId: string, file: string): Promise<string | undefined> {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) return undefined;
+  const { put } = await import("@vercel/blob");
+  const blob = await put(`exports/${safeId(jobId)}.mp4`, fs.createReadStream(file), {
+    access: "public",
+    contentType: "video/mp4",
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    multipart: true,
+  });
+  return blob.downloadUrl;
 }
 
 function friendlyExportError(err: unknown): string {

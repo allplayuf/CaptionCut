@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { startExportJob, type ExportRequest } from "@/lib/export/exporter";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 /** Starts an export job and returns its id; the client polls for progress. */
 export async function POST(request: NextRequest) {
@@ -22,7 +23,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing caption style." }, { status: 400 });
   }
 
-  const state = startExportJob({
+  const { state, task } = await startExportJob({
     media: body.media ?? [],
     clips: body.clips,
     captions: body.captions ?? [],
@@ -34,5 +35,7 @@ export async function POST(request: NextRequest) {
     presetId: body.presetId,
     mainAudioMuted: body.mainAudioMuted ?? false,
   });
+  // Keeps the Vercel invocation alive after the quick 202-style response.
+  after(() => task);
   return NextResponse.json(state);
 }

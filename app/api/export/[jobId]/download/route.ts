@@ -13,13 +13,14 @@ export async function GET(
 
   let state = null;
   try {
-    state = readJobState(jobId);
+    state = await readJobState(jobId);
   } catch {
     return NextResponse.json({ error: "Invalid job id" }, { status: 400 });
   }
   if (!state || state.status !== "done") {
     return NextResponse.json({ error: "Export is not ready yet" }, { status: 404 });
   }
+  if (state.downloadUrl) return NextResponse.redirect(state.downloadUrl);
 
   const filePath = exportOutputPath(jobId);
   if (!fs.existsSync(filePath)) {

@@ -1,13 +1,14 @@
 import fs from "fs";
 import os from "os";
 import { spawn } from "child_process";
-import type { WordTiming } from "@/types";
+import type { Caption, WordTiming } from "@/types";
 import { chunkWordsToCaptions } from "@/lib/captions/chunk";
 import { TranscriptionError, type TranscriptionProvider } from "../types";
 import {
   ensureWhisperAssets,
   whisperBinaryPath,
   whisperIsReady,
+  whisperModelName,
   whisperModelPath,
 } from "../whisperAssets";
 
@@ -25,6 +26,10 @@ interface WhisperCliOutput {
   transcription?: Array<{
     offsets: { from: number; to: number };
     text: string;
+    tokens?: Array<{
+      text?: string;
+      p?: number;
+    }>;
   }>;
   result?: { language?: string };
 }
@@ -35,14 +40,18 @@ const NOISE_TOKEN = /^[[(].*[\])]$/;
 export const localWhisperProvider: TranscriptionProvider = {
   name: "local-whisper",
 
-  async isReady() {
-    return whisperIsReady();
+  async isReady(quality) {
+    return whisperIsReady(quality);
   },
 
-  async transcribe(audioPath, durationSeconds, language) {
-    // Downloads whisper.cpp (~8 MB) and the model (~150 MB for "base") on
-    // first use; no-op afterwards.
-    await ensureWhisperAssets();
+  modelName(quality) {
+    return whisperModelName(quality);
+  },
+
+  async transcribe(audioPath, durationSeconds, options) {
+    const { language, quality } = options;
+    // Downloads whisper.cpp and the selected model on first use; no-op afterwards.
+    await ensureWhisperAssets(quality);
 
     const binary = whisperBinaryPath();
     if (!binary) {
@@ -53,17 +62,19 @@ export const localWhisperProvider: TranscriptionProvider = {
     }
 
     const outBase = `${audioPath}.whisper`;
-    const args = [
-      "-m", whisperModelPath(),
+    const args: string[] = [
+      "-m", whisperModelPath(quality),
       "-f", audioPath,
       "-l", language === "auto" ? "auto" : language,
-      "-oj",
+      "-ojf",
       "-of", outBase,
       "-ml", "1",
       "-sow",
       "-t", String(Math.min(8, Math.max(1, os.cpus().length - 1))),
       "--no-prints",
     ];
+    const prompt = options.prompt?.trim().slice(0, 500);
+    if (prompt) args.push("--prompt", prompt, "--carry-initial-prompt");
 
     // base model runs roughly at realtime on a typical CPU; leave generous headroom.
     const timeoutMs = Math.min(20 * 60_000, Math.max(3 * 60_000, durationSeconds * 8000));
@@ -77,13 +88,15 @@ export const localWhisperProvider: TranscriptionProvider = {
       for (const seg of data.transcription ?? []) {
         const text = seg.text.trim();
         if (!text || NOISE_TOKEN.test(text)) continue;
+        const confidence = segmentConfidence(seg.tokens);
         words.push({
           word: text,
           startTime: seg.offsets.from / 1000,
           endTime: seg.offsets.to / 1000,
+          ...(confidence === undefined ? {} : { confidence }),
         });
       }
-      return chunkWordsToCaptions(words);
+      return addCaptionConfidence(chunkWordsToCaptions(words));
     } catch (err) {
       if (err instanceof TranscriptionError) throw err;
       throw new TranscriptionError(
@@ -95,6 +108,49 @@ export const localWhisperProvider: TranscriptionProvider = {
     }
   },
 };
+
+/** Mean lexical-token probability for a one-word segment; control tokens are excluded. */
+function segmentConfidence(
+  tokens: Array<{ text?: string; p?: number }> | undefined
+): number | undefined {
+  const probabilities = (tokens ?? [])
+    .filter((token) => {
+      const text = token.text?.trim() ?? "";
+      return (
+        text.length > 0 &&
+        !/^\[_.*\]$/.test(text) &&
+        !/^<\|.*\|>$/.test(text) &&
+        typeof token.p === "number" &&
+        Number.isFinite(token.p)
+      );
+    })
+    .map((token) => Math.max(0, Math.min(1, token.p as number)));
+  if (probabilities.length === 0) return undefined;
+  return roundConfidence(
+    probabilities.reduce((sum, probability) => sum + probability, 0) /
+      probabilities.length
+  );
+}
+
+function addCaptionConfidence(captions: Caption[]): Caption[] {
+  return captions.map((caption) => {
+    const probabilities = (caption.words ?? [])
+      .map((word) => word.confidence)
+      .filter((value): value is number => typeof value === "number");
+    if (probabilities.length === 0) return caption;
+    return {
+      ...caption,
+      confidence: roundConfidence(
+        probabilities.reduce((sum, probability) => sum + probability, 0) /
+          probabilities.length
+      ),
+    };
+  });
+}
+
+function roundConfidence(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
 
 function runWhisper(binary: string, args: string[], timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {

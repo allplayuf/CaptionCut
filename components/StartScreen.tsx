@@ -4,9 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import type { Project, ProjectSummary } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { UPLOAD_ACCEPT, useMediaUpload } from "@/hooks/useMediaUpload";
+import GoogleDriveButton from "@/components/GoogleDriveButton";
 import {
   ArrowRight,
   Clapperboard,
+  Cloud,
   FolderOpen,
   Mic,
   Trophy,
@@ -150,6 +152,18 @@ export default function StartScreen({ onSkip }: { onSkip: () => void }) {
             </>
           )}
         </button>
+
+        <div className="mt-3 flex w-full items-center gap-3">
+          <span className="h-px flex-1 bg-white/8" />
+          <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-600">or</span>
+          <span className="h-px flex-1 bg-white/8" />
+        </div>
+        <GoogleDriveButton
+          disabled={uploading !== null}
+          className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-white/[0.045] px-4 py-3 text-xs font-semibold text-zinc-200 ring-1 ring-white/10 transition hover:bg-white/[0.075] hover:ring-sky-400/30 disabled:opacity-50"
+        >
+          <Cloud size={15} className="text-sky-300" /> Choose video or audio from Google Drive
+        </GoogleDriveButton>
 
         {/* example workflows */}
         <div className="mt-6 grid w-full grid-cols-2 gap-2 sm:grid-cols-4">

@@ -163,12 +163,12 @@ async function main() {
   });
   console.log(`Export request: ${request.clips.length} clips, ${request.zooms?.length} zooms, ${request.textOverlays?.length} text overlays, ${request.audioClips?.length} audio clips`);
 
-  const job = startExportJob(request);
+  const { state: job } = await startExportJob(request);
   console.log(`Export job ${job.id} started…`);
   const t0 = Date.now();
   for (;;) {
     await new Promise((r) => setTimeout(r, 1500));
-    const state = readJobState(job.id);
+    const state = await readJobState(job.id);
     if (!state) throw new Error("job state missing");
     if (state.status === "done") break;
     if (state.status === "error") throw new Error(`export failed: ${state.error}`);

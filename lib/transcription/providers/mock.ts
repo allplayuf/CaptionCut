@@ -23,6 +23,10 @@ export const mockProvider: TranscriptionProvider = {
     return true;
   },
 
+  modelName() {
+    return "mock";
+  },
+
   async transcribe(_audioPath, durationSeconds) {
     // Spread demo lines evenly across the video so timing/highlighting can be tested.
     const captions: Caption[] = [];
@@ -39,6 +43,7 @@ export const mockProvider: TranscriptionProvider = {
         word: w,
         startTime: start + j * wordDur,
         endTime: start + (j + 1) * wordDur,
+        confidence: 1,
       }));
       captions.push({
         id: `demo-${i}`,
@@ -46,6 +51,7 @@ export const mockProvider: TranscriptionProvider = {
         endTime: Math.round(end * 1000) / 1000,
         text,
         words,
+        confidence: 1,
       });
     }
     return captions;

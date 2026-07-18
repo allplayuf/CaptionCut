@@ -1,11 +1,17 @@
 import path from "path";
 import fs from "fs";
+import os from "os";
 
 /**
  * All user data (uploads, projects, exports) lives under <repo>/data.
  * This keeps the MVP dependency-free; swap for S3/DB later if needed.
  */
-const DATA_ROOT = path.join(process.cwd(), "data");
+// Vercel Functions can only write to their ephemeral temp directory. Durable
+// media/projects use Blob there; these folders remain useful as FFmpeg scratch
+// space and caches during a single invocation.
+const DATA_ROOT = process.env.VERCEL
+  ? path.join(os.tmpdir(), "captioncut")
+  : path.join(/*turbopackIgnore: true*/ process.cwd(), "data");
 
 export const MEDIA_DIR = path.join(DATA_ROOT, "media");
 export const PROJECTS_DIR = path.join(DATA_ROOT, "projects");

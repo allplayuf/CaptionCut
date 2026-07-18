@@ -3,7 +3,8 @@ import fs from "fs";
 import path from "path";
 import type { AudioAnalysis, MediaAnalysis, VideoAnalysis } from "@/types";
 import { FFMPEG } from "./ffmpeg";
-import { ANALYSIS_DIR, MEDIA_DIR, ensureDataDirs, safeId } from "./paths";
+import { ANALYSIS_DIR, ensureDataDirs, safeId } from "./paths";
+import { materializeMedia } from "./media";
 
 /**
  * Local media analysis — the auto editor's "eyes and ears". Two fast FFmpeg
@@ -21,7 +22,7 @@ import { ANALYSIS_DIR, MEDIA_DIR, ensureDataDirs, safeId } from "./paths";
  * Results are cached in data/analysis/<assetId>.json (invalidated by VERSION).
  */
 
-const VERSION = 4;
+const VERSION = 5;
 /** Samples/sec of the stored energy curve. */
 const AUDIO_RATE = 20;
 /** Internal envelope rate used for beat detection (finer phase accuracy). */
@@ -39,7 +40,8 @@ const ANALYZE_TIMEOUT_MS = 4 * 60 * 1000;
 export async function analyzeAsset(
   assetId: string,
   filename: string,
-  opts: { hasAudio: boolean; hasVideo: boolean; duration: number }
+  opts: { hasAudio: boolean; hasVideo: boolean; duration: number },
+  storageUrl?: string
 ): Promise<MediaAnalysis | null> {
   ensureDataDirs();
   const cacheFile = path.join(ANALYSIS_DIR, `${safeId(assetId)}.json`);
@@ -50,8 +52,12 @@ export async function analyzeAsset(
     // no cache / stale — analyze fresh
   }
 
-  const file = path.join(MEDIA_DIR, filename);
-  if (!fs.existsSync(file)) return null;
+  let file: string;
+  try {
+    file = await materializeMedia({ id: assetId, filename, storageUrl });
+  } catch {
+    return null;
+  }
 
   // Each pass is independent; a failure in one shouldn't kill the other.
   const [audio, video] = await Promise.all([
@@ -300,10 +306,16 @@ async function analyzeVideo(file: string): Promise<VideoAnalysis | null> {
   const clamped = ydif.map((v) => Math.min(v, cutThreshold));
   const peak = Math.max(1e-6, ...clamped);
   const motion = clamped.map((v) => round3(v / peak));
+  const sortedMotion = [...clamped].sort((a, b) => a - b);
+  const p90 = sortedMotion[Math.min(sortedMotion.length - 1, Math.floor(sortedMotion.length * 0.9))] ?? 0;
+  // YDIF is on an absolute 0..255 luma scale. Keep a floor for subtle real
+  // movement, but do not let every asset normalize its own wobble to 100%.
+  const motionIntensity = round3(Math.max(0.12, Math.min(1, p90 / 16)));
 
   return {
     rate: VIDEO_RATE,
     motion,
+    motionIntensity,
     sceneChanges,
     motionCenterX: center ?? undefined,
     motionCenterRate: center ? CENTER_RATE : undefined,

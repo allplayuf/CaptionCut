@@ -5,6 +5,8 @@ export interface WordTiming {
   word: string;
   startTime: number;
   endTime: number;
+  /** Speech-model confidence from 0..1. Cleared when the word is edited manually. */
+  confidence?: number;
   /** Auto/manual emphasis: rendered bold + highlight color in preview and export. */
   emphasis?: boolean;
 }
@@ -16,15 +18,40 @@ export interface Caption {
   endTime: number;
   text: string;
   words?: WordTiming[];
+  /** Mean confidence of the timed words, 0..1. Undefined means manually edited/unavailable. */
+  confidence?: number;
+}
+
+/** Which exact edited sources were transcribed to produce the current captions. */
+export interface CaptionCoverage {
+  /** Includes clip trims/speed and linked recorder identity/offset. */
+  sourceSignature: string;
+  coveredClipIds: string[];
 }
 
 export type AssetKind = "video" | "audio" | "image";
 
-/** An uploaded source file (video, audio or image), stored under data/media. */
+/**
+ * A source-level link between separately recorded video and audio files.
+ * `offsetSeconds` is the delay of the audio relative to the video: positive
+ * values start the audio later; negative values advance it.
+ */
+export interface LinkedAudioSource {
+  audioAssetId: string;
+  offsetSeconds: number;
+  muteCameraAudio: boolean;
+  syncMethod: "starts" | "waveform" | "manual";
+  /** 0..1 waveform-match confidence when syncMethod is "waveform". */
+  confidence?: number;
+}
+
+/** An uploaded source file (video, audio or image). */
 export interface MediaAsset {
   id: string;
   /** Filename on disk (id + original extension). */
   filename: string;
+  /** Durable public object URL when deployed with Vercel Blob. */
+  storageUrl?: string;
   originalName: string;
   mimeType: string;
   size: number;
@@ -36,6 +63,8 @@ export interface MediaAsset {
   hasAudio: boolean;
   /** Missing on legacy assets — use assetKind() from lib/timeline/tracks. */
   kind?: AssetKind;
+  /** Separate recorder/microphone audio that follows this video source. */
+  linkedAudio?: LinkedAudioSource;
 }
 
 /**
@@ -240,6 +269,15 @@ export interface BrollSuggestion {
   reason: string;
 }
 
+/** A concrete muted cutaway placed over interview audio on the B-roll track. */
+export interface BrollPlacement extends TimeRange {
+  assetId: string;
+  sourceStart: number;
+  sourceEnd: number;
+  /** Why this cutaway was chosen; displayed in the draft review. */
+  kind: "action" | "reaction";
+}
+
 export interface AudioInstruction {
   kind: "music-volume" | "duck-under-voice" | "add-music";
   value?: number;
@@ -278,6 +316,11 @@ export interface VideoAnalysis {
   rate: number;
   /** Normalized 0..1 frame-difference motion curve. */
   motion: number[];
+  /**
+   * Robust absolute motion level shared across assets (0..1). Used to stop a
+   * quiet camera wobble from becoming a clip's artificial 100% action peak.
+   */
+  motionIntensity?: number;
   /** Hard-cut / scene-change instants in source seconds. */
   sceneChanges: number[];
   /**
@@ -365,6 +408,8 @@ export interface EditRecipe {
    */
   musicCut?: { sourceStart: number; sourceEnd: number };
   overlays: OverlayInstruction[];
+  /** Realized interview cutaways on the final timeline. */
+  brollPlacements?: BrollPlacement[];
   brollSuggestions: BrollSuggestion[];
   audioInstructions: AudioInstruction[];
   hooks: HookCandidate[];
@@ -415,6 +460,7 @@ export interface EditVersion {
   kind: "manual" | "auto-edit" | "pre-auto-edit";
   tracks: Track[];
   captions: Caption[];
+  captionCoverage?: CaptionCoverage;
   style: CaptionStyle;
 }
 
@@ -429,6 +475,8 @@ export interface Project {
   /** v2 multi-track timeline. Absent on legacy projects (migrated on load). */
   tracks?: Track[];
   captions: Caption[];
+  /** Persisted so selected-only captions are never mistaken for a full transcript. */
+  captionCoverage?: CaptionCoverage;
   style: CaptionStyle;
   editRecipe?: EditRecipe;
   /** Editing/preview aspect ratio. Absent on old saves (= "9:16"). */
@@ -454,6 +502,8 @@ export interface ExportJobState {
   /** 0..1 */
   progress: number;
   error?: string;
+  /** Durable download URL for completed cloud exports. */
+  downloadUrl?: string;
 }
 
 export type ExportPresetId = "tiktok" | "tiktok-60" | "square" | "landscape" | "draft";
@@ -477,6 +527,9 @@ export interface ExportPreset {
 }
 
 export type TranscriptionLanguage = "auto" | "en" | "sv";
+
+/** Local Whisper speed/accuracy trade-off. WHISPER_MODEL still overrides the mapped model. */
+export type TranscriptionQuality = "fast" | "accurate";
 
 /** Project aspect ratio: drives the preview canvas and the default export preset. */
 export type AspectRatioId = "9:16" | "1:1" | "16:9";

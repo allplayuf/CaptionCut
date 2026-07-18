@@ -21,7 +21,28 @@ function expectedKind(ext: string, mimeType: string): AssetKind | null {
   return null;
 }
 
+/** Lets the browser choose durable direct uploads on Vercel, local disk in dev. */
+export async function GET() {
+  return NextResponse.json({
+    storage: process.env.BLOB_READ_WRITE_TOKEN
+      ? "blob"
+      : process.env.VERCEL
+        ? "unconfigured"
+        : "local",
+  });
+}
+
 export async function POST(request: NextRequest) {
+  if (process.env.VERCEL) {
+    return NextResponse.json(
+      {
+        error: process.env.BLOB_READ_WRITE_TOKEN
+          ? "Use the direct cloud upload endpoint."
+          : "Uploads need a Vercel Blob store. Connect one to this project and redeploy.",
+      },
+      { status: 503 }
+    );
+  }
   ensureDataDirs();
 
   let file: File | null = null;

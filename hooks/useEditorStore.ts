@@ -6,12 +6,14 @@ import type {
   AspectRatioId,
   BeatSettings,
   Caption,
+  CaptionCoverage,
   CaptionStyle,
   ClipEffect,
   EditRecipe,
   EditVersion,
   MediaAnalysis,
   MediaAsset,
+  LinkedAudioSource,
   Project,
   TimeRange,
   TimelineClip,
@@ -21,6 +23,7 @@ import type {
 } from "@/types";
 import { DEFAULT_STYLE } from "@/lib/captions/presets";
 import { cleanCaptions } from "@/lib/captions/clean";
+import { replaceCaptionsInsideRanges } from "@/lib/captions/ranges";
 import { applyEditRecipeToTimeline } from "@/lib/autoEdit/applyEditRecipeToTimeline";
 import { findBestMusicStart } from "@/lib/autoEdit/signals";
 import {
@@ -51,6 +54,7 @@ export interface Toast {
 interface HistoryEntry {
   tracks: Track[];
   captions: Caption[];
+  captionCoverage: CaptionCoverage | null;
   style: CaptionStyle;
   projectName: string;
 }
@@ -70,6 +74,7 @@ interface EditorState {
   media: MediaAsset[];
   tracks: Track[];
   captions: Caption[];
+  captionCoverage: CaptionCoverage | null;
   style: CaptionStyle;
   /** Editing/preview aspect ratio (drives the preview canvas + export default). */
   format: AspectRatioId;
@@ -134,6 +139,13 @@ interface EditorState {
 
   // media / clips
   addMedia: (asset: MediaAsset) => void;
+  /** Link a separately recorded audio source to a video at source level. */
+  linkAudioToVideo: (
+    videoMediaId: string,
+    audioMediaId: string,
+    link: Omit<LinkedAudioSource, "audioAssetId">
+  ) => void;
+  unlinkAudioFromVideo: (videoMediaId: string) => void;
   addClipFromMedia: (mediaId: string) => void;
   addMediaToTrack: (mediaId: string, trackType: TrackType, atTime?: number) => void;
   /** Set an audio asset as THE soundtrack: replaces the music track's clips,
@@ -178,7 +190,13 @@ interface EditorState {
   toggleTrackHidden: (trackId: string) => void;
 
   // captions
-  setCaptions: (captions: Caption[]) => void;
+  setCaptions: (captions: Caption[], coverage: CaptionCoverage) => void;
+  /** Replace captions inside the given timeline ranges, preserving every line outside them. */
+  replaceCaptionsInRanges: (
+    ranges: TimeRange[],
+    captions: Caption[],
+    coverage: CaptionCoverage
+  ) => void;
   updateCaptionText: (id: string, text: string) => void;
   updateCaptionTiming: (
     id: string,
@@ -227,6 +245,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
   const snapshotOf = (s: EditorState): HistoryEntry => ({
     tracks: s.tracks,
     captions: s.captions,
+    captionCoverage: s.captionCoverage,
     style: s.style,
     projectName: s.projectName,
   });
@@ -302,6 +321,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     media: [],
     tracks: createDefaultTracks(),
     captions: [],
+    captionCoverage: null,
     style: { ...DEFAULT_STYLE },
     format: "9:16",
     versions: [],
@@ -336,6 +356,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         media: [],
         tracks: createDefaultTracks(),
         captions: [],
+        captionCoverage: null,
         style: { ...DEFAULT_STYLE },
         format: "9:16",
         versions: [],
@@ -360,6 +381,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         media: project.media ?? [],
         tracks: migrateTracks(project),
         captions: project.captions ?? [],
+        captionCoverage: project.captionCoverage ?? null,
         style: { ...DEFAULT_STYLE, ...project.style },
         format: project.format ?? "9:16",
         versions: project.versions ?? [],
@@ -423,6 +445,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
           kind,
           tracks: s.tracks,
           captions: s.captions,
+          captionCoverage: s.captionCoverage ?? undefined,
           style: s.style,
         };
         // Auto kinds keep only their newest snapshot; manual saves stack up.
@@ -439,6 +462,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       commit(() => ({
         tracks: version.tracks,
         captions: version.captions,
+        captionCoverage: version.captionCoverage ?? null,
         style: version.style,
         ...sel(null),
         selectedCaptionId: null,
@@ -480,6 +504,53 @@ export const useEditorStore = create<EditorState>((set, get) => {
           ...sel(clip.id),
         };
       }),
+
+    linkAudioToVideo: (videoMediaId, audioMediaId, link) => {
+      const state = get();
+      const video = state.media.find((asset) => asset.id === videoMediaId);
+      const audio = state.media.find((asset) => asset.id === audioMediaId);
+      if (!video || assetKind(video) !== "video" || !audio || assetKind(audio) !== "audio") {
+        state.addToast("error", "Choose one video and one audio file to pair.");
+        return;
+      }
+      const offsetSeconds = Number.isFinite(link.offsetSeconds)
+        ? Math.max(-600, Math.min(600, round3(link.offsetSeconds)))
+        : 0;
+      set((s) => ({
+        media: s.media.map((asset) =>
+          asset.id === videoMediaId
+            ? {
+                ...asset,
+                linkedAudio: {
+                  audioAssetId: audioMediaId,
+                  offsetSeconds,
+                  muteCameraAudio: link.muteCameraAudio,
+                  syncMethod: link.syncMethod,
+                  confidence: link.confidence,
+                },
+              }
+            : asset
+        ),
+        revision: s.revision + 1,
+      }));
+      get().addToast("success", `Paired "${video.originalName}" with "${audio.originalName}".`);
+    },
+
+    unlinkAudioFromVideo: (videoMediaId) => {
+      const state = get();
+      const video = state.media.find((asset) => asset.id === videoMediaId);
+      if (!video?.linkedAudio) return;
+      set((s) => ({
+        media: s.media.map((asset) => {
+          if (asset.id !== videoMediaId) return asset;
+          const unlinked = { ...asset };
+          delete unlinked.linkedAudio;
+          return unlinked;
+        }),
+        revision: s.revision + 1,
+      }));
+      get().addToast("success", `Unlinked the separate audio from "${video.originalName}".`);
+    },
 
     addClipFromMedia: (mediaId) =>
       commit((s) => {
@@ -1162,11 +1233,23 @@ export const useEditorStore = create<EditorState>((set, get) => {
 
     /* ---------------- captions ---------------- */
 
-    setCaptions: (captions) => commit(() => ({ captions, selectedCaptionId: null })),
+    setCaptions: (captions, coverage) =>
+      commit(() => ({ captions, captionCoverage: coverage, selectedCaptionId: null })),
+
+    replaceCaptionsInRanges: (ranges, captions, coverage) =>
+      commit((s) => ({
+        captions: replaceCaptionsInsideRanges(s.captions, ranges, captions),
+        captionCoverage: coverage,
+        selectedCaptionId: null,
+      })),
 
     updateCaptionText: (id, text) =>
       commit((s) => ({
-        captions: s.captions.map((c) => (c.id === id ? { ...c, text, words: remapWords(c, text) } : c)),
+        captions: s.captions.map((c) =>
+          c.id === id
+            ? { ...c, text, words: remapWords(c, text), confidence: undefined }
+            : c
+        ),
       })),
 
     updateCaptionTiming: (id, startTime, endTime, opts) =>
@@ -1226,6 +1309,9 @@ export const useEditorStore = create<EditorState>((set, get) => {
           endTime: b.endTime,
           text: `${a.text} ${b.text}`.replace(/\s+/g, " ").trim(),
           words,
+          confidence: words
+            ? meanWordConfidence(words)
+            : meanDefinedConfidence([a.confidence, b.confidence]),
         };
         sorted.splice(i, 2, merged);
         return { captions: sorted, selectedCaptionId: merged.id };
@@ -1262,6 +1348,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
           endTime: round3(second[0].startTime),
           text: first.map((w) => w.word).join(" "),
           words: hadWords ? first : undefined,
+          confidence: hadWords ? meanWordConfidence(first) : cap.confidence,
         };
         const right: Caption = {
           ...cap,
@@ -1269,6 +1356,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
           startTime: round3(second[0].startTime),
           text: second.map((w) => w.word).join(" "),
           words: hadWords ? second : undefined,
+          confidence: hadWords ? meanWordConfidence(second) : cap.confidence,
         };
         sorted.splice(i, 1, left, right);
         return { captions: sorted, selectedCaptionId: left.id };
@@ -1298,7 +1386,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
           if (!matches) return c;
           count += matches.length;
           const text = c.text.replace(pattern, replace);
-          return { ...c, text, words: remapWords(c, text) };
+          return { ...c, text, words: remapWords(c, text), confidence: undefined };
         });
         if (count === 0) return {};
         return { captions };
@@ -1439,7 +1527,11 @@ function remapWords(caption: Caption, newText: string): WordTiming[] | undefined
   const newWords = newText.trim().split(/\s+/).filter(Boolean);
   if (newWords.length === 0) return undefined;
   if (newWords.length === caption.words.length) {
-    return caption.words.map((w, i) => ({ ...w, word: newWords[i] }));
+    return caption.words.map((w, i) => {
+      const remapped = { ...w, word: newWords[i] };
+      delete remapped.confidence;
+      return remapped;
+    });
   }
   const dur = caption.endTime - caption.startTime;
   const per = dur / newWords.length;
@@ -1448,6 +1540,16 @@ function remapWords(caption: Caption, newText: string): WordTiming[] | undefined
     startTime: caption.startTime + i * per,
     endTime: caption.startTime + (i + 1) * per,
   }));
+}
+
+function meanWordConfidence(words: WordTiming[]): number | undefined {
+  return meanDefinedConfidence(words.map((word) => word.confidence));
+}
+
+function meanDefinedConfidence(values: Array<number | undefined>): number | undefined {
+  const defined = values.filter((value): value is number => typeof value === "number");
+  if (defined.length === 0) return undefined;
+  return Math.round((defined.reduce((sum, value) => sum + value, 0) / defined.length) * 1000) / 1000;
 }
 
 /** Linearly rescale word timings into a caption's new time range. */
@@ -1535,6 +1637,7 @@ export function buildProjectSnapshot(state: {
   media: MediaAsset[];
   tracks: Track[];
   captions: Caption[];
+  captionCoverage: CaptionCoverage | null;
   style: CaptionStyle;
   format: AspectRatioId;
   versions: EditVersion[];
@@ -1551,6 +1654,7 @@ export function buildProjectSnapshot(state: {
     clips: mainClips(state.tracks),
     tracks: state.tracks,
     captions: state.captions,
+    captionCoverage: state.captionCoverage ?? undefined,
     style: state.style,
     format: state.format,
     versions: state.versions,

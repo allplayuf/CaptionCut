@@ -65,27 +65,40 @@ export function buildTimelineSignals(
   for (const clip of clips) {
     const speed = Math.min(2, Math.max(0.5, clip.speed && clip.speed > 0 ? clip.speed : 1));
     const clipDur = Math.max(0, clip.sourceEnd - clip.sourceStart) / speed;
-    const analysis = analyses[clip.mediaId];
     const asset = mediaById.get(clip.mediaId);
-    if (asset?.hasAudio) hasAudio = true;
+    const analysis = analyses[clip.mediaId];
+    const linked = asset?.linkedAudio;
+    const linkedAsset = linked ? mediaById.get(linked.audioAssetId) : undefined;
+    const linkedAnalysis = linked ? analyses[linked.audioAssetId] : undefined;
+    const audio = linkedAnalysis?.audio ?? analysis?.audio ?? null;
+    const audioOffset = linkedAnalysis?.audio ? linked?.offsetSeconds ?? 0 : 0;
+    const video = analysis?.video ?? null;
+    if (linkedAsset?.hasAudio || asset?.hasAudio) hasAudio = true;
 
     // Clip joins are hard cuts by construction (skip t=0).
     if (cursor > 0.05) sceneChanges.push(round3(cursor));
 
-    if (analysis) {
-      const { audio, video } = analysis;
+    if (analysis || audio) {
       if (audio || video) anySignal = true;
+      // Stored envelopes are normalized inside each source asset. Put audio
+      // back onto a shared scale before comparing clips, otherwise a tiny
+      // noise peak in a quiet file ranks like a genuinely loud celebration.
+      const audioWeight = audio ? loudnessWeight(audio.loudness) : 1;
+      const motionWeight = video?.motionIntensity ?? 0.65;
       const from = Math.floor(cursor * SIGNAL_RATE);
       const to = Math.min(bins, Math.ceil((cursor + clipDur) * SIGNAL_RATE));
       for (let b = from; b < to; b++) {
         const srcT = clip.sourceStart + (b / SIGNAL_RATE - cursor) * speed;
         if (audio) {
-          const i = Math.min(audio.energy.length - 1, Math.floor(srcT * audio.rate));
-          if (i >= 0) energy[b] = audio.energy[i];
+          const audioT = srcT - audioOffset;
+          const i = Math.floor(audioT * audio.rate);
+          if (i >= 0 && i < audio.energy.length) {
+            energy[b] = round3(audio.energy[i] * audioWeight);
+          }
         }
         if (video) {
           const i = Math.min(video.motion.length - 1, Math.floor(srcT * video.rate));
-          if (i >= 0) motion[b] = video.motion[i];
+          if (i >= 0) motion[b] = round3(video.motion[i] * motionWeight);
         }
       }
       if (video) {
@@ -97,8 +110,9 @@ export function buildTimelineSignals(
       }
       if (audio && audio.bpm) {
         for (const beat of audio.beats) {
-          if (beat >= clip.sourceStart && beat <= clip.sourceEnd) {
-            footageBeats.push(round3(cursor + (beat - clip.sourceStart) / speed));
+          const videoSourceBeat = beat + audioOffset;
+          if (videoSourceBeat >= clip.sourceStart && videoSourceBeat <= clip.sourceEnd) {
+            footageBeats.push(round3(cursor + (videoSourceBeat - clip.sourceStart) / speed));
           }
         }
       }
@@ -111,7 +125,7 @@ export function buildTimelineSignals(
   // it plays over the final cut, so cuts should land on ITS beats.
   const music = musicBeats(tracks, analyses);
   let beats = music?.beats.length ? music.beats : dedupeSorted(footageBeats);
-  let bpm = music?.beats.length ? music.bpm : footageBeatsBpm(clips, analyses);
+  let bpm = music?.beats.length ? music.bpm : footageBeatsBpm(clips, mediaById, analyses);
   let beatSource: NonNullable<TimelineSignals["beatSource"]> = music?.beats.length
     ? "music"
     : "footage";
@@ -150,6 +164,17 @@ export function buildTimelineSignals(
     hasAudio,
     beatSource,
   };
+}
+
+/**
+ * Convert overall dBFS loudness into a conservative cross-source ranking
+ * weight. -18 dBFS and louder keep full weight; very quiet recordings are
+ * reduced but never discarded because phone microphones vary considerably.
+ */
+function loudnessWeight(dbfs: number): number {
+  if (!Number.isFinite(dbfs)) return 0.5;
+  const linear = 10 ** ((dbfs + 18) / 20);
+  return Math.max(0.12, Math.min(1.15, linear));
 }
 
 /**
@@ -225,10 +250,12 @@ function musicBeats(
 /** Dominant footage BPM (first confident one wins — good enough for snapping). */
 function footageBeatsBpm(
   clips: Clip[],
+  mediaById: Map<string, MediaAsset>,
   analyses: Record<string, MediaAnalysis | null>
 ): number | null {
   for (const clip of clips) {
-    const audio = analyses[clip.mediaId]?.audio;
+    const linkedId = mediaById.get(clip.mediaId)?.linkedAudio?.audioAssetId;
+    const audio = (linkedId ? analyses[linkedId]?.audio : null) ?? analyses[clip.mediaId]?.audio;
     if (audio?.bpm) return audio.bpm;
   }
   return null;

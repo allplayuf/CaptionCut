@@ -45,6 +45,36 @@ export function applyEditRecipeToTimeline(
         clean pass realizes them on whatever survived the cuts). */
   nextCaptions = cleanCaptions(nextCaptions);
 
+  /* 2b. Interview cutaways → B-roll track. The main track remains the
+         selected spoken answer, so its voice and captions continue while
+         these muted visual clips cover the frame. */
+  const bi = nextTracks.findIndex((t) => t.type === "broll");
+  if (bi >= 0 && (recipe.brollPlacements?.length ?? 0) > 0) {
+    const brollTrack = nextTracks[bi];
+    let clips = [...brollTrack.clips];
+    for (const placement of recipe.brollPlacements ?? []) {
+      const clip: TimelineClip = {
+        id: nanoid(8),
+        type: "broll",
+        assetId: placement.assetId,
+        startTime: round3(placement.start),
+        endTime: round3(placement.end),
+        sourceStart: round3(placement.sourceStart),
+        sourceEnd: round3(placement.sourceEnd),
+        volume: 0,
+        fit: "fill",
+        metadata: {
+          role: "interview-cutaway",
+          kind: placement.kind,
+          recipeId: recipe.id,
+        },
+      };
+      const placed = placeWithoutOverlap({ ...brollTrack, clips }, clip);
+      if (placed.endTime - placed.startTime > 0.45) clips = [...clips, placed];
+    }
+    nextTracks[bi] = { ...brollTrack, clips };
+  }
+
   /* 3. Zooms + flashes → effects track. Flashes keep their exact timing (they
         must land ON the cut) and may overlap a zoom — both render together. */
   const ei = nextTracks.findIndex((t) => t.type === "effects");
@@ -90,6 +120,9 @@ export function applyEditRecipeToTimeline(
         song never overhangs the timeline. */
   const finalDur = newMain.clips[newMain.clips.length - 1].endTime;
   const mi = nextTracks.findIndex((t) => t.type === "music");
+  const duckMusicForSpeech =
+    recipe.style === "interview" ||
+    recipe.audioInstructions.some((instruction) => instruction.kind === "duck-under-voice");
   if (mi >= 0 && nextTracks[mi].clips.length > 0) {
     const musicTrack = nextTracks[mi];
     let clips: TimelineClip[];
@@ -106,6 +139,9 @@ export function applyEditRecipeToTimeline(
           endTime: round3(Math.min(finalDur, srcEnd - srcStart)),
           sourceStart: round3(srcStart),
           sourceEnd: round3(srcEnd),
+          volume: duckMusicForSpeech
+            ? Math.min(base.volume ?? 1, 0.22)
+            : base.volume,
           fadeOut: base.fadeOut ?? 1.2,
         },
       ];
@@ -113,8 +149,11 @@ export function applyEditRecipeToTimeline(
       clips = musicTrack.clips
         .filter((c) => c.startTime < finalDur - 0.05)
         .map((c) => {
-          if (c.endTime <= finalDur) return c;
-          const trimmed = { ...c, endTime: round3(finalDur) };
+          const ducked = duckMusicForSpeech
+            ? { ...c, volume: Math.min(c.volume ?? 1, 0.22) }
+            : c;
+          if (ducked.endTime <= finalDur) return ducked;
+          const trimmed = { ...ducked, endTime: round3(finalDur) };
           if (c.sourceStart !== undefined) {
             trimmed.sourceEnd = round3((c.sourceStart ?? 0) + (finalDur - c.startTime));
           }

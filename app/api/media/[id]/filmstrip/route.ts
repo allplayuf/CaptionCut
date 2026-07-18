@@ -4,6 +4,7 @@ import path from "path";
 import { ANALYSIS_DIR, MEDIA_DIR, ensureDataDirs } from "@/lib/server/paths";
 import { FFPROBE, runFfmpeg } from "@/lib/server/ffmpeg";
 import { spawn } from "child_process";
+import { blobLocationFromUrl, materializeMedia } from "@/lib/server/media";
 
 export const runtime = "nodejs";
 
@@ -29,14 +30,23 @@ export async function GET(
 
   const cacheFile = path.join(ANALYSIS_DIR, `${id}.strip.jpg`);
   if (!fs.existsSync(cacheFile)) {
-    let filename: string | undefined;
-    try {
-      filename = (await fs.promises.readdir(MEDIA_DIR)).find((f) => f.startsWith(`${id}.`));
-    } catch {
-      filename = undefined;
+    let file: string | undefined;
+    const storageUrl = request.nextUrl.searchParams.get("src");
+    if (storageUrl) {
+      try {
+        file = await materializeMedia(blobLocationFromUrl(id, storageUrl));
+      } catch {
+        file = undefined;
+      }
+    } else {
+      try {
+        const filename = (await fs.promises.readdir(MEDIA_DIR)).find((f) => f.startsWith(`${id}.`));
+        if (filename) file = path.join(MEDIA_DIR, filename);
+      } catch {
+        file = undefined;
+      }
     }
-    if (!filename) return NextResponse.json({ error: "Media not found" }, { status: 404 });
-    const file = path.join(MEDIA_DIR, filename);
+    if (!file) return NextResponse.json({ error: "Media not found" }, { status: 404 });
 
     try {
       const duration = await probeDuration(file);

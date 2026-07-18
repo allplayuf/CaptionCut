@@ -3,6 +3,7 @@ import path from "path";
 import { Readable, Transform } from "stream";
 import { pipeline } from "stream/promises";
 import { spawn } from "child_process";
+import type { TranscriptionQuality } from "@/types";
 import { TranscriptionError } from "./types";
 
 /**
@@ -14,7 +15,7 @@ import { TranscriptionError } from "./types";
  *   WHISPER_CPP_PATH — path to an existing whisper-cli executable (skips the
  *                      bundled download; required on non-Windows platforms
  *                      unless whisper-cli is on PATH)
- *   WHISPER_MODEL    — ggml model name (default "base"; see MODEL_ALLOWLIST)
+ *   WHISPER_MODEL    — ggml model name (overrides the Fast/Accurate mapping)
  */
 
 const WHISPER_DIR = path.join(process.cwd(), "data", "whisper");
@@ -34,10 +35,13 @@ const MODEL_ALLOWLIST = [
   "medium", "medium.en",
   "large-v3", "large-v3-turbo",
 ];
-const DEFAULT_MODEL = "base";
+const QUALITY_MODELS: Record<TranscriptionQuality, string> = {
+  fast: "base",
+  accurate: "small",
+};
 
-export function whisperModelName(): string {
-  const name = process.env.WHISPER_MODEL || DEFAULT_MODEL;
+export function whisperModelName(quality: TranscriptionQuality = "accurate"): string {
+  const name = process.env.WHISPER_MODEL || QUALITY_MODELS[quality];
   if (!MODEL_ALLOWLIST.includes(name)) {
     throw new TranscriptionError(
       `unknown WHISPER_MODEL "${name}"`,
@@ -47,8 +51,12 @@ export function whisperModelName(): string {
   return name;
 }
 
-export function whisperModelPath(): string {
-  return path.join(MODELS_DIR, `ggml-${whisperModelName()}.bin`);
+export function whisperModelPath(quality: TranscriptionQuality = "accurate"): string {
+  return modelPath(whisperModelName(quality));
+}
+
+function modelPath(model: string): string {
+  return path.join(MODELS_DIR, `ggml-${model}.bin`);
 }
 
 export function whisperBinaryPath(): string | null {
@@ -58,30 +66,31 @@ export function whisperBinaryPath(): string | null {
 }
 
 /** True when transcription can run immediately (no downloads needed). */
-export function whisperIsReady(): boolean {
+export function whisperIsReady(quality: TranscriptionQuality = "accurate"): boolean {
   try {
-    return whisperBinaryPath() !== null && fs.existsSync(whisperModelPath());
+    return whisperBinaryPath() !== null && fs.existsSync(modelPath(whisperModelName(quality)));
   } catch {
     return false;
   }
 }
 
-let inFlight: Promise<void> | null = null;
+/** Serialize downloads so two quality requests cannot race on the shared binary. */
+let ensureQueue: Promise<void> = Promise.resolve();
 
 /**
  * Makes sure both the whisper-cli binary and the configured model exist,
  * downloading them if needed. Safe to call concurrently.
  */
-export function ensureWhisperAssets(): Promise<void> {
-  if (!inFlight) {
-    inFlight = doEnsure().finally(() => {
-      inFlight = null;
-    });
-  }
-  return inFlight;
+export function ensureWhisperAssets(
+  quality: TranscriptionQuality = "accurate"
+): Promise<void> {
+  const model = whisperModelName(quality);
+  const task = ensureQueue.catch(() => undefined).then(() => doEnsure(model));
+  ensureQueue = task.catch(() => undefined);
+  return task;
 }
 
-async function doEnsure(): Promise<void> {
+async function doEnsure(model: string): Promise<void> {
   fs.mkdirSync(BIN_DIR, { recursive: true });
   fs.mkdirSync(MODELS_DIR, { recursive: true });
 
@@ -108,13 +117,12 @@ async function doEnsure(): Promise<void> {
     console.log("[whisper] binary ready:", BUNDLED_CLI);
   }
 
-  const modelPath = whisperModelPath();
-  if (!fs.existsSync(modelPath)) {
-    const model = whisperModelName();
+  const targetModelPath = modelPath(model);
+  if (!fs.existsSync(targetModelPath)) {
     const url = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${model}.bin`;
     console.log(`[whisper] downloading ggml-${model} model (first run only)…`);
-    await downloadFile(url, modelPath, `ggml-${model} model`);
-    console.log("[whisper] model ready:", modelPath);
+    await downloadFile(url, targetModelPath, `ggml-${model} model`);
+    console.log("[whisper] model ready:", targetModelPath);
   }
 }
 

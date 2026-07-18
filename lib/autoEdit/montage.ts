@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import type {
+  BrollPlacement,
   Caption,
   Clip,
   EditRecipe,
@@ -142,6 +143,11 @@ export interface GenerateMontageInput {
   captions: Caption[];
   /** Main-track clips (legacy shape) — clip boundaries = raw-clip boundaries. */
   clips: Clip[];
+  /**
+   * Optional source scope. The full clip list is still supplied so timeline
+   * coordinates stay stable, but only these ids produce candidates.
+   */
+  includedClipIds?: string[];
   /** Per-asset analyses, for zoom anchors that follow the action. */
   analyses: Record<string, MediaAnalysis | null>;
   duration: number;
@@ -175,6 +181,16 @@ interface Moment {
   meanMotion: number;
 }
 
+interface SourceWindow extends TimeRange {
+  clipId: string;
+  mediaId: string;
+  /** Start of the unsplit source clip in the current timeline. */
+  clipTimelineStart: number;
+  sourceStart: number;
+  sourceEnd: number;
+  speed: number;
+}
+
 export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
   const config = applyModifiers(MONTAGE_PRESETS[input.preset], input.modifiers);
   const rand = mulberry32((input.seed ?? 0) + 7);
@@ -182,7 +198,7 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
   const target = Math.max(8, Math.min(60, input.targetDuration));
 
   /* 1 — raw-clip windows (single long clip → split on scene changes) */
-  const windows = buildWindows(input.clips, signals, duration);
+  const windows = buildWindows(input.clips, signals, duration, input.includedClipIds);
 
   /* 2 — candidate moments per window */
   const moments: Moment[] = [];
@@ -196,12 +212,20 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
   /* 3 — speech moments (interview preset): strongest spoken lines */
   const speechSegs: TimeRange[] = [];
   if (config.useSpeech && input.transcript.words.length >= 3) {
-    for (const hook of detectHooks(input.transcript, 4)) {
-      if (hook.score < 3) continue;
+    let usedSpeech = 0;
+    for (const hook of detectHooks(input.transcript, 8)) {
+      if (hook.score < 2) continue;
       const start = Math.max(0, hook.startTime - 0.12);
       const end = Math.min(duration, Math.min(hook.endTime + 0.15, start + 4.5));
-      if (end - start >= 1.0) speechSegs.push({ start: round3(start), end: round3(end) });
-      if (speechSegs.length >= 3) break;
+      const speechDuration = end - start;
+      if (speechDuration < 1.0) continue;
+      if (speechSegs.some((range) => start < range.end && end > range.start)) continue;
+      // Keep the first/highest-scoring answer even when it slightly exceeds
+      // the target; subsequent answers respect the requested duration.
+      if (speechSegs.length > 0 && usedSpeech + speechDuration > target) continue;
+      speechSegs.push({ start: round3(start), end: round3(end) });
+      usedSpeech += speechDuration;
+      if (speechSegs.length >= 5 || usedSpeech >= target * 0.9) break;
     }
   }
 
@@ -211,7 +235,12 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
   const candidates = moments.filter(
     (m) => !speechSegs.some((sp) => m.start < sp.end && m.end > sp.start)
   );
-  const selected = selectMoments(candidates, target - speechBudget, config, rand);
+  const selected = selectMoments(
+    candidates,
+    config.useSpeech ? Math.max(6, target * 0.75) : target - speechBudget,
+    config,
+    rand
+  );
 
   /* 5 — order for rhythm: hook → action/reaction alternation → ender */
   const ordered = orderMoments(selected, config, rand);
@@ -221,7 +250,7 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
         step 9 instead — the song keeps playing across cuts, so boundaries
         must land on actual beat instants, not just beat-length multiples. */
   let beatSnapped = 0;
-  const musicSync = signals?.beatSource === "music" && signals.beats.length > 4;
+  const musicSync = !config.useSpeech && signals?.beatSource === "music" && signals.beats.length > 4;
   if (signals?.bpm && signals.beats.length > 4 && !musicSync) {
     const interval = 60 / signals.bpm;
     for (const m of ordered) {
@@ -238,18 +267,12 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
     }
   }
 
-  /* 7 — interleave speech (interview): speech line, then 2 action moments, … */
+  /* 7 — interview keeps the spoken answer on the main track. Chosen action
+        moments become B-roll placements later, so the voice never disappears
+        just because the picture cuts away. */
   const finalSegs: Array<{ range: TimeRange; moment: Moment | null }> = [];
   if (speechSegs.length > 0) {
-    const actions = [...ordered];
-    let ai = 0;
-    speechSegs.forEach((sp, si) => {
-      finalSegs.push({ range: sp, moment: null });
-      const take = si === speechSegs.length - 1 ? actions.length - ai : Math.ceil((actions.length / speechSegs.length));
-      for (let k = 0; k < take && ai < actions.length; k++, ai++) {
-        finalSegs.push({ range: { start: actions[ai].start, end: actions[ai].end }, moment: actions[ai] });
-      }
-    });
+    speechSegs.forEach((speech) => finalSegs.push({ range: speech, moment: null }));
   } else {
     for (const m of ordered) finalSegs.push({ range: { start: m.start, end: m.end }, moment: m });
   }
@@ -312,6 +335,46 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
     cursor += outDur;
   });
   const newDuration = round3(cursor);
+
+  /* 9b — interview B-roll. The selected spoken ranges remain on the main
+         track (and therefore keep their audio/captions); strong moments from
+         clips assigned as B-roll are placed over the middle of each answer. */
+  const brollPlacements: BrollPlacement[] = [];
+  if (config.useSpeech && speechSegs.length > 0 && ordered.length > 0) {
+    finalSegs.forEach((seg, index) => {
+      const answerStart = finalStarts[index];
+      const answerDuration = seg.range.end - seg.range.start;
+      if (answerDuration < 1.25) return;
+
+      const moment = ordered[index % ordered.length];
+      const window = windows[moment.window];
+      if (!window?.mediaId) return;
+
+      // Show the speaker at the top and tail of the answer; the cutaway owns
+      // the middle, capped so a single B-roll shot never drags on.
+      const start = answerStart + Math.min(0.55, answerDuration * 0.18);
+      const available = Math.max(0, answerStart + answerDuration - 0.18 - start);
+      const placementDuration = Math.min(2.6, moment.end - moment.start, available);
+      if (placementDuration < 0.65) return;
+
+      const sourceStart = Math.min(
+        window.sourceEnd - 0.1,
+        window.sourceStart + (moment.start - window.clipTimelineStart) * window.speed
+      );
+      const sourceEnd = Math.min(window.sourceEnd, sourceStart + placementDuration);
+      const actualDuration = sourceEnd - sourceStart;
+      if (actualDuration < 0.5) return;
+
+      brollPlacements.push({
+        assetId: window.mediaId,
+        start: round3(start),
+        end: round3(start + actualDuration),
+        sourceStart: round3(sourceStart),
+        sourceEnd: round3(sourceEnd),
+        kind: moment.kind,
+      });
+    });
+  }
 
   /* 10 — zooms: punch-ins on the strongest moments (anchored on the action),
           plus subtle drift on static segments so nothing reads as frozen. */
@@ -432,8 +495,14 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
   /* summary */
   const usedWindows = new Set(finalSegs.map((s) => s.moment?.window).filter((w) => w !== undefined));
   const parts: string[] = [];
-  parts.push(`Picked ${finalSegs.length} moments from ${usedWindows.size || windows.length} of ${windows.length} clips`);
-  parts.push(`${Math.round(newDuration)}s ${config.name} montage`);
+  if (config.useSpeech && speechSegs.length > 0) {
+    parts.push(`Picked ${speechSegs.length} strong spoken answer${speechSegs.length === 1 ? "" : "s"}`);
+    parts.push(`${brollPlacements.length} B-roll cutaway${brollPlacements.length === 1 ? "" : "s"}`);
+    parts.push(`${Math.round(newDuration)}s interview edit`);
+  } else {
+    parts.push(`Picked ${finalSegs.length} moments from ${usedWindows.size || windows.length} of ${windows.length} clips`);
+    parts.push(`${Math.round(newDuration)}s ${config.name} montage`);
+  }
   if (!config.chronological) parts.push("opened on the biggest moment");
   if (beatSnapped > 0) {
     parts.push(
@@ -463,14 +532,17 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
     flashes,
     musicCut: input.musicCut,
     overlays,
+    brollPlacements,
     brollSuggestions: [],
     audioInstructions: [
       {
         kind: "add-music",
-        value: 0.85,
-        note: musicSync
-          ? "Cuts are locked to your music's beats. Swapped the song? Regenerate to re-sync."
-          : "Add music (AI Edit panel or Media bin) — the next montage locks its cuts to the song's beat.",
+        value: input.preset === "interview" ? 0.18 : 0.85,
+        note: input.preset === "interview"
+          ? "Keep music under the speaker so every answer stays clear."
+          : musicSync
+            ? "Cuts are locked to your music's beats. Swapped the song? Regenerate to re-sync."
+            : "Add music (AI Edit panel or Media bin) — the next montage locks its cuts to the song's beat.",
       },
     ],
     hooks: [],
@@ -485,30 +557,61 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
 /* ------------------------------------------------------------------ */
 
 /** Raw-clip windows on the current timeline; a lone long clip is split on scene changes. */
-function buildWindows(clips: Clip[], signals: TimelineSignals | null, duration: number): TimeRange[] {
-  const windows: TimeRange[] = [];
+function buildWindows(
+  clips: Clip[],
+  signals: TimelineSignals | null,
+  duration: number,
+  includedClipIds?: string[]
+): SourceWindow[] {
+  const windows: SourceWindow[] = [];
+  const included = includedClipIds ? new Set(includedClipIds) : null;
   let cursor = 0;
   for (const clip of clips) {
     const dur = clipDuration(clip);
-    if (dur > 0.25) windows.push({ start: round3(cursor), end: round3(cursor + dur) });
+    if (dur > 0.25 && (!included || included.has(clip.id))) {
+      windows.push({
+        start: round3(cursor),
+        end: round3(cursor + dur),
+        clipId: clip.id,
+        mediaId: clip.mediaId,
+        clipTimelineStart: round3(cursor),
+        sourceStart: clip.sourceStart,
+        sourceEnd: clip.sourceEnd,
+        speed: clipSpeed(clip),
+      });
+    }
     cursor += dur;
   }
-  if (windows.length === 0) return [{ start: 0, end: duration }];
+  if (windows.length === 0) {
+    // An explicit empty scope must stay empty. The broad fallback is only for
+    // malformed legacy projects that supplied no clip boundaries at all.
+    if (included) return [];
+    return [{
+      start: 0,
+      end: duration,
+      clipId: clips[0]?.id ?? "legacy",
+      mediaId: clips[0]?.mediaId ?? "",
+      clipTimelineStart: 0,
+      sourceStart: clips[0]?.sourceStart ?? 0,
+      sourceEnd: clips[0]?.sourceEnd ?? duration,
+      speed: clips[0] ? clipSpeed(clips[0]) : 1,
+    }];
+  }
 
   if (windows.length >= 3 || !signals) return windows;
 
   // 1–2 clips: subdivide on scene changes so distinct plays rank separately.
   const cuts = signals.sceneChanges.filter((t) => t > 1 && t < duration - 1);
-  const out: TimeRange[] = [];
+  const out: SourceWindow[] = [];
   for (const w of windows) {
     let start = w.start;
     for (const c of cuts) {
       if (c > start + 2.0 && c < w.end - 2.0) {
-        out.push({ start: round3(start), end: round3(c) });
+        out.push({ ...w, start: round3(start), end: round3(c) });
         start = c;
       }
     }
-    out.push({ start: round3(start), end: w.end });
+    out.push({ ...w, start: round3(start), end: w.end });
   }
   return out;
 }

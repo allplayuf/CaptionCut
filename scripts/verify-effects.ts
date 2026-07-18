@@ -71,11 +71,11 @@ async function main() {
     presetId: "tiktok",
   };
 
-  const job = startExportJob(req);
+  const { state: job } = await startExportJob(req);
   const t0 = Date.now();
   for (;;) {
     await new Promise((r) => setTimeout(r, 500));
-    const state = readJobState(job.id);
+    const state = await readJobState(job.id);
     if (!state) throw new Error("job state lost");
     if (state.status === "done") break;
     if (state.status === "error") throw new Error(`export failed: ${state.error}`);

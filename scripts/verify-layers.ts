@@ -108,11 +108,11 @@ async function main() {
       `${request.textOverlays?.length} text/sticker, ${request.zooms?.length} zooms, mainMuted=${request.mainAudioMuted}`
   );
 
-  const job = startExportJob(request);
+  const { state: job } = await startExportJob(request);
   const t0 = Date.now();
   for (;;) {
     await new Promise((r) => setTimeout(r, 1500));
-    const state = readJobState(job.id);
+    const state = await readJobState(job.id);
     if (!state) throw new Error("job state missing");
     if (state.status === "done") break;
     if (state.status === "error") throw new Error(`export failed: ${state.error}`);

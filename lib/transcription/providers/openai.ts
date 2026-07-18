@@ -25,7 +25,11 @@ export const openAiProvider: TranscriptionProvider = {
     return Boolean(process.env.OPENAI_API_KEY);
   },
 
-  async transcribe(audioPath, _durationSeconds, language) {
+  modelName() {
+    return process.env.OPENAI_WHISPER_MODEL || "whisper-1";
+  },
+
+  async transcribe(audioPath, _durationSeconds, options) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       throw new TranscriptionError(
@@ -52,7 +56,9 @@ export const openAiProvider: TranscriptionProvider = {
     form.append("response_format", "verbose_json");
     form.append("timestamp_granularities[]", "word");
     form.append("timestamp_granularities[]", "segment");
-    if (language !== "auto") form.append("language", language);
+    if (options.language !== "auto") form.append("language", options.language);
+    const prompt = options.prompt?.trim().slice(0, 500);
+    if (prompt) form.append("prompt", prompt);
 
     let response: Response;
     try {

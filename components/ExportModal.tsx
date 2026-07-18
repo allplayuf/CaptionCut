@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ExportJobState, ExportPresetId, Track } from "@/types";
+import type { ExportJobState, ExportPresetId, MediaAsset, Track } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { formatTime } from "@/lib/video/timeline";
 import { mainVideoTrack, tracksDuration } from "@/lib/timeline/tracks";
@@ -19,7 +19,10 @@ interface Preflight {
 }
 
 /** Render validation: verify every referenced media file still exists on disk. */
-async function runPreflight(tracks: Track[], media: { id: string; originalName: string }[]): Promise<string[]> {
+async function runPreflight(
+  tracks: Track[],
+  media: Pick<MediaAsset, "id" | "originalName" | "storageUrl" | "linkedAudio">[]
+): Promise<string[]> {
   const referenced = new Set<string>();
   for (const track of tracks) {
     for (const clip of track.clips) {
@@ -27,6 +30,10 @@ async function runPreflight(tracks: Track[], media: { id: string; originalName: 
     }
   }
   const mediaById = new Map(media.map((m) => [m.id, m]));
+  for (const id of [...referenced]) {
+    const linkedAudioId = mediaById.get(id)?.linkedAudio?.audioAssetId;
+    if (linkedAudioId) referenced.add(linkedAudioId);
+  }
   const missing: string[] = [];
   await Promise.all(
     [...referenced].map(async (id) => {
@@ -36,7 +43,10 @@ async function runPreflight(tracks: Track[], media: { id: string; originalName: 
         return;
       }
       try {
-        const r = await fetch(`/api/media/${id}`, { headers: { Range: "bytes=0-0" } });
+        const asset = mediaById.get(id)!;
+        const r = await fetch(asset.storageUrl ?? `/api/media/${id}`, {
+          headers: { Range: "bytes=0-0" },
+        });
         if (!r.ok) missing.push(name);
       } catch {
         missing.push(name);

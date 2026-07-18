@@ -128,12 +128,14 @@ export default function Timeline() {
         const id = clip.assetId;
         if (!id || waveforms[id] !== undefined || waveformStartedRef.current.has(id)) continue;
         waveformStartedRef.current.add(id);
-        computePeaks(mediaUrl(id))
+        const asset = media.find((item) => item.id === id);
+        if (!asset) continue;
+        computePeaks(mediaUrl(asset))
           .then((peaks) => setWaveform(id, peaks))
           .catch(() => setWaveform(id, null));
       }
     }
-  }, [tracks, waveforms, setWaveform]);
+  }, [tracks, media, waveforms, setWaveform]);
 
   /** Timeline seconds from a pointer event, in content coordinates. */
   const timeFromEvent = (clientX: number) => {
@@ -560,7 +562,7 @@ function HeaderIcon({
 
 interface TrackLaneProps {
   track: Track;
-  media: { id: string; originalName: string; duration: number }[];
+  media: { id: string; originalName: string; duration: number; storageUrl?: string }[];
   waveforms: Record<string, number[] | null>;
   pxPerSec: number;
   duration: number;
@@ -626,6 +628,7 @@ function TrackLane({
           pxPerSec={pxPerSec}
           height={height}
           selected={selectedClipIds.includes(clip.id)}
+          storageUrl={media.find((item) => item.id === clip.assetId)?.storageUrl}
           dragDx={reorder?.clipId === clip.id ? reorder.dx : null}
           onSelect={(additive, range) => onSelect(clip.id, additive, range)}
           onDragStart={onDragStart}
@@ -727,6 +730,7 @@ interface ClipBlockProps {
   pxPerSec: number;
   height: number;
   selected: boolean;
+  storageUrl?: string;
   /** Visual x offset while this clip is being drag-reordered (main track). */
   dragDx: number | null;
   onSelect: (additive: boolean, range: boolean) => void;
@@ -746,6 +750,7 @@ function ClipBlock({
   pxPerSec,
   height,
   selected,
+  storageUrl,
   dragDx,
   onSelect,
   onDragStart,
@@ -859,7 +864,7 @@ function ClipBlock({
         <div
           className="absolute inset-0"
           style={{
-            backgroundImage: `url(${filmstripUrl(clip.assetId!)})`,
+            backgroundImage: `url(${filmstripUrl({ id: clip.assetId!, storageUrl })})`,
             backgroundRepeat: "no-repeat",
             backgroundSize: `${stripW}px 100%`,
             backgroundPositionX: `${-f0 * stripW}px`,

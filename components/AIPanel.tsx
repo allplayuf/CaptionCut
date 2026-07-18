@@ -1,19 +1,22 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   Caption,
+  EditRecipe,
   EditStyle,
   HighlightMoment,
+  MediaAsset,
   MontageModifiers,
   MontageStyle,
   TimeRange,
+  TimelineClip,
   TimelineSignals,
 } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { useMediaUpload } from "@/hooks/useMediaUpload";
 import { useTranscription } from "@/hooks/useTranscription";
-import { assetKind, findTrack, invertRanges, mainClips, tracksDuration } from "@/lib/timeline/tracks";
+import { assetKind, findTrack, invertRanges, mainClips, mainVideoTrack, tracksDuration } from "@/lib/timeline/tracks";
 import { analyzeTranscript } from "@/lib/autoEdit/analyzeTranscript";
 import { detectSilence, type SilenceAggressiveness } from "@/lib/autoEdit/detectSilence";
 import { fillerCutRanges } from "@/lib/autoEdit/detectFillerWords";
@@ -22,6 +25,8 @@ import { detectDeadSpace } from "@/lib/autoEdit/detectHighlights";
 import { findBestWindow } from "@/lib/autoEdit/scoreMoments";
 import { generateEditRecipe } from "@/lib/autoEdit/generateEditRecipe";
 import { MONTAGE_PRESETS, generateMontageRecipe } from "@/lib/autoEdit/montage";
+import { reviseEditRecipe } from "@/lib/autoEdit/reviseEditRecipe";
+import { filmstripUrl } from "@/lib/video/client";
 import {
   buildTimelineSignals,
   fetchAnalyses,
@@ -30,19 +35,39 @@ import {
 } from "@/lib/autoEdit/signals";
 import {
   Activity,
+  ArrowDown,
+  ArrowUp,
+  Check,
   Clapperboard,
   Crosshair,
   Film,
   Flame,
+  Layers3,
   MessageSquareText,
+  Mic2,
   Music,
   RefreshCw,
   Scissors,
   Sparkles,
-  Trophy,
   Wand2,
+  X,
   Zap,
 } from "lucide-react";
+
+type Workflow = "montage" | "interview";
+type SourceRole = "include" | "a-roll" | "b-roll" | "exclude";
+
+interface DraftContext {
+  projectId: string;
+  revision: number;
+  generationSignature: string;
+}
+
+interface GenerationRequest {
+  uiSignature: string;
+  storeSignature: string;
+  token: number;
+}
 
 const EDIT_STYLES: Array<{ id: EditStyle; name: string }> = [
   { id: "viral", name: "Viral" },
@@ -67,14 +92,16 @@ export default function AIPanel() {
   const setMusicFromAsset = useEditorStore((s) => s.setMusicFromAsset);
   const isTranscribing = useEditorStore((s) => s.isTranscribing);
   const editRecipe = useEditorStore((s) => s.editRecipe);
-  // Regenerate = undo + re-run; only safe while the auto edit is the latest change.
-  const canRegenerate = useEditorStore(
-    (s) => s.editRecipe !== null && s.past.length > 0 && s.revision === s.editRecipeRevision
-  );
+  const selectedClipIds = useEditorStore((s) => s.selectedClipIds);
+  const projectId = useEditorStore((s) => s.projectId);
+  const revision = useEditorStore((s) => s.revision);
 
-  const { runTranscription } = useTranscription();
+  const { runTranscription, coverageStatus } = useTranscription();
   const { uploading: musicUploading, handleFiles: uploadFiles } = useMediaUpload();
   const musicInputRef = useRef<HTMLInputElement>(null);
+  const [workflow, setWorkflow] = useState<Workflow>("montage");
+  /** Explicit per-source intent. Missing values use the visible smart default. */
+  const [sourceRoles, setSourceRoles] = useState<Record<string, SourceRole>>({});
   const [style, setStyle] = useState<EditStyle>("viral");
   const [montageStyle, setMontageStyle] = useState<MontageStyle>("hype");
   const [montageLength, setMontageLength] = useState(20);
@@ -87,10 +114,87 @@ export default function AIPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [stage, setStage] = useState<string | null>(null);
   const [seed, setSeed] = useState(0);
+  /** AI generation is a proposal until the user explicitly applies it. */
+  const [draftRecipe, setDraftRecipe] = useState<EditRecipe | null>(null);
+  /** Original kept-range indexes, in the order chosen by the user. */
+  const [draftOrder, setDraftOrder] = useState<number[]>([]);
+  /** Store snapshot that the draft's original-timeline coordinates belong to. */
+  const [draftContext, setDraftContext] = useState<DraftContext | null>(null);
 
   const duration = tracksDuration(tracks);
   const hasContent = duration > 0.5;
   const disabled = !hasContent || isTranscribing || busy !== null;
+  const mainTrack = mainVideoTrack(tracks);
+  const selectedMainIds = new Set(
+    selectedClipIds.filter((id) => mainTrack.clips.some((clip) => clip.id === id))
+  );
+
+  const defaultRole = (clip: TimelineClip, index: number): SourceRole => {
+    if (selectedMainIds.size > 0 && !selectedMainIds.has(clip.id)) return "exclude";
+    if (workflow === "montage") return "include";
+    const eligible = mainTrack.clips.filter(
+      (item) => selectedMainIds.size === 0 || selectedMainIds.has(item.id)
+    );
+    const firstWithAudio = eligible.find((item) => {
+      const asset = media.find((candidate) => candidate.id === item.assetId);
+      return sourceHasAudio(asset, media);
+    });
+    return clip.id === (firstWithAudio?.id ?? eligible[0]?.id) && index >= 0 ? "a-roll" : "b-roll";
+  };
+
+  const roleOf = (clip: TimelineClip, index: number): SourceRole =>
+    sourceRoles[clip.id] ?? defaultRole(clip, index);
+
+  const includedSourceIds = mainTrack.clips
+    .filter((clip, index) => {
+      const role = roleOf(clip, index);
+      return workflow === "montage" ? role !== "exclude" : role === "b-roll";
+    })
+    .map((clip) => clip.id);
+  const speechSourceIds = mainTrack.clips
+    .filter((clip, index) => workflow === "interview" && roleOf(clip, index) === "a-roll")
+    .map((clip) => clip.id);
+  const generationSignature = JSON.stringify({
+    workflow,
+    style,
+    montageStyle,
+    montageLength,
+    customLength,
+    endCard,
+    modifiers,
+    includedSourceIds,
+    speechSourceIds,
+    selectedClipIds,
+    sourceRoles: Object.entries(sourceRoles).sort(([a], [b]) => a.localeCompare(b)),
+    main: mainTrack.clips.map((clip) => [
+      clip.id,
+      clip.assetId,
+      clip.startTime,
+      clip.endTime,
+      clip.sourceStart,
+      clip.sourceEnd,
+      clip.speed ?? 1,
+    ]),
+    music: findTrack(tracks, "music")?.clips.map((clip) => [
+      clip.id,
+      clip.assetId,
+      clip.startTime,
+      clip.endTime,
+      clip.sourceStart,
+      clip.sourceEnd,
+    ]),
+  });
+  const generationSignatureRef = useRef(generationSignature);
+  const generationTokenRef = useRef(0);
+  useEffect(() => {
+    generationSignatureRef.current = generationSignature;
+  }, [generationSignature]);
+  const draftIsStale = Boolean(
+    draftContext &&
+      (draftContext.projectId !== projectId ||
+        draftContext.revision !== revision ||
+        draftContext.generationSignature !== generationSignature)
+  );
 
   /* ---------------- shared input gathering ---------------- */
 
@@ -164,16 +268,35 @@ export default function AIPanel() {
    *  - "try": transcribe when missing but tolerate failure (footage-only edit)
    *  - "require": no captions = stop
    */
-  const getCaptions = async (mode: "try" | "require"): Promise<Caption[]> => {
+  const getCaptions = async (
+    mode: "try" | "require",
+    clipIds?: string[]
+  ): Promise<Caption[]> => {
     const s = useEditorStore.getState();
-    if (s.captions.length > 0) return s.captions;
-    const anyAudio = s.media.some((m) => m.hasAudio);
+    const currentMain = mainVideoTrack(s.tracks);
+    const scopedCaptions = clipIds
+      ? filterCaptionsForClips(s.captions, currentMain.clips, new Set(clipIds))
+      : s.captions;
+    const coverage = coverageStatus(clipIds);
+    if (scopedCaptions.length > 0 && coverage === "complete") return scopedCaptions;
+
+    const requestedIds = clipIds ? new Set(clipIds) : null;
+    const requestedClips = requestedIds
+      ? currentMain.clips.filter((clip) => requestedIds.has(clip.id))
+      : currentMain.clips;
+    const anyAudio = requestedClips.some((clip) => {
+      const asset = s.media.find((candidate) => candidate.id === clip.assetId);
+      return sourceHasAudio(asset, s.media);
+    });
     if (!anyAudio) {
+      // Legacy/manual captions are still useful when there is no audio source
+      // from which a more complete transcript could be generated.
+      if (scopedCaptions.length > 0) return scopedCaptions;
       if (mode === "require") s.addToast("info", "This footage has no audio to transcribe.");
       return [];
     }
     setStage("Transcribing speech (free, local)…");
-    const fresh = await runTranscription();
+    const fresh = await runTranscription(clipIds ? { clipIds } : { scope: "timeline" });
     return fresh ?? [];
   };
 
@@ -215,33 +338,93 @@ export default function AIPanel() {
     return Number.isFinite(custom) && custom >= 8 ? Math.min(60, custom) : montageLength;
   })();
 
+  const beginGeneration = (): GenerationRequest => ({
+    uiSignature: generationSignatureRef.current,
+    storeSignature: storeGenerationSignature(),
+    token: generationTokenRef.current,
+  });
+
+  const invalidateGeneration = () => {
+    generationTokenRef.current += 1;
+  };
+
+  const publishDraft = (
+    recipe: EditRecipe,
+    nextSeed: number,
+    engine: "montage" | "auto",
+    request: GenerationRequest
+  ): boolean => {
+    if (
+      generationTokenRef.current !== request.token ||
+      generationSignatureRef.current !== request.uiSignature ||
+      storeGenerationSignature() !== request.storeSignature
+    ) {
+      useEditorStore
+        .getState()
+        .addToast("info", "The sources or settings changed while AI was working. Build a fresh draft.");
+      return false;
+    }
+    const current = useEditorStore.getState();
+    setDraftRecipe(recipe);
+    setDraftOrder(recipe.keptRanges.map((_, index) => index));
+    setDraftContext({
+      projectId: current.projectId,
+      revision: current.revision,
+      generationSignature: request.uiSignature,
+    });
+    setSeed(nextSeed);
+    setLastEngine(engine);
+    return true;
+  };
+
   /** The football-montage engine: rank raw clips, keep the best moments,
       assemble hook → action → reaction → ender. */
   const runMontage = (nextSeed = 0, mods: MontageModifiers = modifiers) =>
     withBusy("montage", async () => {
+      const request = beginGeneration();
+      if (workflow === "montage" && includedSourceIds.length === 0) {
+        useEditorStore.getState().addToast("info", "Choose at least one source clip for this montage.");
+        return;
+      }
+      if (workflow === "interview" && speechSourceIds.length === 0) {
+        useEditorStore.getState().addToast("info", "Mark at least one clip as Interview audio.");
+        return;
+      }
       // Warm analyses first (getSignals fetches), then plan the song section
       // so the beat grid below carries the chosen section's phase.
       await getSignals();
       const { musicCut, signalTracks } = planMusicCut();
       const signals = await getSignals(signalTracks);
-      // Interview preset needs speech; the others use captions only if present.
-      const caps =
-        montageStyle === "interview" ? await getCaptions("try") : useEditorStore.getState().captions;
-      if (montageStyle === "interview" && caps.length === 0) {
-        useEditorStore
-          .getState()
-          .addToast("info", "No speech found — building a pure action montage instead.");
+      const allCaps =
+        workflow === "interview"
+          ? await getCaptions("require", speechSourceIds)
+          : useEditorStore.getState().captions;
+      const latestTracks = useEditorStore.getState().tracks;
+      const caps = workflow === "interview"
+        ? filterCaptionsForClips(allCaps, mainVideoTrack(latestTracks).clips, new Set(speechSourceIds))
+        : allCaps;
+      if (workflow === "interview" && caps.length === 0) {
+        useEditorStore.getState().addToast(
+          "info",
+          "No speech was found in the clips marked Interview audio. Check the source roles or captions."
+        );
+        return;
       }
-      setStage("Ranking moments & building the montage…");
+      setStage(
+        workflow === "interview"
+          ? "Finding strong answers and matching B-roll…"
+          : "Ranking moments and sketching the montage…"
+      );
       const s = useEditorStore.getState();
       const recipe = generateMontageRecipe({
         projectId: s.projectId,
-        preset: montageStyle,
+        preset: workflow === "interview" ? "interview" : montageStyle,
         targetDuration: targetLength,
         signals,
         transcript: analyzeTranscript(caps),
         captions: caps,
         clips: mainClips(s.tracks),
+        includedClipIds: includedSourceIds,
         analyses: s.analyses,
         duration: tracksDuration(s.tracks),
         endCard,
@@ -249,13 +432,16 @@ export default function AIPanel() {
         modifiers: mods,
         musicCut,
       });
-      s.applyEditRecipe(recipe);
-      setSeed(nextSeed);
-      setLastEngine("montage");
+      if (recipe.keptRanges.length === 0) {
+        s.addToast("info", "No strong moments were found in that source selection. Try adding another clip.");
+        return;
+      }
+      publishDraft(recipe, nextSeed, "montage", request);
     });
 
   const runAutoEdit = (nextSeed = 0) =>
     withBusy("auto", async () => {
+      const request = beginGeneration();
       const signals = await getSignals();
       const caps = await getCaptions("try");
       if (caps.length === 0 && !signals) {
@@ -281,29 +467,35 @@ export default function AIPanel() {
         style,
         seed: nextSeed,
       });
-      s.applyEditRecipe(recipe);
-      setSeed(nextSeed);
-      setLastEngine("auto");
+      publishDraft(recipe, nextSeed, "auto", request);
     });
 
-  /** Undo the last auto edit and cut a meaningfully different take of it. */
+  /** Re-run the active engine without mutating the timeline. */
   const regenerate = (mods: MontageModifiers = modifiers) => {
-    if (!canRegenerate) return;
-    useEditorStore.getState().undo();
     if (lastEngine === "montage") void runMontage(seed + 1, mods);
     else void runAutoEdit(seed + 1);
   };
 
-  /** Toggle a one-tap adjustment and immediately recut with it. */
-  const toggleModifier = (patch: MontageModifiers, active: boolean) => {
-    const next: MontageModifiers = { ...modifiers };
-    if (active) {
-      for (const key of Object.keys(patch) as (keyof MontageModifiers)[]) delete next[key];
-    } else {
-      Object.assign(next, patch);
+  const applyDraft = () => {
+    if (!draftRecipe || draftOrder.length === 0) {
+      useEditorStore.getState().addToast("info", "Keep at least one suggested moment.");
+      return;
     }
-    setModifiers(next);
-    regenerate(next);
+    const current = useEditorStore.getState();
+    const contextChanged =
+      !draftContext ||
+      draftContext.projectId !== current.projectId ||
+      draftContext.revision !== current.revision ||
+      draftContext.generationSignature !== generationSignatureRef.current;
+    if (contextChanged) {
+      current
+        .addToast("info", "The timeline or source plan changed. Generate a fresh draft before applying.");
+      return;
+    }
+    current.applyEditRecipe(reviseEditRecipe(draftRecipe, draftOrder));
+    setDraftRecipe(null);
+    setDraftOrder([]);
+    setDraftContext(null);
   };
 
   const runBestSeconds = (target: number) =>
@@ -429,44 +621,164 @@ export default function AIPanel() {
   const hooks = captions.length > 0 ? detectHooks(analyzeTranscript(captions), 5) : [];
   const highlights = editRecipe?.highlights ?? [];
 
+  const chooseWorkflow = (next: Workflow) => {
+    invalidateGeneration();
+    setWorkflow(next);
+    setSourceRoles({});
+    setDraftRecipe(null);
+    setDraftOrder([]);
+    setDraftContext(null);
+  };
+
+  const setSourceRole = (clipId: string, role: SourceRole) => {
+    invalidateGeneration();
+    setSourceRoles((current) => ({ ...current, [clipId]: role }));
+    setDraftRecipe(null);
+    setDraftOrder([]);
+    setDraftContext(null);
+  };
+
+  const setModifierChoice = (patch: MontageModifiers) => {
+    invalidateGeneration();
+    setModifiers((current) => ({ ...current, ...patch }));
+    setDraftRecipe(null);
+    setDraftOrder([]);
+    setDraftContext(null);
+  };
+
+  const toggleDraftMoment = (index: number) => {
+    setDraftOrder((current) =>
+      current.includes(index) ? current.filter((item) => item !== index) : [...current, index]
+    );
+  };
+
+  const moveDraftMoment = (index: number, direction: -1 | 1) => {
+    setDraftOrder((current) => {
+      const position = current.indexOf(index);
+      const target = position + direction;
+      if (position < 0 || target < 0 || target >= current.length) return current;
+      const next = [...current];
+      [next[position], next[target]] = [next[target], next[position]];
+      return next;
+    });
+  };
+
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-3">
-      {/* football montage */}
       <section>
         <SectionLabel>
-          <Trophy size={11} /> Football Montage
+          <Clapperboard size={11} /> Build an edit draft
         </SectionLabel>
-        <div className="mb-2 grid grid-cols-3 gap-1">
-          {(Object.keys(MONTAGE_PRESETS) as MontageStyle[]).map((id) => (
-            <button
-              key={id}
-              onClick={() => setMontageStyle(id)}
-              title={MONTAGE_PRESETS[id].description}
-              className={`rounded-lg px-1 py-1.5 text-[10px] font-semibold transition ${
-                montageStyle === id
-                  ? "bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400"
-                  : "bg-white/5 text-zinc-400 ring-1 ring-white/10 hover:bg-white/10"
-              }`}
-            >
-              {MONTAGE_PRESETS[id].name}
-            </button>
+        <div className="grid grid-cols-2 gap-1.5">
+          <WorkflowButton
+            active={workflow === "montage"}
+            icon={<Layers3 size={14} />}
+            title="Montage"
+            description="Rank chosen action clips"
+            tone="sky"
+            onClick={() => chooseWorkflow("montage")}
+          />
+          <WorkflowButton
+            active={workflow === "interview"}
+            icon={<Mic2 size={14} />}
+            title="Interview"
+            description="Speaker + chosen B-roll"
+            tone="amber"
+            onClick={() => chooseWorkflow("interview")}
+          />
+        </div>
+        <p className="mt-1.5 text-[10px] leading-snug text-zinc-600">
+          AI proposes a sequence first. Your timeline changes only after you review and apply it.
+        </p>
+      </section>
+
+      <section>
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <SectionLabel>
+            <Film size={11} /> Source plan
+          </SectionLabel>
+          {selectedMainIds.size > 0 && (
+            <span className="mb-1.5 rounded-full bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-sky-300 ring-1 ring-sky-400/20">
+              {selectedMainIds.size} from timeline
+            </span>
+          )}
+        </div>
+        <div className="flex flex-col gap-1">
+          {mainTrack.clips.map((clip, index) => (
+            <SourceRoleRow
+              key={clip.id}
+              clip={clip}
+              index={index}
+              asset={media.find((asset) => asset.id === clip.assetId)}
+              workflow={workflow}
+              role={roleOf(clip, index)}
+              onRole={(role) => setSourceRole(clip.id, role)}
+              onPreview={() => jumpTo(clip.startTime)}
+            />
           ))}
         </div>
+        {workflow === "interview" && (
+          <p className="mt-1.5 rounded-lg bg-amber-500/8 px-2 py-1.5 text-[10px] leading-snug text-amber-200/75 ring-1 ring-amber-400/15">
+            Interview audio carries the story. B-roll clips become visual cutaways over the selected answers.
+          </p>
+        )}
+      </section>
+
+      <section>
+        <SectionLabel>{workflow === "montage" ? "Cut direction" : "Interview direction"}</SectionLabel>
+        {workflow === "montage" ? (
+          <div className="mb-2 grid grid-cols-2 gap-1">
+            {(Object.keys(MONTAGE_PRESETS) as MontageStyle[])
+              .filter((id) => id !== "interview")
+              .map((id) => (
+                <button
+                  key={id}
+                  onClick={() => {
+                    invalidateGeneration();
+                    setMontageStyle(id);
+                    setDraftRecipe(null);
+                    setDraftContext(null);
+                  }}
+                  title={MONTAGE_PRESETS[id].description}
+                  className={`rounded-lg px-2 py-1.5 text-left transition ${
+                    montageStyle === id
+                      ? "bg-sky-500/15 text-sky-100 ring-1 ring-sky-400/60"
+                      : "bg-white/5 text-zinc-400 ring-1 ring-white/8 hover:bg-white/8"
+                  }`}
+                >
+                  <span className="block text-[10px] font-bold">{MONTAGE_PRESETS[id].name}</span>
+                  <span className="mt-0.5 block line-clamp-1 text-[9px] text-zinc-500">
+                    {MONTAGE_PRESETS[id].description}
+                  </span>
+                </button>
+              ))}
+          </div>
+        ) : (
+          <div className="mb-2 grid grid-cols-3 gap-1">
+            <DirectionChoice label="Tight" active={modifiers.pace === 0.75} onClick={() => setModifierChoice({ pace: 0.75 })} />
+            <DirectionChoice label="Balanced" active={modifiers.pace === 1 || modifiers.pace === undefined} onClick={() => setModifierChoice({ pace: 1 })} />
+            <DirectionChoice label="Relaxed" active={modifiers.pace === 1.25} onClick={() => setModifierChoice({ pace: 1.25 })} />
+          </div>
+        )}
+
         <div className="mb-2 flex items-center gap-1">
           {[10, 15, 20, 30].map((sec) => (
             <button
               key={sec}
               onClick={() => {
+                invalidateGeneration();
                 setMontageLength(sec);
                 setCustomLength("");
+                setDraftRecipe(null);
+                setDraftContext(null);
               }}
               className={`flex-1 rounded-lg px-1 py-1 text-[10px] font-semibold transition ${
                 targetLength === sec && customLength === ""
-                  ? "bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400"
-                  : "bg-white/5 text-zinc-400 ring-1 ring-white/10 hover:bg-white/10"
+                  ? "bg-white/12 text-white ring-1 ring-white/25"
+                  : "bg-white/5 text-zinc-500 ring-1 ring-white/8 hover:bg-white/8"
               }`}
             >
-              ~{sec}s
+              {sec}s
             </button>
           ))}
           <input
@@ -474,24 +786,64 @@ export default function AIPanel() {
             min={8}
             max={60}
             value={customLength}
-            onChange={(e) => setCustomLength(e.target.value)}
+            onChange={(e) => {
+              invalidateGeneration();
+              setCustomLength(e.target.value);
+              setDraftRecipe(null);
+              setDraftContext(null);
+            }}
             placeholder="s"
             title="Custom length (8–60s)"
-            className={`w-11 rounded-lg border-0 bg-white/5 px-1.5 py-1 text-center text-[10px] font-semibold text-zinc-200 outline-none ring-1 transition [appearance:textfield] placeholder:text-zinc-600 focus:ring-emerald-400 [&::-webkit-inner-spin-button]:appearance-none ${
-              customLength !== "" ? "ring-emerald-400 bg-emerald-500/15" : "ring-white/10"
+            aria-label="Custom draft length"
+            className={`w-11 rounded-lg border-0 bg-white/5 px-1.5 py-1 text-center text-[10px] font-semibold text-zinc-200 outline-none ring-1 transition [appearance:textfield] placeholder:text-zinc-600 focus:ring-sky-400 [&::-webkit-inner-spin-button]:appearance-none ${
+              customLength !== "" ? "bg-sky-500/10 ring-sky-400" : "ring-white/8"
             }`}
           />
-          <label className="ml-1 flex cursor-pointer items-center gap-1 text-[10px] text-zinc-400">
-            <input
-              type="checkbox"
-              checked={endCard}
-              onChange={(e) => setEndCard(e.target.checked)}
-              className="h-3 w-3 accent-emerald-400"
-            />
-            End card
-          </label>
         </div>
-        {/* soundtrack: one click from file picker to beat-locked cuts */}
+
+        {workflow === "montage" && (
+          <div className="mb-2 grid grid-cols-3 gap-1">
+            <DirectionChoice label="Fast cuts" active={modifiers.pace === 0.7} onClick={() => setModifierChoice({ pace: 0.7 })} />
+            <DirectionChoice label="Balanced" active={modifiers.pace === 1 || modifiers.pace === undefined} onClick={() => setModifierChoice({ pace: 1 })} />
+            <DirectionChoice label="Calm" active={modifiers.pace === 1.25} onClick={() => setModifierChoice({ pace: 1.25 })} />
+            <DirectionChoice label="Action" active={modifiers.favorKind === "action"} onClick={() => setModifierChoice({ favorKind: "action" })} />
+            <DirectionChoice label="Mixed" active={modifiers.favorKind === undefined} onClick={() => setModifierChoice({ favorKind: undefined })} />
+            <DirectionChoice label="Reactions" active={modifiers.favorKind === "reaction"} onClick={() => setModifierChoice({ favorKind: "reaction" })} />
+          </div>
+        )}
+
+        <div className="mb-2 flex items-center gap-2 rounded-lg bg-white/[0.035] px-2 py-1.5 ring-1 ring-white/8">
+          <span className="text-[10px] text-zinc-500">Effects</span>
+          {[{ label: "Clean", value: 0.2 }, { label: "Natural", value: 0.6 }, { label: "Punchy", value: 1 }].map((choice) => (
+            <button
+              key={choice.label}
+              onClick={() => setModifierChoice({ effectsLevel: choice.value })}
+              className={`flex-1 rounded px-1 py-1 text-[9px] font-semibold transition ${
+                (modifiers.effectsLevel ?? 1) === choice.value
+                  ? "bg-fuchsia-500/20 text-fuchsia-200"
+                  : "text-zinc-500 hover:bg-white/8 hover:text-zinc-300"
+              }`}
+            >
+              {choice.label}
+            </button>
+          ))}
+        </div>
+
+        <label className="mb-2 flex cursor-pointer items-center justify-between rounded-lg bg-white/[0.035] px-2 py-1.5 text-[10px] text-zinc-400 ring-1 ring-white/8">
+          Add a closing call-to-action
+          <input
+            type="checkbox"
+            checked={endCard}
+            onChange={(e) => {
+              invalidateGeneration();
+              setEndCard(e.target.checked);
+              setDraftRecipe(null);
+              setDraftContext(null);
+            }}
+            className="h-3 w-3 accent-sky-400"
+          />
+        </label>
+
         <input
           ref={musicInputRef}
           type="file"
@@ -507,14 +859,9 @@ export default function AIPanel() {
           disabled={musicUploading !== null}
           className={`mb-2 flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-[11px] font-semibold ring-1 transition disabled:opacity-50 ${
             musicAsset
-              ? "bg-emerald-500/10 text-emerald-300 ring-emerald-400/30 hover:bg-emerald-500/20"
-              : "bg-white/5 text-zinc-300 ring-white/10 hover:bg-white/10 hover:text-white"
+              ? "bg-emerald-500/10 text-emerald-300 ring-emerald-400/25 hover:bg-emerald-500/15"
+              : "bg-white/5 text-zinc-300 ring-white/10 hover:bg-white/8 hover:text-white"
           }`}
-          title={
-            musicAsset
-              ? "Swap the soundtrack (replaces the music track)"
-              : "Upload a song — it lands on the Music track and montage cuts lock to its beat"
-          }
         >
           {musicUploading ? (
             <>
@@ -525,135 +872,98 @@ export default function AIPanel() {
             <>
               <Music size={12} />
               <span className="max-w-[70%] truncate">{musicAsset.originalName}</span>
-              <span className="text-emerald-500/80">· swap</span>
+              <span className="text-emerald-500/70">· swap</span>
             </>
           ) : (
-            <>
-              <Music size={12} /> Add music — cuts sync to the beat
-            </>
+            <><Music size={12} /> Add music for beat-aware cuts</>
           )}
         </button>
         {musicAsset && <BeatControls musicAssetId={musicAsset.id} />}
+
         <button
           onClick={() => void runMontage(0)}
           disabled={disabled}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-500/25 transition hover:brightness-110 active:scale-[0.98] disabled:opacity-40"
+          data-testid="build-edit-draft"
+          className={`flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-[#071014] shadow-lg transition hover:brightness-110 active:scale-[0.98] disabled:opacity-40 ${
+            workflow === "interview"
+              ? "bg-gradient-to-r from-amber-300 to-orange-400 shadow-amber-500/15"
+              : "bg-gradient-to-r from-sky-300 to-cyan-400 shadow-sky-500/15"
+          }`}
         >
           {busy === "montage" ? (
-            <>
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-              Working…
-            </>
+            <><span className="h-4 w-4 animate-spin rounded-full border-2 border-black/20 border-t-black/70" /> Building draft…</>
           ) : (
-            <>
-              <Trophy size={16} />
-              Create montage
-            </>
+            <><Sparkles size={16} /> Build draft from {workflow === "interview" ? speechSourceIds.length : includedSourceIds.length} selected clip{(workflow === "interview" ? speechSourceIds.length : includedSourceIds.length) === 1 ? "" : "s"}</>
           )}
         </button>
-        {busy === "montage" && stage ? (
-          <p className="mt-1.5 text-center text-[10px] leading-snug text-emerald-300/90">{stage}</p>
-        ) : (
-          <p className="mt-1.5 text-center text-[10px] leading-snug text-zinc-600">
-            Ranks every clip, keeps goals · celebrations · reactions, cuts the
-            rest into a tight {targetLength}s edit. All local, no API.
-          </p>
+        {busy === "montage" && stage && (
+          <p className="mt-1.5 text-center text-[10px] leading-snug text-sky-300/90">{stage}</p>
         )}
       </section>
 
-      {/* result + regenerate (shared by both engines) */}
-      {editRecipe && busy === null && (
-        <section>
-          <div className="rounded-lg bg-emerald-500/10 px-2.5 py-2 text-[11px] leading-snug text-emerald-300 ring-1 ring-emerald-400/20">
-            {editRecipe.reasoningSummary}
-            <span className="mt-0.5 block text-emerald-500/70">Not happy? Ctrl+Z undoes the whole edit.</span>
-          </div>
-          {canRegenerate && (
-            <>
-              <button
-                onClick={() => regenerate()}
-                disabled={disabled}
-                className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-zinc-300 ring-1 ring-white/10 transition hover:bg-white/10 hover:text-white disabled:opacity-30"
-              >
-                <RefreshCw size={12} /> Regenerate — cut a different take
-              </button>
-              {lastEngine === "montage" && (
-                <div className="mt-1.5 flex flex-wrap gap-1">
-                  <ModChip
-                    label="⚡ Faster"
-                    active={modifiers.pace !== undefined && modifiers.pace < 1}
-                    disabled={disabled}
-                    onToggle={(a) => toggleModifier({ pace: 0.7 }, a)}
-                  />
-                  <ModChip
-                    label="⚽ More goals"
-                    active={modifiers.favorKind === "action"}
-                    disabled={disabled}
-                    onToggle={(a) => toggleModifier({ favorKind: "action" }, a)}
-                  />
-                  <ModChip
-                    label="🎉 More reactions"
-                    active={modifiers.favorKind === "reaction"}
-                    disabled={disabled}
-                    onToggle={(a) => toggleModifier({ favorKind: "reaction" }, a)}
-                  />
-                  <ModChip
-                    label="✨ Less effects"
-                    active={modifiers.effectsLevel !== undefined && modifiers.effectsLevel < 1}
-                    disabled={disabled}
-                    onToggle={(a) => toggleModifier({ effectsLevel: 0.35 }, a)}
-                  />
-                </div>
-              )}
-            </>
-          )}
-        </section>
+      {draftRecipe && (
+        <DraftReview
+          recipe={draftRecipe}
+          order={draftOrder}
+          clips={mainTrack.clips}
+          media={media}
+          speechClipIds={new Set(speechSourceIds)}
+          disabled={disabled}
+          stale={draftIsStale}
+          onPreview={jumpTo}
+          onToggle={toggleDraftMoment}
+          onMove={moveDraftMoment}
+          onRegenerate={() => regenerate()}
+          onApply={applyDraft}
+        />
       )}
 
-      {/* auto edit */}
-      <section>
-        <SectionLabel>Auto Edit (talky videos)</SectionLabel>
-        <div className="mb-2 grid grid-cols-4 gap-1">
-          {EDIT_STYLES.map((es) => (
-            <button
-              key={es.id}
-              onClick={() => setStyle(es.id)}
-              className={`rounded-lg px-1 py-1.5 text-[10px] font-semibold transition ${
-                style === es.id
-                  ? "bg-violet-500/30 text-violet-200 ring-1 ring-violet-400"
-                  : "bg-white/5 text-zinc-400 ring-1 ring-white/10 hover:bg-white/10"
-              }`}
-            >
-              {es.name}
-            </button>
-          ))}
+      {editRecipe && !draftRecipe && busy === null && (
+        <div className="rounded-lg bg-emerald-500/8 px-2.5 py-2 text-[10px] leading-snug text-emerald-300/80 ring-1 ring-emerald-400/15">
+          Applied: {editRecipe.reasoningSummary}
+          <span className="mt-0.5 block text-emerald-500/60">Ctrl+Z restores the timeline before this edit.</span>
         </div>
-        <button
-          onClick={() => void runAutoEdit(0)}
-          disabled={disabled}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-fuchsia-500/25 transition hover:brightness-110 active:scale-[0.98] disabled:opacity-40"
-        >
-          {busy === "auto" || isTranscribing ? (
-            <>
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-              Working…
-            </>
-          ) : (
-            <>
-              <Wand2 size={16} />
-              Auto Edit
-            </>
-          )}
-        </button>
-        {busy === "auto" && stage ? (
-          <p className="mt-1.5 text-center text-[10px] leading-snug text-fuchsia-300/90">{stage}</p>
-        ) : (
-          <p className="mt-1.5 text-center text-[10px] leading-snug text-zinc-600">
-            Finds highlights, cuts dead space & fillers, adds hook + punch-zooms.
-            Works even without speech — all local, no API.
+      )}
+
+      <details className="group rounded-xl bg-white/[0.025] ring-1 ring-white/8">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-[11px] font-semibold text-zinc-300">
+          <Wand2 size={13} className="text-fuchsia-300" />
+          Talky-video draft
+          <span className="ml-auto text-[9px] font-normal text-zinc-600 group-open:hidden">optional</span>
+        </summary>
+        <div className="border-t border-white/8 p-2.5">
+          <div className="mb-2 grid grid-cols-4 gap-1">
+            {EDIT_STYLES.map((es) => (
+              <button
+                key={es.id}
+                onClick={() => {
+                  invalidateGeneration();
+                  setStyle(es.id);
+                  setDraftRecipe(null);
+                  setDraftContext(null);
+                }}
+                className={`rounded-lg px-1 py-1.5 text-[9px] font-semibold transition ${
+                  style === es.id
+                    ? "bg-fuchsia-500/20 text-fuchsia-200 ring-1 ring-fuchsia-400/60"
+                    : "bg-white/5 text-zinc-500 ring-1 ring-white/8 hover:bg-white/8"
+                }`}
+              >
+                {es.name}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => void runAutoEdit(0)}
+            disabled={disabled}
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-fuchsia-500/15 px-3 py-2 text-[11px] font-bold text-fuchsia-100 ring-1 ring-fuchsia-400/25 transition hover:bg-fuchsia-500/25 disabled:opacity-40"
+          >
+            {busy === "auto" || isTranscribing ? "Building draft…" : "Build talky-video draft"}
+          </button>
+          <p className="mt-1.5 text-[9px] leading-snug text-zinc-600">
+            Proposes silence cuts, a hook and punch-zooms. You still review the moments before applying.
           </p>
-        )}
-      </section>
+        </div>
+      </details>
 
       {/* detected highlights */}
       {highlights.length > 0 && (
@@ -792,6 +1102,382 @@ export default function AIPanel() {
 
 /* ---------------------------------------------------------------- */
 
+function WorkflowButton({
+  active,
+  icon,
+  title,
+  description,
+  tone,
+  onClick,
+}: {
+  active: boolean;
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  tone: "sky" | "amber";
+  onClick: () => void;
+}) {
+  const activeClass =
+    tone === "sky"
+      ? "bg-sky-500/15 text-sky-100 ring-sky-400/70"
+      : "bg-amber-500/15 text-amber-100 ring-amber-400/70";
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-xl px-2.5 py-2 text-left ring-1 transition ${
+        active ? activeClass : "bg-white/4 text-zinc-400 ring-white/8 hover:bg-white/8"
+      }`}
+    >
+      <span className="flex items-center gap-1.5 text-[11px] font-bold">
+        {icon} {title}
+      </span>
+      <span className="mt-0.5 block text-[9px] leading-snug text-zinc-500">{description}</span>
+    </button>
+  );
+}
+
+function SourceRoleRow({
+  clip,
+  index,
+  asset,
+  workflow,
+  role,
+  onRole,
+  onPreview,
+}: {
+  clip: TimelineClip;
+  index: number;
+  asset?: MediaAsset;
+  workflow: Workflow;
+  role: SourceRole;
+  onRole: (role: SourceRole) => void;
+  onPreview: () => void;
+}) {
+  const excluded = role === "exclude";
+  const roleChoices: Array<{ role: SourceRole; label: string; activeClass: string }> =
+    workflow === "montage"
+      ? [
+          { role: "include", label: "Use", activeClass: "bg-sky-500/25 text-sky-100" },
+          { role: "exclude", label: "Skip", activeClass: "bg-rose-500/20 text-rose-200" },
+        ]
+      : [
+          { role: "a-roll", label: "Interview", activeClass: "bg-amber-500/25 text-amber-100" },
+          { role: "b-roll", label: "B-roll", activeClass: "bg-sky-500/25 text-sky-100" },
+          { role: "exclude", label: "Skip", activeClass: "bg-rose-500/20 text-rose-200" },
+        ];
+
+  return (
+    <div
+      className={`rounded-lg bg-white/[0.035] p-1.5 ring-1 transition ${
+        excluded ? "opacity-55 ring-white/5" : "ring-white/9"
+      }`}
+      data-testid={`source-role-${clip.id}`}
+    >
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onPreview}
+          className="h-9 w-12 shrink-0 overflow-hidden rounded-md bg-black/60 ring-1 ring-white/10"
+          title={`Preview ${asset?.originalName ?? `clip ${index + 1}`}`}
+        >
+          {asset ? (
+            <span
+              className="block h-full w-full bg-cover bg-center"
+              style={{
+                backgroundImage: `url(${filmstripUrl(asset)})`,
+                backgroundSize: "2000% 100%",
+                backgroundPosition: `${(100 * 10) / 19}% 0%`,
+              }}
+            />
+          ) : (
+            <Film size={13} className="mx-auto text-zinc-600" />
+          )}
+        </button>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[10px] font-semibold text-zinc-200">
+            <span className="mr-1 font-mono text-zinc-600">{String(index + 1).padStart(2, "0")}</span>
+            {asset?.originalName ?? "Missing source"}
+          </p>
+          <p className="mt-0.5 font-mono text-[8px] text-zinc-600">
+            {formatDraftTime(clip.startTime)}–{formatDraftTime(clip.endTime)} · {(clip.endTime - clip.startTime).toFixed(1)}s
+          </p>
+        </div>
+      </div>
+      <div className={`mt-1 grid gap-1 ${workflow === "montage" ? "grid-cols-2" : "grid-cols-3"}`}>
+        {roleChoices.map((choice) => (
+          <button
+            key={choice.role}
+            onClick={() => onRole(choice.role)}
+            aria-pressed={role === choice.role}
+            className={`rounded px-1 py-1 text-[9px] font-semibold transition ${
+              role === choice.role
+                ? choice.activeClass
+                : "bg-white/4 text-zinc-600 hover:bg-white/8 hover:text-zinc-300"
+            }`}
+          >
+            {choice.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DirectionChoice({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-lg px-1 py-1.5 text-[9px] font-semibold transition ${
+        active
+          ? "bg-white/12 text-white ring-1 ring-white/20"
+          : "bg-white/4 text-zinc-600 ring-1 ring-white/7 hover:bg-white/8 hover:text-zinc-300"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function DraftReview({
+  recipe,
+  order,
+  clips,
+  media,
+  speechClipIds,
+  disabled,
+  stale,
+  onPreview,
+  onToggle,
+  onMove,
+  onRegenerate,
+  onApply,
+}: {
+  recipe: EditRecipe;
+  order: number[];
+  clips: TimelineClip[];
+  media: MediaAsset[];
+  speechClipIds: Set<string>;
+  disabled: boolean;
+  stale: boolean;
+  onPreview: (time: number) => void;
+  onToggle: (index: number) => void;
+  onMove: (index: number, direction: -1 | 1) => void;
+  onRegenerate: () => void;
+  onApply: () => void;
+}) {
+  const rejected = recipe.keptRanges
+    .map((_, index) => index)
+    .filter((index) => !order.includes(index));
+  const displayOrder = [...order, ...rejected];
+  const totalDuration = order.reduce((sum, index) => {
+    const range = recipe.keptRanges[index];
+    return sum + (range.end - range.start) / (recipe.rangeSpeeds?.[index] ?? 1);
+  }, 0);
+
+  const sourceFor = (range: TimeRange) => {
+    const midpoint = (range.start + range.end) / 2;
+    const clip = clips.find((item) => midpoint >= item.startTime && midpoint <= item.endTime);
+    const asset = clip ? media.find((item) => item.id === clip.assetId) : undefined;
+    return { clip, asset };
+  };
+
+  return (
+    <section className="rounded-xl bg-sky-500/[0.055] p-2.5 ring-1 ring-sky-400/20" data-testid="edit-draft-review">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="flex items-center gap-1.5 text-[11px] font-bold text-sky-100">
+            <Sparkles size={12} /> Draft ready for review
+          </p>
+          <p className="mt-0.5 text-[9px] leading-snug text-sky-200/55">
+            Keep, reject, preview or reorder each suggested moment.
+          </p>
+        </div>
+        <span className="shrink-0 rounded-full bg-sky-400/10 px-1.5 py-0.5 font-mono text-[9px] text-sky-200">
+          {order.length} · {Math.round(totalDuration)}s
+        </span>
+      </div>
+
+      <div className="mt-2 flex h-2 gap-px overflow-hidden rounded-full bg-black/30 p-px" aria-hidden>
+        {order.map((index) => {
+          const range = recipe.keptRanges[index];
+          const duration = (range.end - range.start) / (recipe.rangeSpeeds?.[index] ?? 1);
+          const { clip } = sourceFor(range);
+          const speech = clip ? speechClipIds.has(clip.id) : false;
+          return (
+            <span
+              key={index}
+              className={speech ? "bg-amber-300" : "bg-sky-300"}
+              style={{ flex: Math.max(0.2, duration) }}
+            />
+          );
+        })}
+      </div>
+
+      <div className="mt-2 flex flex-col gap-1">
+        {displayOrder.map((index) => {
+          const range = recipe.keptRanges[index];
+          const selected = order.includes(index);
+          const position = order.indexOf(index);
+          const { clip, asset } = sourceFor(range);
+          const speech = clip ? speechClipIds.has(clip.id) : false;
+          const duration = (range.end - range.start) / (recipe.rangeSpeeds?.[index] ?? 1);
+          return (
+            <div
+              key={index}
+              className={`flex items-center gap-1 rounded-lg px-1.5 py-1.5 ring-1 transition ${
+                selected
+                  ? "bg-black/20 text-zinc-200 ring-white/10"
+                  : "bg-black/10 text-zinc-600 ring-white/5 opacity-60"
+              }`}
+            >
+              <button
+                onClick={() => onToggle(index)}
+                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded ${
+                  selected ? "bg-sky-400 text-sky-950" : "bg-white/7 text-zinc-500"
+                }`}
+                title={selected ? "Reject this moment" : "Keep this moment"}
+              >
+                {selected ? <Check size={11} /> : <X size={11} />}
+              </button>
+              <button onClick={() => onPreview(range.start)} className="min-w-0 flex-1 text-left" title="Preview source moment">
+                <span className="flex items-center gap-1 text-[9px] font-semibold">
+                  <span className={speech ? "text-amber-300" : "text-sky-300"}>
+                    {speech ? "INTERVIEW" : "MOMENT"}
+                  </span>
+                  <span className="truncate text-zinc-300">{asset?.originalName ?? "Source clip"}</span>
+                </span>
+                <span className="mt-0.5 block font-mono text-[8px] text-zinc-600">
+                  {formatDraftTime(range.start)} · {duration.toFixed(1)}s
+                  {recipe.rangeSpeeds?.[index] ? ` · ${recipe.rangeSpeeds[index]}×` : ""}
+                </span>
+              </button>
+              {selected && (
+                <div className="flex shrink-0 items-center">
+                  <button
+                    onClick={() => onMove(index, -1)}
+                    disabled={position <= 0}
+                    className="rounded p-1 text-zinc-500 hover:bg-white/8 hover:text-white disabled:opacity-20"
+                    title="Move earlier"
+                  >
+                    <ArrowUp size={10} />
+                  </button>
+                  <button
+                    onClick={() => onMove(index, 1)}
+                    disabled={position >= order.length - 1}
+                    className="rounded p-1 text-zinc-500 hover:bg-white/8 hover:text-white disabled:opacity-20"
+                    title="Move later"
+                  >
+                    <ArrowDown size={10} />
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <p className="mt-2 text-[9px] leading-snug text-sky-100/50">{recipe.reasoningSummary}</p>
+      {stale && (
+        <p className="mt-2 rounded-lg bg-amber-500/10 px-2 py-1.5 text-[9px] leading-snug text-amber-200 ring-1 ring-amber-400/20">
+          The timeline or source plan changed after this draft was built. Generate a new take before applying it.
+        </p>
+      )}
+      <div className="mt-2 grid grid-cols-[auto_1fr] gap-1.5">
+        <button
+          onClick={onRegenerate}
+          disabled={disabled}
+          className="flex items-center justify-center gap-1 rounded-lg bg-white/5 px-2 py-2 text-[10px] font-semibold text-zinc-300 ring-1 ring-white/10 transition hover:bg-white/9 disabled:opacity-30"
+          title="Generate a different draft from the same sources"
+        >
+          <RefreshCw size={11} /> New take
+        </button>
+        <button
+          onClick={onApply}
+          disabled={disabled || order.length === 0 || stale}
+          data-testid="apply-edit-draft"
+          className="flex items-center justify-center gap-1.5 rounded-lg bg-sky-300 px-3 py-2 text-[11px] font-black text-sky-950 transition hover:bg-sky-200 active:scale-[0.98] disabled:opacity-35"
+        >
+          <Check size={13} /> Apply {order.length} moment{order.length === 1 ? "" : "s"} to timeline
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function storeGenerationSignature(): string {
+  const state = useEditorStore.getState();
+  const main = mainVideoTrack(state.tracks);
+  const music = findTrack(state.tracks, "music");
+  return JSON.stringify({
+    projectId: state.projectId,
+    selectedClipIds: state.selectedClipIds,
+    main: main.clips.map((clip) => [
+      clip.id,
+      clip.assetId,
+      clip.startTime,
+      clip.endTime,
+      clip.sourceStart,
+      clip.sourceEnd,
+      clip.speed ?? 1,
+    ]),
+    music: music?.clips.map((clip) => [
+      clip.id,
+      clip.assetId,
+      clip.startTime,
+      clip.endTime,
+      clip.sourceStart,
+      clip.sourceEnd,
+    ]),
+    beat: state.beat,
+    sourceAudio: main.clips.map((clip) => {
+      const asset = state.media.find((candidate) => candidate.id === clip.assetId);
+      return [
+        clip.assetId,
+        asset?.hasAudio ?? false,
+        asset?.linkedAudio?.audioAssetId ?? null,
+        asset?.linkedAudio?.offsetSeconds ?? null,
+        asset?.linkedAudio?.muteCameraAudio ?? null,
+      ];
+    }),
+  });
+}
+
+function sourceHasAudio(asset: MediaAsset | undefined, media: MediaAsset[]): boolean {
+  if (!asset) return false;
+  if (asset.hasAudio) return true;
+  const linkedId = asset.linkedAudio?.audioAssetId;
+  return Boolean(linkedId && media.find((candidate) => candidate.id === linkedId)?.hasAudio);
+}
+
+function filterCaptionsForClips(
+  captions: Caption[],
+  clips: TimelineClip[],
+  includedIds: Set<string>
+): Caption[] {
+  return captions.filter((caption) => {
+    const midpoint = (caption.startTime + caption.endTime) / 2;
+    return clips.some(
+      (clip) =>
+        includedIds.has(clip.id) && midpoint >= clip.startTime - 0.001 && midpoint <= clip.endTime + 0.001
+    );
+  });
+}
+
+function formatDraftTime(seconds: number): string {
+  const minutes = Math.floor(Math.max(0, seconds) / 60);
+  const rest = Math.max(0, seconds) - minutes * 60;
+  return `${minutes}:${rest.toFixed(1).padStart(4, "0")}`;
+}
+
+/* ---------------------------------------------------------------- */
+
 /**
  * Beat sync status + controls for the current soundtrack: detected BPM with
  * confidence (never a silent failure), a manual BPM override, tap tempo, and
@@ -896,33 +1582,6 @@ function HighlightIcon({ kind }: { kind: HighlightMoment["kind"] }) {
   if (kind === "reaction") return <Flame size={11} className="shrink-0 text-orange-300" />;
   if (kind === "speech") return <MessageSquareText size={11} className="shrink-0 text-sky-300" />;
   return <Film size={11} className="shrink-0 text-zinc-400" />;
-}
-
-/** Toggleable one-tap regenerate adjustment. */
-function ModChip({
-  label,
-  active,
-  disabled,
-  onToggle,
-}: {
-  label: string;
-  active: boolean;
-  disabled?: boolean;
-  onToggle: (wasActive: boolean) => void;
-}) {
-  return (
-    <button
-      onClick={() => onToggle(active)}
-      disabled={disabled}
-      className={`rounded-full px-2 py-1 text-[10px] font-semibold ring-1 transition disabled:opacity-30 ${
-        active
-          ? "bg-emerald-500/25 text-emerald-200 ring-emerald-400"
-          : "bg-white/5 text-zinc-400 ring-white/10 hover:bg-white/10 hover:text-zinc-200"
-      }`}
-    >
-      {label}
-    </button>
-  );
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {

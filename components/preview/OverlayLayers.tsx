@@ -269,7 +269,7 @@ function BrollVideo({ clip, asset, muted }: { clip: TimelineClip; asset: MediaAs
   return (
     <video
       ref={ref}
-      src={mediaUrl(asset.id)}
+      src={mediaUrl(asset)}
       className="absolute inset-0 h-full w-full object-cover"
       style={{ opacity }}
       playsInline
@@ -312,7 +312,7 @@ function ImageOverlay({
     <>
       {drag && <DragGuides drag={drag} xScalePx={xScalePx} yScalePx={yScalePx} />}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={mediaUrl(asset.id)} alt="" style={style} draggable={false} onPointerDown={onPointerDown} />
+      <img src={mediaUrl(asset)} alt="" style={style} draggable={false} onPointerDown={onPointerDown} />
     </>
   );
 }
@@ -383,5 +383,5 @@ function TextSticker({
 function AudioClipPlayer({ clip, asset, muted }: { clip: TimelineClip; asset: MediaAsset; muted: boolean }) {
   const ref = useRef<HTMLAudioElement>(null);
   useMediaSync(ref, clip, { volume: clip.volume ?? 1, muted });
-  return <audio ref={ref} src={mediaUrl(asset.id)} preload="auto" />;
+  return <audio ref={ref} src={mediaUrl(asset)} preload="auto" />;
 }

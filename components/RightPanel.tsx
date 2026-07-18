@@ -51,15 +51,21 @@ export default function RightPanel() {
         ))}
       </div>
       <div className="min-h-0 flex-1">
-        {tab === "ai" ? (
+        {/* Keep panels mounted while switching tabs. AI drafts, source roles,
+            caption glossary and review filters are working state — changing
+            tabs must not silently throw them away. */}
+        <div className={tab === "ai" ? "h-full" : "hidden"}>
           <AIPanel />
-        ) : tab === "inspect" ? (
+        </div>
+        <div className={tab === "inspect" ? "h-full" : "hidden"}>
           <InspectorPanel />
-        ) : tab === "captions" ? (
+        </div>
+        <div className={tab === "captions" ? "h-full" : "hidden"}>
           <CaptionsPanel />
-        ) : (
+        </div>
+        <div className={tab === "style" ? "h-full" : "hidden"}>
           <StylePanel />
-        )}
+        </div>
       </div>
     </div>
   );

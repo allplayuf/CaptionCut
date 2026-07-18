@@ -10,7 +10,7 @@ export async function GET(
   const { jobId } = await params;
   let state = null;
   try {
-    state = readJobState(jobId);
+    state = await readJobState(jobId);
   } catch {
     return NextResponse.json({ error: "Invalid job id" }, { status: 400 });
   }
