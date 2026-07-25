@@ -10,16 +10,16 @@ export type { TranscriptionOptions, TranscriptionProvider } from "./types";
 /**
  * Transcription entry point.
  *
- * The default provider is **local-whisper** (whisper.cpp): completely free,
- * runs on-device, and needs no API key. The binary (~8 MB) and the ggml model
- * are downloaded automatically on first use, or ahead of time with
- * `npm run setup-whisper`. Accurate uses `small` by default; Fast uses `base`.
+ * Local development defaults to **local-whisper** (whisper.cpp): completely
+ * free and without an API key. A Vercel deployment automatically selects the
+ * OpenAI provider when OPENAI_API_KEY is present, because Function instances
+ * cannot depend on a downloaded whisper.cpp engine/model surviving.
  *
  * Env:
- *   TRANSCRIPTION_PROVIDER = "local-whisper" (default) | "openai" | "mock"
+ *   TRANSCRIPTION_PROVIDER = "local-whisper" (local default) | "openai" | "mock"
  *   WHISPER_MODEL          = optional override for the Fast/Accurate model mapping
  *   WHISPER_CPP_PATH       = existing whisper-cli executable (optional)
- *   OPENAI_API_KEY         = only if you opt into the openai provider
+ *   OPENAI_API_KEY         = enables automatic OpenAI selection on Vercel
  *
  * To add a provider: implement TranscriptionProvider (lib/transcription/types.ts)
  * and register it in PROVIDERS below. Everything downstream consumes Caption[].
@@ -35,6 +35,7 @@ const PROVIDERS: Record<string, TranscriptionProvider> = {
 export function resolveProvider(): TranscriptionProvider {
   const configured = process.env.TRANSCRIPTION_PROVIDER?.toLowerCase();
   if (configured && PROVIDERS[configured]) return PROVIDERS[configured];
+  if (process.env.VERCEL && process.env.OPENAI_API_KEY) return openAiProvider;
   return localWhisperProvider;
 }
 

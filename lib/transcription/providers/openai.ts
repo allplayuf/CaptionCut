@@ -5,9 +5,9 @@ import { chunkSegmentsToCaptions, chunkWordsToCaptions } from "@/lib/captions/ch
 import { TranscriptionError, type TranscriptionProvider } from "../types";
 
 /**
- * Optional cloud provider: OpenAI Whisper API.
- * Only used when TRANSCRIPTION_PROVIDER=openai is set explicitly — the app's
- * default is the free local-whisper provider and never requires an API key.
+ * Cloud provider for deployed transcription. Selected explicitly with
+ * TRANSCRIPTION_PROVIDER=openai, or automatically on Vercel when the API key
+ * is configured. Local development remains free and local by default.
  *
  * Env: OPENAI_API_KEY (required), OPENAI_WHISPER_MODEL (default "whisper-1").
  */
@@ -34,7 +34,7 @@ export const openAiProvider: TranscriptionProvider = {
     if (!apiKey) {
       throw new TranscriptionError(
         "OPENAI_API_KEY not set",
-        "TRANSCRIPTION_PROVIDER=openai requires OPENAI_API_KEY in .env.local — or remove the setting to use the free local engine."
+        "Cloud captions need OPENAI_API_KEY. Add it to the deployment, or use local-whisper on a machine with whisper.cpp installed."
       );
     }
 

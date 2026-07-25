@@ -2,11 +2,14 @@ import fs from "fs";
 import path from "path";
 import type { Project, ProjectSummary } from "@/types";
 import { PROJECTS_DIR, ensureDataDirs, safeId } from "./paths";
-
-const BLOB_PREFIX = "projects/";
+import { safeWorkspaceId } from "./workspace";
 
 function usesBlob(): boolean {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+}
+
+function blobPrefix(workspaceId: string): string {
+  return `workspaces/${safeWorkspaceId(workspaceId)}/projects/`;
 }
 
 async function readBlobProject(pathname: string): Promise<Project | null> {
@@ -18,13 +21,14 @@ async function readBlobProject(pathname: string): Promise<Project | null> {
 
 /** Simple JSON-file project store under data/projects. */
 
-export async function listProjects(): Promise<ProjectSummary[]> {
+export async function listProjects(workspaceId: string): Promise<ProjectSummary[]> {
   if (usesBlob()) {
     const { list } = await import("@vercel/blob");
     const summaries: ProjectSummary[] = [];
+    const prefix = blobPrefix(workspaceId);
     let cursor: string | undefined;
     do {
-      const page = await list({ prefix: BLOB_PREFIX, cursor, limit: 100 });
+      const page = await list({ prefix, cursor, limit: 100 });
       for (const blob of page.blobs) {
         if (!blob.pathname.endsWith(".json")) continue;
         try {
@@ -55,9 +59,9 @@ export async function listProjects(): Promise<ProjectSummary[]> {
   return summaries.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export async function loadProject(id: string): Promise<Project | null> {
+export async function loadProject(workspaceId: string, id: string): Promise<Project | null> {
   const projectId = safeId(id);
-  if (usesBlob()) return readBlobProject(`${BLOB_PREFIX}${projectId}.json`);
+  if (usesBlob()) return readBlobProject(`${blobPrefix(workspaceId)}${projectId}.json`);
 
   ensureDataDirs();
   const file = path.join(PROJECTS_DIR, `${projectId}.json`);
@@ -68,11 +72,11 @@ export async function loadProject(id: string): Promise<Project | null> {
   }
 }
 
-export async function saveProject(project: Project): Promise<void> {
+export async function saveProject(workspaceId: string, project: Project): Promise<void> {
   const projectId = safeId(project.id);
   if (usesBlob()) {
     const { put } = await import("@vercel/blob");
-    await put(`${BLOB_PREFIX}${projectId}.json`, JSON.stringify(project), {
+    await put(`${blobPrefix(workspaceId)}${projectId}.json`, JSON.stringify(project), {
       access: "public",
       contentType: "application/json",
       addRandomSuffix: false,
@@ -87,11 +91,11 @@ export async function saveProject(project: Project): Promise<void> {
   await fs.promises.writeFile(file, JSON.stringify(project, null, 2), "utf8");
 }
 
-export async function deleteProject(id: string): Promise<void> {
+export async function deleteProject(workspaceId: string, id: string): Promise<void> {
   const projectId = safeId(id);
   if (usesBlob()) {
     const { del } = await import("@vercel/blob");
-    await del(`${BLOB_PREFIX}${projectId}.json`);
+    await del(`${blobPrefix(workspaceId)}${projectId}.json`);
     return;
   }
 
@@ -104,6 +108,9 @@ function toSummary(project: Project): ProjectSummary {
     id: project.id,
     name: project.name,
     updatedAt: project.updatedAt,
-    clipCount: project.clips?.length ?? 0,
+    clipCount:
+      project.tracks?.find((track) => track.type === "video")?.clips.length ??
+      project.clips?.length ??
+      0,
   };
 }

@@ -6,6 +6,7 @@ import { nanoid } from "nanoid";
 import { NextResponse } from "next/server";
 import { probeMedia } from "@/lib/server/ffmpeg";
 import { ensureDataDirs, MEDIA_DIR } from "@/lib/server/paths";
+import { workspaceId } from "@/lib/server/workspace";
 import type { AssetKind, MediaAsset } from "@/types";
 
 export const runtime = "nodejs";
@@ -171,7 +172,7 @@ export async function POST(request: Request) {
 
     if (process.env.VERCEL || process.env.BLOB_READ_WRITE_TOKEN) {
       const { put } = await import("@vercel/blob");
-      const blob = await put(`media/${filename}`, fs.createReadStream(filePath), {
+      const blob = await put(`media/${await workspaceId()}/${filename}`, fs.createReadStream(filePath), {
         access: "public",
         addRandomSuffix: false,
         allowOverwrite: false,

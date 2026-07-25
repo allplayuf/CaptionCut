@@ -5,10 +5,10 @@ import { nanoid } from "nanoid";
 import type { AssetKind, MediaAsset } from "@/types";
 import { MEDIA_DIR, ensureDataDirs } from "@/lib/server/paths";
 import { probeMedia } from "@/lib/server/ffmpeg";
+import { MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from "@/lib/video/uploadLimits";
+import { workspaceId } from "@/lib/server/workspace";
 
 export const runtime = "nodejs";
-
-const MAX_SIZE = 512 * 1024 * 1024; // 512 MB
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm", ".m4v", ".mkv", ".avi"]);
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"]);
@@ -23,13 +23,18 @@ function expectedKind(ext: string, mimeType: string): AssetKind | null {
 
 /** Lets the browser choose durable direct uploads on Vercel, local disk in dev. */
 export async function GET() {
-  return NextResponse.json({
-    storage: process.env.BLOB_READ_WRITE_TOKEN
-      ? "blob"
-      : process.env.VERCEL
-        ? "unconfigured"
-        : "local",
-  });
+  const storage = process.env.BLOB_READ_WRITE_TOKEN
+    ? "blob"
+    : process.env.VERCEL
+      ? "unconfigured"
+      : "local";
+  return NextResponse.json(
+    {
+      storage,
+      uploadPrefix: storage === "blob" ? `media/${await workspaceId()}` : null,
+    },
+    { headers: { "Cache-Control": "private, no-store" } }
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -45,26 +50,22 @@ export async function POST(request: NextRequest) {
   }
   ensureDataDirs();
 
-  let file: File | null = null;
-  try {
-    const form = await request.formData();
-    file = form.get("file") as File | null;
-  } catch {
-    return NextResponse.json({ error: "Could not read the upload." }, { status: 400 });
-  }
-
-  if (!file) {
+  const originalName = request.nextUrl.searchParams.get("name")?.trim();
+  if (!originalName || !request.body) {
     return NextResponse.json({ error: "No file was uploaded." }, { status: 400 });
   }
-  if (file.size > MAX_SIZE) {
+
+  const declaredSize = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredSize) && declaredSize > MAX_UPLOAD_SIZE_BYTES) {
     return NextResponse.json(
-      { error: "That file is too large (max 512 MB). Trim or compress it first." },
+      { error: `That file is too large (max ${MAX_UPLOAD_SIZE_LABEL}). Trim or compress it first.` },
       { status: 413 }
     );
   }
 
-  const ext = path.extname(file.name).toLowerCase() || ".mp4";
-  const kind = expectedKind(ext, file.type);
+  const mimeType = request.headers.get("content-type")?.split(";", 1)[0]?.trim() ?? "";
+  const ext = path.extname(originalName).toLowerCase() || ".mp4";
+  const kind = expectedKind(ext, mimeType);
   if (!kind) {
     return NextResponse.json(
       { error: "Unsupported file type. Upload a video (MP4/MOV/WebM), audio (MP3/WAV/M4A) or image (PNG/JPG/WebP)." },
@@ -75,15 +76,27 @@ export async function POST(request: NextRequest) {
   const id = nanoid(10);
   const filename = `${id}${ext}`;
   const filePath = path.join(MEDIA_DIR, filename);
+  let size = 0;
 
   try {
-    const buffer = Buffer.from(await file.arrayBuffer());
-    await fs.promises.writeFile(filePath, buffer);
-  } catch {
+    size = await streamToFile(request.body, filePath);
+  } catch (error) {
+    await fs.promises.rm(filePath, { force: true });
+    if (error instanceof UploadTooLargeError) {
+      return NextResponse.json(
+        { error: `That file is too large (max ${MAX_UPLOAD_SIZE_LABEL}). Trim or compress it first.` },
+        { status: 413 }
+      );
+    }
     return NextResponse.json(
       { error: "Could not save the upload. Check free disk space and try again." },
       { status: 500 }
     );
+  }
+
+  if (size === 0) {
+    await fs.promises.rm(filePath, { force: true });
+    return NextResponse.json({ error: "No file was uploaded." }, { status: 400 });
   }
 
   try {
@@ -95,9 +108,9 @@ export async function POST(request: NextRequest) {
     const asset: MediaAsset = {
       id,
       filename,
-      originalName: file.name,
-      mimeType: file.type || fallbackMime(kind, ext),
-      size: file.size,
+      originalName,
+      mimeType: mimeType || fallbackMime(kind, ext),
+      size,
       duration: kind === "image" ? 0 : probe.duration,
       width: probe.width,
       height: probe.height,
@@ -113,6 +126,40 @@ export async function POST(request: NextRequest) {
       { status: 415 }
     );
   }
+}
+
+class UploadTooLargeError extends Error {}
+
+/** Writes with backpressure so multi-GB uploads never need to live in memory. */
+async function streamToFile(body: ReadableStream<Uint8Array>, filePath: string): Promise<number> {
+  const file = await fs.promises.open(filePath, "wx");
+  const reader = body.getReader();
+  let size = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      size += value.byteLength;
+      if (size > MAX_UPLOAD_SIZE_BYTES) {
+        await reader.cancel().catch(() => {});
+        throw new UploadTooLargeError();
+      }
+
+      let offset = 0;
+      while (offset < value.byteLength) {
+        const { bytesWritten } = await file.write(value, offset, value.byteLength - offset);
+        if (bytesWritten === 0) throw new Error("Upload write stalled.");
+        offset += bytesWritten;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+    await file.close();
+  }
+
+  return size;
 }
 
 function fallbackMime(kind: AssetKind, ext: string): string {

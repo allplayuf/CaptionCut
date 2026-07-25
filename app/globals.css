@@ -2,6 +2,14 @@
 
 :root {
   color-scheme: dark;
+  --ink: #080b10;
+  --panel: #10141b;
+  --panel-raised: #151a22;
+  --text: #edf1f5;
+  --muted: #7b8694;
+  --cut: #ffb45b;
+  --timeline: #7db8ff;
+  --caption: #9ce5c3;
 }
 
 html,
@@ -11,30 +19,78 @@ body {
 }
 
 body {
-  background: #08080d;
-  color: #e4e4e7;
+  background: var(--ink);
+  color: var(--text);
   font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
+    "Segoe UI Variable",
     "Segoe UI",
-    Roboto,
-    "Helvetica Neue",
-    Arial,
+    system-ui,
     sans-serif;
+  font-feature-settings: "ss01" 1, "cv02" 1;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--timeline) 75%, transparent);
+  outline-offset: 2px;
+}
+
+kbd {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-bottom-color: rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0 4px;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 8px;
+  font-weight: 500;
+  color: #75808e;
+}
+
+.font-mono {
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.start-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: linear-gradient(to bottom, black, transparent 80%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* slim dark scrollbars */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
 }
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 *::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.12);
   border-radius: 4px;
 }
 *::-webkit-scrollbar-track {

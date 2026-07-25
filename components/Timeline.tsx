@@ -1,33 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Caption, ClipEffect, Track, TimelineClip } from "@/types";
-import { useEditorStore, type EffectPresetId } from "@/hooks/useEditorStore";
+import type { Caption, Track, TimelineClip } from "@/types";
+import { useEditorStore } from "@/hooks/useEditorStore";
 import { filmstripUrl, mediaUrl } from "@/lib/video/client";
 import { computePeaks, placeholderPeaks } from "@/lib/audio/waveform";
 import { formatTime } from "@/lib/video/timeline";
 import { mainVideoTrack, snapTargets, snapTime, tracksDuration } from "@/lib/timeline/tracks";
 import { timelineBeatMarkers } from "@/lib/autoEdit/signals";
 import {
-  ChevronDown,
-  Copy,
   Eye,
   EyeOff,
   Lock,
   LockOpen,
-  Redo2,
-  Rewind,
   Scissors,
-  Search,
-  Smile,
-  Snowflake,
-  Sparkles,
-  Type,
   Trash2,
-  Undo2,
   Volume2,
   VolumeX,
-  Zap,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -51,13 +40,13 @@ const TRACK_COLORS: Record<Track["type"], string> = {
   video: "from-zinc-700/80 to-zinc-800/80",
   broll: "from-sky-700/70 to-sky-900/70",
   image: "from-teal-700/70 to-teal-900/70",
-  caption: "from-violet-600/60 to-violet-800/60",
+  caption: "from-[#5ca889]/60 to-[#386f5b]/60",
   text: "from-amber-600/70 to-amber-800/70",
   sticker: "from-pink-600/70 to-pink-800/70",
   music: "from-emerald-700/70 to-emerald-900/70",
   sfx: "from-lime-700/70 to-lime-900/70",
   voice: "from-cyan-700/70 to-cyan-900/70",
-  effects: "from-fuchsia-600/70 to-fuchsia-800/70",
+  effects: "from-[#517ca8]/70 to-[#314f72]/70",
 };
 
 export default function Timeline() {
@@ -68,8 +57,6 @@ export default function Timeline() {
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const selectedClipIds = useEditorStore((s) => s.selectedClipIds);
   const waveforms = useEditorStore((s) => s.waveforms);
-  const past = useEditorStore((s) => s.past);
-  const future = useEditorStore((s) => s.future);
 
   const analyses = useEditorStore((s) => s.analyses);
   const beat = useEditorStore((s) => s.beat);
@@ -81,7 +68,6 @@ export default function Timeline() {
   const selectedCaptionId = useEditorStore((s) => s.selectedCaptionId);
   const splitAtPlayhead = useEditorStore((s) => s.splitAtPlayhead);
   const deleteSelectedClips = useEditorStore((s) => s.deleteSelectedClips);
-  const duplicateSelectedClips = useEditorStore((s) => s.duplicateSelectedClips);
   const moveClipToIndex = useEditorStore((s) => s.moveClipToIndex);
   const moveTimelineClip = useEditorStore((s) => s.moveTimelineClip);
   const moveSelectedClips = useEditorStore((s) => s.moveSelectedClips);
@@ -89,13 +75,6 @@ export default function Timeline() {
   const updateCaptionTiming = useEditorStore((s) => s.updateCaptionTiming);
   const pushHistory = useEditorStore((s) => s.pushHistory);
   const setWaveform = useEditorStore((s) => s.setWaveform);
-  const addTextClip = useEditorStore((s) => s.addTextClip);
-  const addStickerClip = useEditorStore((s) => s.addStickerClip);
-  const addEffectClip = useEditorStore((s) => s.addEffectClip);
-  const applyEffectPreset = useEditorStore((s) => s.applyEffectPreset);
-  const insertReplay = useEditorStore((s) => s.insertReplay);
-  const undo = useEditorStore((s) => s.undo);
-  const redo = useEditorStore((s) => s.redo);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -276,71 +255,42 @@ export default function Timeline() {
   };
 
   return (
-    <div className="flex h-full flex-col border-t border-white/8 bg-[#0d0d14]">
+    <div className="flex h-full flex-col border-t border-white/[0.07] bg-[#0b0e13]">
       {/* toolbar */}
-      <div className="flex items-center gap-1 px-3 py-1">
-        <ToolButton onClick={undo} disabled={past.length === 0} title="Undo (Ctrl+Z)">
-          <Undo2 size={14} />
-        </ToolButton>
-        <ToolButton onClick={redo} disabled={future.length === 0} title="Redo (Ctrl+Shift+Z)">
-          <Redo2 size={14} />
-        </ToolButton>
-        <div className="mx-1 h-4 w-px bg-white/10" />
-        <ToolButton onClick={splitAtPlayhead} disabled={duration <= 0.001} title="Split at playhead (S)">
-          <Scissors size={14} /> Split
-        </ToolButton>
-        <ToolButton
-          onClick={duplicateSelectedClips}
-          disabled={selectedClipIds.length === 0 && !selectedClipId}
-          title={
-            selectedClipIds.length > 1
-              ? `Duplicate ${selectedClipIds.length} selected clips (Ctrl+D)`
-              : "Duplicate selected clip (Ctrl+D)"
-          }
-        >
-          <Copy size={14} />
-          {selectedClipIds.length > 1 && <span>{selectedClipIds.length}</span>}
+      <div className="flex h-10 items-center gap-1 border-b border-white/[0.055] px-3">
+        <span className="mr-2 font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-[#65717f]">
+          Tidslinje
+        </span>
+        <ToolButton onClick={splitAtPlayhead} disabled={duration <= 0.001} title="Dela vid spelhuvudet (S)">
+          <Scissors size={13} /> Dela
         </ToolButton>
         <ToolButton
           onClick={deleteSelectedClips}
           disabled={selectedClipIds.length === 0 && !selectedClipId}
           title={
             selectedClipIds.length > 1
-              ? `Delete ${selectedClipIds.length} selected clips (Del)`
-              : "Delete selected clip (Del) · Ctrl+click, Shift+click or drag-marquee to multi-select"
+              ? `Radera ${selectedClipIds.length} valda klipp`
+              : "Radera valt klipp (Delete)"
           }
         >
-          <Trash2 size={14} />
+          <Trash2 size={13} /> Radera
           {selectedClipIds.length > 1 && <span>{selectedClipIds.length}</span>}
         </ToolButton>
-        <div className="mx-1 h-4 w-px bg-white/10" />
-        <ToolButton onClick={() => addTextClip("Your text", undefined)} disabled={duration <= 0.001} title="Add text at playhead">
-          <Type size={14} /> Text
-        </ToolButton>
-        <ToolButton onClick={() => addStickerClip("🔥")} disabled={duration <= 0.001} title="Add sticker at playhead">
-          <Smile size={14} />
-        </ToolButton>
-        <EffectsMenu
-          disabled={duration <= 0.001}
-          onAddEffect={(dur, effect) => addEffectClip(useEditorStore.getState().currentTime, dur, effect)}
-          onPreset={applyEffectPreset}
-          onReplay={insertReplay}
-        />
         <div className="ml-auto flex items-center gap-1">
-          <ToolButton onClick={() => zoomBy(1 / 1.4)} title="Zoom timeline out (Ctrl+scroll)">
-            <ZoomOut size={14} />
+          <ToolButton onClick={() => zoomBy(1 / 1.4)} title="Zooma ut tidslinjen">
+            <ZoomOut size={13} />
           </ToolButton>
           <button
             onClick={() => setZoom(null)}
-            className="rounded px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 transition hover:bg-white/10 hover:text-zinc-300"
-            title="Fit timeline to window"
+            className="rounded px-1.5 py-0.5 text-[10px] font-medium text-[#697583] transition hover:bg-white/[0.06] hover:text-[#c3ccd5]"
+            title="Visa hela tidslinjen"
           >
-            Fit
+            Anpassa
           </button>
-          <ToolButton onClick={() => zoomBy(1.4)} title="Zoom timeline in (Ctrl+scroll)">
-            <ZoomIn size={14} />
+          <ToolButton onClick={() => zoomBy(1.4)} title="Zooma in tidslinjen">
+            <ZoomIn size={13} />
           </ToolButton>
-          <span className="ml-2 font-mono text-[11px] tabular-nums text-zinc-500">
+          <span className="ml-2 font-mono text-[10px] tabular-nums text-[#697583]">
             {formatTime(currentTime)} / {formatTime(duration)}
           </span>
         </div>
@@ -349,13 +299,13 @@ export default function Timeline() {
       {/* tracks */}
       <div className="flex min-h-0 flex-1">
         {/* headers */}
-        <div className="shrink-0 overflow-hidden border-r border-white/8" style={{ width: HEADER_W }}>
+        <div className="shrink-0 overflow-hidden border-r border-white/[0.07]" style={{ width: HEADER_W }}>
           <div className="h-5" />
           {visibleTracks.map((track) => (
             <TrackHeader key={track.id} track={track} />
           ))}
-          <div className="flex items-center gap-1 px-2 text-[10px] font-medium text-violet-300/80" style={{ height: 24 }}>
-            Captions
+          <div className="flex items-center gap-1 px-2 text-[10px] font-medium text-[#9ce5c3]/80" style={{ height: 24 }}>
+            Text
           </div>
         </div>
 
@@ -468,7 +418,7 @@ export default function Timeline() {
             {/* marquee selection rectangle */}
             {marquee && (
               <div
-                className="pointer-events-none absolute z-20 rounded-sm border border-fuchsia-400/70 bg-fuchsia-400/10"
+                className="pointer-events-none absolute z-20 rounded-sm border border-[#7db8ff]/70 bg-[#7db8ff]/10"
                 style={{
                   left: marquee.x0,
                   top: marquee.y0,
@@ -481,10 +431,10 @@ export default function Timeline() {
             {/* playhead */}
             {duration > 0.001 && (
               <div
-                className="pointer-events-none absolute top-0 bottom-0 z-10 w-px bg-fuchsia-400"
+                className="pointer-events-none absolute top-0 bottom-0 z-10 w-px bg-[#ffb45b]"
                 style={{ left: playheadX }}
               >
-                <div className="absolute -left-[5px] top-0 h-0 w-0 border-x-[5px] border-t-[7px] border-x-transparent border-t-fuchsia-400" />
+                <div className="absolute -left-[5px] top-0 h-0 w-0 border-x-[5px] border-t-[7px] border-x-transparent border-t-[#ffb45b]" />
               </div>
             )}
           </div>
@@ -553,7 +503,7 @@ function HeaderIcon({
     <button
       onClick={onClick}
       title={title}
-      className={`rounded p-0.5 transition ${active ? "text-fuchsia-400" : "text-zinc-600 hover:text-zinc-300"}`}
+      className={`rounded p-0.5 transition ${active ? "text-[#ffb45b]" : "text-zinc-600 hover:text-zinc-300"}`}
     >
       {children}
     </button>
@@ -642,30 +592,6 @@ function TrackLane({
         <div className="pointer-events-none absolute top-0 bottom-0 z-20 w-0.5 rounded bg-amber-300" style={{ left: slotX }} />
       )}
     </div>
-  );
-}
-
-/** One row of the Effects dropdown. */
-function Item({
-  icon,
-  label,
-  hint,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  hint: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition hover:bg-white/8"
-      title={hint}
-    >
-      <span className="flex w-4 justify-center text-zinc-400">{icon}</span>
-      <span className="flex-1 text-xs font-medium text-zinc-200">{label}</span>
-    </button>
   );
 }
 
@@ -853,7 +779,7 @@ function ClipBlock({
   return (
     <div
       className={`group absolute top-0.5 bottom-0.5 overflow-hidden rounded-md bg-gradient-to-b ${TRACK_COLORS[track.type]} ${
-        selected ? "ring-2 ring-fuchsia-400" : "ring-1 ring-white/10 hover:ring-white/30"
+        selected ? "ring-2 ring-[#7db8ff]" : "ring-1 ring-white/10 hover:ring-white/30"
       } ${movable ? "cursor-grab active:cursor-grabbing" : ""} ${
         dragging ? "z-30 opacity-80 shadow-xl shadow-black/50" : "transition-shadow"
       }`}
@@ -890,8 +816,8 @@ function ClipBlock({
       </div>
       {selected && !track.locked && (
         <>
-          <div className="absolute inset-y-0 left-0 w-2 cursor-ew-resize bg-fuchsia-400/90" onPointerDown={startTrim("start")} />
-          <div className="absolute inset-y-0 right-0 w-2 cursor-ew-resize bg-fuchsia-400/90" onPointerDown={startTrim("end")} />
+          <div className="absolute inset-y-0 left-0 w-2 cursor-ew-resize bg-[#7db8ff]/90" onPointerDown={startTrim("start")} />
+          <div className="absolute inset-y-0 right-0 w-2 cursor-ew-resize bg-[#7db8ff]/90" onPointerDown={startTrim("end")} />
         </>
       )}
     </div>
@@ -970,8 +896,8 @@ function CaptionBlock({
 
   return (
     <div
-      className={`absolute top-0.5 h-5 cursor-grab overflow-hidden rounded bg-violet-500/40 px-1 text-left text-[9px] leading-5 text-violet-100 transition-colors hover:bg-violet-500/60 active:cursor-grabbing ${
-        selected ? "ring-1 ring-violet-200" : ""
+      className={`absolute top-0.5 h-5 cursor-grab overflow-hidden rounded bg-[#5ca889]/40 px-1 text-left text-[9px] leading-5 text-[#d8f5e9] transition-colors hover:bg-[#5ca889]/60 active:cursor-grabbing ${
+        selected ? "ring-1 ring-[#9ce5c3]" : ""
       }`}
       style={{ left, width }}
       title={caption.text}
@@ -980,120 +906,9 @@ function CaptionBlock({
       {caption.text}
       {selected && (
         <>
-          <div className="absolute inset-y-0 left-0 w-1.5 cursor-ew-resize bg-violet-300/90" onPointerDown={startTrim("start")} />
-          <div className="absolute inset-y-0 right-0 w-1.5 cursor-ew-resize bg-violet-300/90" onPointerDown={startTrim("end")} />
+          <div className="absolute inset-y-0 left-0 w-1.5 cursor-ew-resize bg-[#9ce5c3]/90" onPointerDown={startTrim("start")} />
+          <div className="absolute inset-y-0 right-0 w-1.5 cursor-ew-resize bg-[#9ce5c3]/90" onPointerDown={startTrim("end")} />
         </>
-      )}
-    </div>
-  );
-}
-
-/* ---------------------------------------------------------------- */
-
-/** Toolbar "Effects" dropdown: single effects + one-click football presets. */
-function EffectsMenu({
-  disabled,
-  onAddEffect,
-  onPreset,
-  onReplay,
-}: {
-  disabled: boolean;
-  onAddEffect: (duration: number, effect: ClipEffect) => void;
-  onPreset: (preset: EffectPresetId) => void;
-  onReplay: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    window.addEventListener("mousedown", close);
-    return () => window.removeEventListener("mousedown", close);
-  }, [open]);
-
-  const pick = (fn: () => void) => () => {
-    setOpen(false);
-    fn();
-  };
-
-  return (
-    <div ref={ref} className="relative">
-      <ToolButton onClick={() => setOpen((v) => !v)} disabled={disabled} title="Add an effect at the playhead">
-        <Sparkles size={14} /> Effects <ChevronDown size={12} />
-      </ToolButton>
-      {open && (
-        <div className="absolute left-0 top-full z-40 mt-1 w-64 rounded-xl border border-white/10 bg-[#16161f] p-1.5 shadow-2xl shadow-black/60">
-          <p className="px-2.5 pb-1 pt-1.5 text-[9px] font-semibold uppercase tracking-wider text-zinc-600">
-            Effects at playhead
-          </p>
-          <Item
-            icon={<Search size={13} />}
-            label="Punch zoom"
-            hint="Instant zoom-in for 2s — strength/anchor editable in the Inspector"
-            onClick={pick(() => onAddEffect(2, { kind: "zoom", zoomScale: 1.15, anchorX: 0.5, anchorY: 0.45 }))}
-          />
-          <Item
-            icon={<ZoomIn size={13} />}
-            label="Slow zoom (Ken Burns)"
-            hint="Gently ramps from 1× to 1.25× — adds motion to static clips"
-            onClick={pick(() => onAddEffect(2.5, { kind: "slow-zoom", zoomScale: 1.25, anchorX: 0.5, anchorY: 0.45 }))}
-          />
-          <Item
-            icon={<span className="text-[13px] leading-none">✋</span>}
-            label="Handheld shake"
-            hint="Deterministic camera wobble — same motion in preview and export"
-            onClick={pick(() => onAddEffect(1.2, { kind: "shake", intensity: 0.6 }))}
-          />
-          <Item
-            icon={<span className="text-[13px] leading-none">◐</span>}
-            label="Cinematic vignette"
-            hint="Edge darkening + slight contrast/saturation boost"
-            onClick={pick(() => onAddEffect(4, { kind: "vignette", strength: 0.5 }))}
-          />
-          <Item
-            icon={<Snowflake size={13} />}
-            label="Freeze frame"
-            hint="Holds the frame while music keeps playing — trim to set the hold"
-            onClick={pick(() => onAddEffect(1.2, { kind: "freeze" }))}
-          />
-          <Item
-            icon={<Zap size={13} />}
-            label="Flash"
-            hint="Soft white pop — goal / impact accent, never a white-out"
-            onClick={pick(() => onAddEffect(0.25, { kind: "flash" }))}
-          />
-          <div className="my-1 h-px bg-white/8" />
-          <p className="px-2.5 pb-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-600">
-            Football presets
-          </p>
-          <Item
-            icon={<span className="text-[13px] leading-none">⚽</span>}
-            label="Goal impact"
-            hint="Punch zoom + flash + shake in one clip — for actual goals, not filler"
-            onClick={pick(() => onPreset("goal-impact"))}
-          />
-          <Item
-            icon={<span className="text-[13px] leading-none">🎉</span>}
-            label="Reaction punch"
-            hint="Zoom-in anchored high, framed for faces and celebrations"
-            onClick={pick(() => onPreset("reaction"))}
-          />
-          <Item
-            icon={<Rewind size={13} />}
-            label="Instant replay"
-            hint="Repeats the last 3 seconds in slow motion as editable clips"
-            onClick={pick(onReplay)}
-          />
-          <Item
-            icon={<span className="text-[13px] leading-none">🧊</span>}
-            label="Ending freeze"
-            hint="Holds the final strong frame with an editable outro text"
-            onClick={pick(() => onPreset("ending-freeze"))}
-          />
-        </div>
       )}
     </div>
   );

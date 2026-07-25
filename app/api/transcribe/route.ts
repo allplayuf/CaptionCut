@@ -235,8 +235,25 @@ async function extractTimelineAudio(
     filters.push(
       `[${idx}:a]atrim=start=${overlapStart.toFixed(3)}:end=${overlapEnd.toFixed(3)},` +
         `asetpts=PTS-STARTPTS${tempo},aformat=sample_rates=16000:channel_layouts=mono,` +
-        `${leadMs > 0 ? `adelay=${leadMs},` : ""}` +
-        `apad,atrim=start=0:end=${clipDur.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`
+        `asetpts=N/SR/TB[abody${i}]`
+    );
+    const parts: string[] = [];
+    if (leadMs > 0) {
+      filters.push(
+        `anullsrc=r=16000:cl=mono,atrim=duration=${(leadMs / 1000).toFixed(3)},` +
+          `asetpts=PTS-STARTPTS[alead${i}]`
+      );
+      parts.push(`[alead${i}]`);
+    }
+    parts.push(`[abody${i}]`);
+    filters.push(
+      `anullsrc=r=16000:cl=mono,atrim=duration=${clipDur.toFixed(3)},` +
+        `asetpts=PTS-STARTPTS[atail${i}]`
+    );
+    parts.push(`[atail${i}]`);
+    filters.push(
+      `${parts.join("")}concat=n=${parts.length}:v=0:a=1,` +
+        `atrim=duration=${clipDur.toFixed(3)},asetpts=N/SR/TB[a${i}]`
     );
   });
   filters.push(

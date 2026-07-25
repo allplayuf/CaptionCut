@@ -277,7 +277,7 @@ export default function ExportModal({ open, onClose }: { open: boolean; onClose:
             <CheckCircle2 size={36} className="text-emerald-400" />
             <p className="text-sm font-medium text-zinc-200">Your video is ready!</p>
             <a
-              href={`/api/export/${phase.jobId}/download`}
+              href={`/api/export/${phase.jobId}?download=1`}
               download
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 py-2.5 text-sm font-bold text-white shadow-lg shadow-fuchsia-500/25 transition hover:brightness-110"
             >

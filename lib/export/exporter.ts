@@ -294,8 +294,9 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
       filters.push(`${chain}[v${i}]`);
 
       const outDur = piece.outDur.toFixed(3);
-      const silence = (label: string) =>
-        `anullsrc=r=48000:cl=stereo,atrim=start=0:end=${outDur},asetpts=PTS-STARTPTS[${label}]`;
+      const silenceFor = (duration: string, label: string) =>
+        `anullsrc=r=48000:cl=stereo,atrim=start=0:end=${duration},asetpts=PTS-STARTPTS[${label}]`;
+      const silence = (label: string) => silenceFor(outDur, label);
 
       if (piece.freezeSrc !== null) {
         // Freeze pieces silence every source-level main audio stream.
@@ -321,8 +322,21 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
               `[${pairIdx}:a]atrim=start=${overlapStart.toFixed(3)}:end=${overlapEnd.toFixed(3)},` +
                 `asetpts=PTS-STARTPTS${tempo},` +
                 `aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,` +
-                `${leadMs > 0 ? `adelay=${leadMs}|${leadMs},` : ""}` +
-                `apad,atrim=start=0:end=${outDur},asetpts=PTS-STARTPTS[apair${i}]`
+                `asetpts=N/SR/TB[apairbody${i}]`
+            );
+            const pairParts: string[] = [];
+            if (leadMs > 0) {
+              filters.push(silenceFor((leadMs / 1000).toFixed(3), `apairlead${i}`));
+              pairParts.push(`[apairlead${i}]`);
+            }
+            pairParts.push(`[apairbody${i}]`);
+            // Appending a known silent tail before trimming makes the piece
+            // sample-exact even when atempo flushes a short final window.
+            filters.push(silence(`apairtail${i}`));
+            pairParts.push(`[apairtail${i}]`);
+            filters.push(
+              `${pairParts.join("")}concat=n=${pairParts.length}:v=0:a=1,` +
+                `atrim=duration=${outDur},asetpts=N/SR/TB[apair${i}]`
             );
           } else {
             filters.push(silence(`apair${i}`));
@@ -332,7 +346,12 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
             filters.push(
               `[${idx}:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS${tempo},` +
                 `aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,` +
-                `apad,atrim=start=0:end=${outDur}[acam${i}]`
+                `asetpts=N/SR/TB[acambody${i}]`
+            );
+            filters.push(silence(`acamtail${i}`));
+            filters.push(
+              `[acambody${i}][acamtail${i}]concat=n=2:v=0:a=1,` +
+                `atrim=duration=${outDur},asetpts=N/SR/TB[acam${i}]`
             );
             filters.push(
               `[acam${i}][apair${i}]amix=inputs=2:duration=longest:normalize=0,` +
@@ -344,7 +363,13 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
         } else if (asset.hasAudio) {
           filters.push(
             `[${idx}:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS${tempo},` +
-              `aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a${i}]`
+              `aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,` +
+              `asetpts=N/SR/TB[acambody${i}]`
+          );
+          filters.push(silence(`acamtail${i}`));
+          filters.push(
+            `[acambody${i}][acamtail${i}]concat=n=2:v=0:a=1,` +
+              `atrim=duration=${outDur},asetpts=N/SR/TB[a${i}]`
           );
         } else {
           // Silent pieces still need an audio stream so concat timing stays aligned.

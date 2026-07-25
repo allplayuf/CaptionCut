@@ -32,6 +32,10 @@ export async function POST(request: NextRequest) {
     audioClips: body.audioClips ?? [],
     textOverlays: body.textOverlays ?? [],
     zooms: body.zooms ?? [],
+    freezes: body.freezes ?? [],
+    flashes: body.flashes ?? [],
+    shakes: body.shakes ?? [],
+    vignettes: body.vignettes ?? [],
     presetId: body.presetId,
     mainAudioMuted: body.mainAudioMuted ?? false,
   });

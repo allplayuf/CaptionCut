@@ -3,6 +3,7 @@
 import type { MediaAsset } from "@/types";
 import type { AssetKind } from "@/types";
 import { nanoid } from "nanoid";
+import { MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from "@/lib/video/uploadLimits";
 
 /** Direct Blob URL in production; local streaming route in development. */
 export function mediaUrl(media: string | Pick<MediaAsset, "id" | "storageUrl">): string {
@@ -22,17 +23,25 @@ export function filmstripUrl(media: string | Pick<MediaAsset, "id" | "storageUrl
   return `/api/media/${id}/filmstrip${query}`;
 }
 
-let uploadStoragePromise: Promise<"blob" | "local" | "unconfigured"> | null = null;
+interface UploadConfig {
+  storage: "blob" | "local" | "unconfigured";
+  uploadPrefix: string | null;
+}
 
-function uploadStorage() {
-  uploadStoragePromise ??= fetch("/api/upload", { cache: "no-store" })
+let uploadConfigPromise: Promise<UploadConfig> | null = null;
+
+function uploadConfig() {
+  uploadConfigPromise ??= fetch("/api/upload", { cache: "no-store" })
     .then(async (response) => {
-      if (!response.ok) return "local" as const;
-      const body = (await response.json()) as { storage?: "blob" | "local" | "unconfigured" };
-      return body.storage ?? "local";
+      if (!response.ok) return { storage: "local", uploadPrefix: null } satisfies UploadConfig;
+      const body = (await response.json()) as Partial<UploadConfig>;
+      return {
+        storage: body.storage ?? "local",
+        uploadPrefix: typeof body.uploadPrefix === "string" ? body.uploadPrefix : null,
+      } satisfies UploadConfig;
     })
-    .catch(() => "local" as const);
-  return uploadStoragePromise;
+    .catch(() => ({ storage: "local", uploadPrefix: null }) satisfies UploadConfig);
+  return uploadConfigPromise;
 }
 
 /**
@@ -43,9 +52,18 @@ export function uploadVideo(
   file: File,
   onProgress: (fraction: number) => void
 ): Promise<MediaAsset> {
-  return uploadStorage().then((storage) => {
-    if (storage === "blob") return uploadToBlob(file, onProgress);
-    if (storage === "unconfigured") {
+  if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+    return Promise.reject(
+      new Error(`That file is too large (max ${MAX_UPLOAD_SIZE_LABEL}). Trim or compress it first.`)
+    );
+  }
+
+  return uploadConfig().then((config) => {
+    if (config.storage === "blob") {
+      if (!config.uploadPrefix) throw new Error("Cloud uploads are not ready. Reload and try again.");
+      return uploadToBlob(file, onProgress, config.uploadPrefix);
+    }
+    if (config.storage === "unconfigured") {
       throw new Error("Uploads need a Vercel Blob store. Connect one to this project and redeploy.");
     }
     return uploadToLocalServer(file, onProgress);
@@ -58,7 +76,8 @@ function uploadToLocalServer(
 ): Promise<MediaAsset> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/upload");
+    xhr.open("POST", `/api/upload?name=${encodeURIComponent(file.name)}`);
+    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
 
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(event.loaded / event.total);
@@ -74,15 +93,14 @@ function uploadToLocalServer(
       }
     };
 
-    const form = new FormData();
-    form.append("file", file);
-    xhr.send(form);
+    xhr.send(file);
   });
 }
 
 async function uploadToBlob(
   file: File,
-  onProgress: (fraction: number) => void
+  onProgress: (fraction: number) => void,
+  uploadPrefix: string
 ): Promise<MediaAsset> {
   const kind = assetKindForFile(file);
   if (!kind) throw new Error("Unsupported file type.");
@@ -94,7 +112,7 @@ async function uploadToBlob(
   const ext = extensionFor(file, kind);
   const filename = `${id}${ext}`;
   const { upload } = await import("@vercel/blob/client");
-  const blob = await upload(`media/${filename}`, file, {
+  const blob = await upload(`${uploadPrefix}/${filename}`, file, {
     access: "public",
     handleUploadUrl: "/api/upload/blob",
     multipart: file.size > 5 * 1024 * 1024,

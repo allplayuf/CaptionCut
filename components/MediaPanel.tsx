@@ -38,7 +38,18 @@ export default function MediaPanel() {
   const images = media.filter((m) => assetKind(m) === "image");
 
   return (
-    <div className="flex h-full flex-col gap-3 p-3">
+    <div className="flex h-full flex-col gap-3 bg-[#10141b] p-4">
+      <div className="mb-1">
+        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#7db8ff]">
+          Media
+        </p>
+        <h2 className="mt-1 text-[19px] font-semibold tracking-[-0.025em] text-[#f0f3f6]">
+          Ditt material
+        </h2>
+        <p className="mt-1 text-[11px] leading-relaxed text-[#778391]">
+          Lägg videor på huvudspåret. Ljud och bilder hamnar i egna lager.
+        </p>
+      </div>
       <input
         ref={inputRef}
         type="file"
@@ -62,10 +73,10 @@ export default function MediaPanel() {
           setDragOver(false);
           if (e.dataTransfer.files.length) void handleFiles(e.dataTransfer.files);
         }}
-        className={`rounded-xl border-2 border-dashed p-2.5 transition ${
+        className={`rounded-2xl border border-dashed p-3 transition ${
           dragOver
-            ? "border-fuchsia-400 bg-fuchsia-500/10"
-            : "border-white/15 hover:border-violet-400/60 hover:bg-white/5"
+            ? "border-[#ffb45b] bg-[#ffb45b]/10"
+            : "border-white/[0.12] bg-[#0b0e13] hover:border-[#7db8ff]/45 hover:bg-[#0d1117]"
         }`}
       >
         {uploading ? (
@@ -80,30 +91,30 @@ export default function MediaPanel() {
             </p>
             <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
               <div
-                className="h-full rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 transition-all"
+                className="h-full rounded-full bg-[#ffb45b] transition-all"
                 style={{ width: `${Math.round(uploading.progress * 100)}%` }}
               />
             </div>
           </div>
         ) : (
           <>
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-              Add media
+            <p className="mb-2 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-[#66717f]">
+              Lägg till
             </p>
             <div className="grid grid-cols-2 gap-1.5">
               <button
                 type="button"
                 onClick={() => inputRef.current?.click()}
-                className="flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 px-2 py-2 text-[10px] font-semibold text-white shadow-lg shadow-fuchsia-500/15 transition hover:brightness-110"
+                className="flex items-center justify-center gap-1.5 rounded-lg bg-[#ffb45b] px-2 py-2 text-[10px] font-bold text-[#191209] transition hover:bg-[#ffc477]"
               >
-                <Upload size={12} /> Device
+                <Upload size={12} /> Dator
               </button>
               <GoogleDriveButton className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg bg-white/8 px-2 py-2 text-[10px] font-semibold text-zinc-200 ring-1 ring-white/10 transition hover:bg-white/12 disabled:opacity-50">
-                <Cloud size={12} className="text-sky-300" /> Drive
+                <Cloud size={12} className="text-[#7db8ff]" /> Drive
               </GoogleDriveButton>
             </div>
             <p className="mt-2 text-center text-[9px] leading-snug text-zinc-600">
-              Drop here · video, audio or images
+              Släpp här · video, ljud eller bilder
             </p>
           </>
         )}
@@ -113,15 +124,15 @@ export default function MediaPanel() {
         <MediaGroup icon={<Film size={11} />} label="Video" items={videos}>
           {(m) => <VideoActions asset={m} onPair={() => setPairingVideo(m)} />}
         </MediaGroup>
-        <MediaGroup icon={<Music size={11} />} label="Audio" items={audios}>
+        <MediaGroup icon={<Music size={11} />} label="Ljud" items={audios}>
           {(m) => <AudioActions asset={m} />}
         </MediaGroup>
-        <MediaGroup icon={<ImageIcon size={11} />} label="Images" items={images}>
+        <MediaGroup icon={<ImageIcon size={11} />} label="Bilder" items={images}>
           {(m) => <ImageActions asset={m} />}
         </MediaGroup>
         {media.length === 0 && (
           <p className="mt-4 px-2 text-center text-[10px] leading-relaxed text-zinc-600">
-            Your uploaded clips will appear here with thumbnails, ready to drop on the timeline.
+            Importerade klipp visas här och kan läggas direkt på tidslinjen.
           </p>
         )}
       </div>
@@ -385,7 +396,11 @@ function PairAudioModal({
   );
 
   useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
     dialogRef.current?.focus();
+    return () => {
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
   }, []);
 
   const nudge = (delta: number) => {

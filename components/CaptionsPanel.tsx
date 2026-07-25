@@ -70,8 +70,19 @@ export default function CaptionsPanel() {
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="border-b border-white/8 p-3">
+    <div className="flex h-full flex-col bg-[#10141b]">
+      <div className="border-b border-white/[0.07] p-4">
+        <div className="mb-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#9ce5c3]">
+            Captions
+          </p>
+          <h2 className="mt-1 text-[19px] font-semibold tracking-[-0.025em] text-[#f0f3f6]">
+            Text som sitter i tiden.
+          </h2>
+          <p className="mt-1 text-[11px] leading-relaxed text-[#778391]">
+            Caption-systemet är kvar — nu med mer plats och mindre brus runtomkring.
+          </p>
+        </div>
         <div className="mb-2 grid grid-cols-2 gap-2">
           <select
             value={language}
@@ -89,8 +100,8 @@ export default function CaptionsPanel() {
             className="min-w-0 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-zinc-200 outline-none focus:border-violet-400"
             title="Speech model quality. WHISPER_MODEL can override this local model mapping."
           >
-            <option value="accurate">Accurate · small</option>
-            <option value="fast">Fast · base</option>
+            <option value="accurate">Accurate · base</option>
+            <option value="fast">Fast · tiny</option>
           </select>
         </div>
         <select
@@ -115,7 +126,7 @@ export default function CaptionsPanel() {
         <button
           onClick={() => void runTranscription()}
           disabled={isTranscribing || !canTranscribe}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-fuchsia-500/25 transition hover:brightness-110 active:scale-[0.98] disabled:opacity-40"
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#9ce5c3] px-4 py-2.5 text-sm font-bold text-[#0e1a15] shadow-[0_8px_24px_rgba(156,229,195,0.12)] transition hover:bg-[#b9f0d7] active:scale-[0.98] disabled:opacity-40"
         >
           {isTranscribing ? (
             <>
@@ -125,7 +136,7 @@ export default function CaptionsPanel() {
           ) : (
             <>
               <Sparkles size={16} />
-              {scope === "selected" ? "Caption selected clips" : "Auto Captions"}
+              {scope === "selected" ? "Texta valda klipp" : "Skapa captions"}
             </>
           )}
         </button>

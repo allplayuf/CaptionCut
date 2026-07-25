@@ -10,7 +10,7 @@ import { FORMATS, FORMAT_IDS } from "@/lib/video/formats";
 import CaptionOverlay from "./CaptionOverlay";
 import SafeZoneOverlay from "./SafeZoneOverlay";
 import { AudioTracks, TextOverlays, VisualOverlays } from "./preview/OverlayLayers";
-import { Eye, EyeOff, Maximize2, Minimize2, Pause, Play, SkipBack } from "lucide-react";
+import { Eye, EyeOff, Maximize2, Minimize2, Pause, Play, Scissors, SkipBack } from "lucide-react";
 
 /**
  * The format-aware preview player (9:16 / 1:1 / 16:9). Plays through the main
@@ -283,11 +283,11 @@ export default function VideoPreview() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col items-center bg-[#08080d]">
+    <div className="flex h-full min-h-0 flex-col items-center bg-[#080b10]">
       <div ref={wrapperRef} className="flex min-h-0 w-full flex-1 items-center justify-center">
         <div
           data-preview-frame
-          className="relative overflow-hidden rounded-2xl bg-black shadow-2xl shadow-black/60 ring-1 ring-white/10"
+          className="relative overflow-hidden rounded-[20px] bg-black shadow-[0_24px_70px_rgba(0,0,0,0.55)] ring-1 ring-white/[0.11]"
           style={{ width: frameWidth, height: frameHeight }}
         >
           {hasContent ? (
@@ -376,13 +376,13 @@ export default function VideoPreview() {
               )}
             </>
           ) : (
-            <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-6 text-center">
-              <div className="text-4xl">🎬</div>
-              <p className="text-sm font-medium text-zinc-400">
-                Upload a video to get started
-              </p>
-              <p className="text-xs text-zinc-600">
-                It will be fit to {canvas.id} · {canvas.width}×{canvas.height} automatically
+            <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[#05070a] px-6 text-center">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#ffb45b]/10 text-[#ffb45b]">
+                <Scissors size={18} />
+              </div>
+              <p className="text-sm font-semibold text-[#b8c1cc]">Ingen video på tidslinjen</p>
+              <p className="max-w-[220px] text-[11px] leading-relaxed text-[#596471]">
+                Öppna Media till vänster och lägg till ett klipp. Formatet anpassas till {canvas.id}.
               </p>
             </div>
           )}
@@ -396,11 +396,11 @@ export default function VideoPreview() {
       <div
         className={`group mt-3 w-full max-w-md ${hasContent ? "cursor-pointer" : "opacity-40"}`}
         onPointerDown={onScrubberDown}
-        title="Seek"
+        title="Sök i videon"
       >
         <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-white/10 transition-all group-hover:h-2.5">
           <div
-            className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-400"
+            className="absolute inset-y-0 left-0 rounded-full bg-[#ffb45b]"
             style={{ width: `${duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0}%` }}
           />
         </div>
@@ -415,29 +415,29 @@ export default function VideoPreview() {
           }}
           disabled={!hasContent}
           className="rounded-full p-2 text-zinc-400 transition hover:bg-white/10 hover:text-white disabled:opacity-30"
-          title="Back to start"
+          title="Till början"
         >
           <SkipBack size={18} />
         </button>
         <button
           onClick={togglePlay}
           disabled={!hasContent}
-          className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-lg shadow-fuchsia-500/25 transition hover:scale-105 active:scale-95 disabled:opacity-30 disabled:hover:scale-100"
-          title="Play/pause (Space)"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-[#edf1f5] text-[#11151b] shadow-[0_8px_24px_rgba(0,0,0,0.32)] transition hover:scale-105 active:scale-95 disabled:opacity-30 disabled:hover:scale-100"
+          title="Spela/pausa (Mellanslag)"
         >
           {isPlaying ? <Pause size={20} /> : <Play size={20} className="ml-0.5" />}
         </button>
         <div className="w-28 font-mono text-xs tabular-nums text-zinc-400">
           {formatTime(currentTime)} / {formatTime(duration)}
         </div>
-        <div className="flex items-center gap-0.5 rounded-full bg-white/5 p-0.5 ring-1 ring-white/10" title="Editing format">
+        <div className="flex items-center gap-0.5 rounded-full bg-white/[0.04] p-0.5 ring-1 ring-white/[0.08]" title="Videoformat">
           {FORMAT_IDS.map((id) => (
             <button
               key={id}
               onClick={() => setFormat(id)}
               className={`rounded-full px-2 py-1 text-[10px] font-semibold transition ${
                 id === format
-                  ? "bg-violet-500/30 text-violet-200"
+                  ? "bg-[#7db8ff]/18 text-[#afd3ff]"
                   : "text-zinc-500 hover:text-zinc-300"
               }`}
             >
@@ -450,20 +450,20 @@ export default function VideoPreview() {
             onClick={toggleSafeZones}
             className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${
               showSafeZones
-                ? "bg-violet-500/20 text-violet-300"
+                ? "bg-[#7db8ff]/15 text-[#9bcaff]"
                 : "text-zinc-500 hover:bg-white/10 hover:text-zinc-300"
             }`}
-            title="Toggle TikTok safe-zone guides"
+            title="Visa eller dölj TikTok-säkerhetsytor"
           >
             {showSafeZones ? <Eye size={14} /> : <EyeOff size={14} />}
-            Safe zones
+            Säker yta
           </button>
         )}
         <button
           onClick={toggleFullscreen}
           disabled={!hasContent}
           className="rounded-full p-2 text-zinc-400 transition hover:bg-white/10 hover:text-white disabled:opacity-30"
-          title={isFullscreen ? "Exit theater mode" : "Theater mode (fullscreen)"}
+          title={isFullscreen ? "Stäng helskärm" : "Visa i helskärm"}
         >
           {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
         </button>

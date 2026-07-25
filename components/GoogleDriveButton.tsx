@@ -212,7 +212,14 @@ export default function GoogleDriveButton({
         });
         const body: unknown = await response.json().catch(() => null);
         if (!response.ok) {
-          if (response.status === 401) accessExpired = true;
+          if (response.status === 401) {
+            accessExpired = true;
+            try {
+              window.sessionStorage.removeItem("captioncut:drive-consent");
+            } catch {
+              // The next click can still request a fresh token explicitly.
+            }
+          }
           throw new Error(readErrorMessage(body) ?? "Google Drive import failed.");
         }
         if (!isMediaAsset(body)) {
@@ -307,6 +314,11 @@ export default function GoogleDriveButton({
       scope: DRIVE_SCOPE,
       callback: (response) => {
         if (!response.access_token) {
+          try {
+            window.sessionStorage.removeItem("captioncut:drive-consent");
+          } catch {
+            // Storage can be disabled without blocking the reconnect flow.
+          }
           store.addToast(
             "error",
             response.error_description ?? "Google Drive access was not granted."

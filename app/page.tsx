@@ -5,9 +5,8 @@ import type { Project, ProjectSummary } from "@/types";
 import { buildProjectSnapshot, stepFrame, useEditorStore } from "@/hooks/useEditorStore";
 import { tracksDuration } from "@/lib/timeline/tracks";
 import Header from "@/components/Header";
-import MediaPanel from "@/components/MediaPanel";
+import WorkspaceSidebar from "@/components/WorkspaceSidebar";
 import VideoPreview from "@/components/VideoPreview";
-import RightPanel from "@/components/RightPanel";
 import StartScreen from "@/components/StartScreen";
 import Timeline from "@/components/Timeline";
 import ExportModal from "@/components/ExportModal";
@@ -133,24 +132,18 @@ export default function EditorPage() {
   }, []);
 
   return (
-    <div className="relative flex h-screen flex-col bg-[#08080d] text-zinc-200">
+    <div className="captioncut-shell relative flex h-screen flex-col bg-[#080b10] text-[#e8edf2]">
       <Header onExport={() => setExportOpen(true)} />
 
       <div className="flex min-h-0 flex-1">
-        <aside className="w-60 shrink-0 border-r border-white/8 bg-[#0d0d14]">
-          <MediaPanel />
-        </aside>
+        <WorkspaceSidebar />
 
-        <main className="min-w-0 flex-1 p-4">
+        <main className="min-w-0 flex-1 bg-[#080b10] px-4 pb-3 pt-2">
           <VideoPreview />
         </main>
-
-        <aside className="w-80 shrink-0 border-l border-white/8 bg-[#0d0d14]">
-          <RightPanel />
-        </aside>
       </div>
 
-      <div className="h-64 shrink-0">
+      <div className="h-[278px] shrink-0">
         <Timeline />
       </div>
 

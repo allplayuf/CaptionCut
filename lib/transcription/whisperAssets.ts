@@ -36,8 +36,8 @@ const MODEL_ALLOWLIST = [
   "large-v3", "large-v3-turbo",
 ];
 const QUALITY_MODELS: Record<TranscriptionQuality, string> = {
-  fast: "base",
-  accurate: "small",
+  fast: "tiny",
+  accurate: "base",
 };
 
 export function whisperModelName(quality: TranscriptionQuality = "accurate"): string {
@@ -127,53 +127,60 @@ async function doEnsure(model: string): Promise<void> {
 }
 
 async function downloadFile(url: string, dest: string, label: string): Promise<void> {
-  let response: Response;
-  try {
-    response = await fetch(url, { redirect: "follow" });
-  } catch (err) {
-    throw new TranscriptionError(
-      `download failed: ${String(err)}`,
-      `Could not download the ${label}. Check your internet connection and try again.`
-    );
-  }
-  if (!response.ok || !response.body) {
-    throw new TranscriptionError(
-      `download failed: HTTP ${response.status} for ${url}`,
-      `Could not download the ${label} (HTTP ${response.status}). Try again later.`
-    );
-  }
-
-  const total = parseInt(response.headers.get("content-length") ?? "0", 10);
-  let received = 0;
-  let lastLogged = 0;
-  const progress = new Transform({
-    transform(chunk: Buffer, _enc: string, cb: (err?: Error | null, data?: Buffer) => void) {
-      received += chunk.length;
-      if (total > 0 && received - lastLogged > 25 * 1024 * 1024) {
-        lastLogged = received;
-        console.log(`[whisper] ${label}: ${Math.round((received / total) * 100)}%`);
-      }
-      cb(null, chunk);
-    },
-  });
-
-  // Download to a temp name and rename, so a crash never leaves a truncated
-  // file that looks valid on the next run.
   const tmp = `${dest}.download`;
-  try {
-    await pipeline(
-      Readable.fromWeb(response.body as import("stream/web").ReadableStream),
-      progress,
-      fs.createWriteStream(tmp)
-    );
-    await fs.promises.rename(tmp, dest);
-  } catch (err) {
-    await fs.promises.rm(tmp, { force: true });
-    throw new TranscriptionError(
-      `download stream failed: ${String(err)}`,
-      `The ${label} download was interrupted. Please try again.`
-    );
+  let lastError: unknown;
+
+  // Large model downloads occasionally lose a connection. Preserve the
+  // partial file and resume it instead of throwing away hundreds of MB.
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    const offset = fs.existsSync(tmp) ? fs.statSync(tmp).size : 0;
+    try {
+      const response = await fetch(url, {
+        redirect: "follow",
+        headers: offset > 0 ? { Range: `bytes=${offset}-` } : undefined,
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      // A server may ignore Range and return the complete file. In that case
+      // restart this attempt rather than appending a duplicate payload.
+      const resumed = offset > 0 && response.status === 206;
+      const receivedBefore = resumed ? offset : 0;
+      const responseBytes = parseInt(response.headers.get("content-length") ?? "0", 10);
+      const total = responseBytes > 0 ? receivedBefore + responseBytes : 0;
+      let received = receivedBefore;
+      let lastLogged = receivedBefore;
+      const progress = new Transform({
+        transform(chunk: Buffer, _enc: string, cb: (err?: Error | null, data?: Buffer) => void) {
+          received += chunk.length;
+          if (total > 0 && received - lastLogged > 10 * 1024 * 1024) {
+            lastLogged = received;
+            console.log(`[whisper] ${label}: ${Math.round((received / total) * 100)}%`);
+          }
+          cb(null, chunk);
+        },
+      });
+
+      await pipeline(
+        Readable.fromWeb(response.body as import("stream/web").ReadableStream),
+        progress,
+        fs.createWriteStream(tmp, { flags: resumed ? "a" : "w" })
+      );
+      await fs.promises.rename(tmp, dest);
+      return;
+    } catch (err) {
+      lastError = err;
+      if (attempt < 4) {
+        console.warn(`[whisper] ${label} interrupted; resuming (attempt ${attempt + 1}/4)…`);
+      }
+    }
   }
+
+  throw new TranscriptionError(
+    `download failed after retries: ${String(lastError)}`,
+    `The ${label} download was interrupted repeatedly. Check your connection and try again; progress has been saved.`
+  );
 }
 
 function extractZip(zipPath: string, destDir: string): Promise<void> {
