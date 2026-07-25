@@ -43,3 +43,6 @@ next-env.d.ts
 
 # CaptionCut user data (uploads, projects, exports)
 /data/
+
+.vercel
+.env*

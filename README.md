@@ -37,8 +37,10 @@ npm run setup-whisper
 1. Import this repository into Vercel or run `npx vercel`.
 2. Create and connect a Vercel Blob store. Confirm that
    `BLOB_READ_WRITE_TOKEN` is available to Production.
-3. Add `OPENAI_API_KEY` for dependable deployed transcription. CaptionCut
-   selects the OpenAI provider automatically on Vercel when this key exists.
+3. Deployed captions use Vercel AI Gateway with the Function's short-lived OIDC
+   identity. No transcription secret needs to be added. Vercel requires a
+   payment method on the team before it unlocks the included AI Gateway credit;
+   configure a spend limit before sharing the app broadly.
 4. Optionally configure Google Drive with the variables below.
 5. Deploy, then open `/api/health`. A launch-ready deployment returns HTTP 200
    with Blob storage and both media tools ready.
@@ -67,9 +69,13 @@ browser/IP.
 # Required in production
 BLOB_READ_WRITE_TOKEN=
 
-# Recommended in production
-OPENAI_API_KEY=
-OPENAI_WHISPER_MODEL=whisper-1
+# Optional Vercel AI Gateway override
+# AI_GATEWAY_TRANSCRIPTION_MODEL=openai/whisper-1
+# TRANSCRIPTION_PROVIDER=gateway
+
+# Optional direct OpenAI provider for non-Vercel hosting
+# OPENAI_API_KEY=
+# OPENAI_WHISPER_MODEL=whisper-1
 # TRANSCRIPTION_PROVIDER=openai
 
 # Optional Google Drive Picker
@@ -102,6 +108,8 @@ npx tsx scripts/verify-formats.ts
 npx tsx scripts/verify-effects.ts
 npx tsx scripts/verify-fast-interview.ts
 npx tsx scripts/verify-drive-pairing.ts
+# With a linked Vercel project and a short test audio file:
+npx tsx scripts/verify-gateway.ts path/to/test.wav
 ```
 
 ## Architecture

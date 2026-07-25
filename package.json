@@ -10,12 +10,14 @@
     "setup-whisper": "tsx scripts/setup-whisper.ts"
   },
   "dependencies": {
+    "@ai-sdk/gateway": "^4.0.28",
     "@vercel/blob": "^2.6.1",
+    "ai": "^7.0.37",
     "ffmpeg-static": "^5.3.0",
     "ffprobe-static": "^3.1.0",
     "lucide-react": "^1.24.0",
     "nanoid": "^5.1.16",
-    "next": "16.2.10",
+    "next": "^16.2.11",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "zustand": "^5.0.14"
@@ -26,10 +28,16 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.10",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.2.11",
     "tailwindcss": "^4",
     "tsx": "^4.23.0",
     "typescript": "^5"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "8.5.23",
+      "sharp": "0.35.3"
+    }
   }
 }
