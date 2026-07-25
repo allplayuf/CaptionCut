@@ -5,28 +5,47 @@ import type { Project, ProjectSummary } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { tracksDuration } from "@/lib/timeline/tracks";
 import { FORMATS } from "@/lib/video/formats";
+import type { EditorTool } from "@/lib/ui/editorTools";
 import {
   AlertTriangle,
+  Captions,
   Check,
   ChevronDown,
+  ChevronRight,
+  CircleHelp,
   Clapperboard,
   Cloud,
   CloudUpload,
   Download,
   FilePlus2,
+  FolderOpen,
   History,
   HardDrive,
   Redo2,
   RotateCcw,
   Save,
+  Scissors,
+  Search,
   Trash2,
   Undo2,
 } from "lucide-react";
 
-export default function Header({ onExport }: { onExport: () => void }) {
+export default function Header({
+  onExport,
+  onCommand,
+  onHelp,
+  onOpenTool,
+}: {
+  onExport: () => void;
+  onCommand: () => void;
+  onHelp: () => void;
+  onOpenTool: (tool: EditorTool) => void;
+}) {
   const projectName = useEditorStore((state) => state.projectName);
   const projectId = useEditorStore((state) => state.projectId);
   const tracks = useEditorStore((state) => state.tracks);
+  const mediaCount = useEditorStore((state) => state.media.length);
+  const captionCount = useEditorStore((state) => state.captions.length);
   const saveState = useEditorStore((state) => state.saveState);
   const canUndo = useEditorStore((state) => state.past.length > 0);
   const canRedo = useEditorStore((state) => state.future.length > 0);
@@ -79,9 +98,9 @@ export default function Header({ onExport }: { onExport: () => void }) {
   };
 
   return (
-    <header className="flex h-[58px] shrink-0 items-center gap-3 border-b border-white/[0.07] bg-[#0b0e13] px-3">
+    <header className="relative z-40 flex h-[60px] shrink-0 items-center gap-2 border-b border-white/[0.075] bg-[#0a0e13]/95 px-3 shadow-[0_8px_35px_rgba(0,0,0,.16)] backdrop-blur">
       <div className="flex items-center gap-2">
-        <div className="relative flex h-8 w-8 items-center justify-center overflow-hidden rounded-[10px] bg-[#ffb45b] text-[#181108]">
+        <div className="brand-mark">
           <Clapperboard size={16} strokeWidth={2.4} />
           <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-[#7db8ff]" />
         </div>
@@ -95,7 +114,7 @@ export default function Header({ onExport }: { onExport: () => void }) {
       <input
         value={projectName}
         onChange={(event) => setProjectName(event.target.value)}
-        className="w-48 rounded-lg border border-transparent bg-transparent px-2 py-1 text-xs font-semibold text-[#dce2e8] outline-none transition hover:border-white/10 focus:border-[#ffb45b]/60"
+        className="w-40 rounded-lg border border-transparent bg-transparent px-2 py-1 text-[11px] font-semibold text-[#dce2e8] outline-none transition hover:border-white/10 hover:bg-white/[0.025] focus:border-[var(--cut)]/55"
         placeholder="Projektnamn"
       />
 
@@ -182,19 +201,125 @@ export default function Header({ onExport }: { onExport: () => void }) {
         <Redo2 size={14} />
       </button>
 
-      <div className="ml-auto flex items-center gap-2">
-        <StorageBadge />
-        <SaveState state={saveState} />
-        <FormatBadge />
+      <WorkflowNav
+        mediaReady={mediaCount > 0}
+        timelineReady={tracksDuration(tracks) > 0}
+        captionsReady={captionCount > 0}
+        onOpenTool={onOpenTool}
+        onExport={onExport}
+      />
+
+      <div className="ml-auto flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={onCommand}
+          className="command-trigger"
+          title="Öppna kommandopaletten (Ctrl+K)"
+        >
+          <Search size={12} />
+          <span className="hidden 2xl:inline">Kommandon</span>
+          <kbd className="hidden lg:inline">Ctrl K</kbd>
+        </button>
+        <button
+          type="button"
+          onClick={onHelp}
+          className="header-icon"
+          title="Snabbguide och kortkommandon"
+          aria-label="Öppna snabbguide"
+        >
+          <CircleHelp size={14} />
+        </button>
+        <div className="hidden items-center gap-1.5 min-[1180px]:flex">
+          <StorageBadge />
+          <SaveState state={saveState} />
+        </div>
+        <div className="hidden 2xl:block">
+          <FormatBadge />
+        </div>
         <button
           onClick={onExport}
           disabled={tracksDuration(tracks) <= 0}
-          className="flex h-9 items-center gap-1.5 rounded-xl bg-[#ffb45b] px-4 text-xs font-extrabold text-[#191209] shadow-[0_8px_24px_rgba(255,180,91,0.14)] transition hover:bg-[#ffc477] active:scale-[0.98] disabled:opacity-35"
+          className="flex h-9 items-center gap-1.5 rounded-[11px] bg-[var(--cut)] px-3.5 text-[10px] font-extrabold text-[#191209] shadow-[0_8px_24px_rgba(242,182,109,0.14)] transition hover:bg-[#fac688] active:translate-y-px disabled:opacity-35"
         >
           <Download size={14} /> Exportera
         </button>
       </div>
     </header>
+  );
+}
+
+function WorkflowNav({
+  mediaReady,
+  timelineReady,
+  captionsReady,
+  onOpenTool,
+  onExport,
+}: {
+  mediaReady: boolean;
+  timelineReady: boolean;
+  captionsReady: boolean;
+  onOpenTool: (tool: EditorTool) => void;
+  onExport: () => void;
+}) {
+  const steps = [
+    {
+      label: "Material",
+      icon: FolderOpen,
+      ready: mediaReady,
+      onClick: () => onOpenTool("media"),
+    },
+    {
+      label: "Klipp",
+      icon: Scissors,
+      ready: timelineReady,
+      onClick: () => onOpenTool("cut"),
+    },
+    {
+      label: "Text",
+      icon: Captions,
+      ready: captionsReady,
+      onClick: () => onOpenTool("captions"),
+    },
+    {
+      label: "Export",
+      icon: Download,
+      ready: false,
+      disabled: !timelineReady,
+      onClick: onExport,
+    },
+  ];
+
+  return (
+    <nav
+      className="hidden shrink-0 items-center rounded-xl bg-white/[0.025] p-1 ring-1 ring-white/[0.065] min-[1050px]:flex"
+      aria-label="Arbetsflöde"
+    >
+      {steps.map((step, index) => {
+        const Icon = step.icon;
+        return (
+          <div key={step.label} className="flex items-center">
+            {index > 0 && <ChevronRight size={10} className="mx-0.5 text-[#3f4a55]" />}
+            <button
+              type="button"
+              onClick={step.onClick}
+              disabled={step.disabled}
+              className="group flex h-7 items-center gap-1.5 rounded-lg px-2 text-[8px] font-bold uppercase tracking-[0.08em] text-[#71808d] transition hover:bg-white/[0.05] hover:text-[#c7d0d8] disabled:opacity-35"
+            >
+              <span
+                className={`flex h-4 w-4 items-center justify-center rounded-full ${
+                  step.ready
+                    ? "bg-[var(--caption)]/15 text-[var(--caption)]"
+                    : "bg-white/[0.04] text-[#5e6b77] group-hover:text-[#8795a1]"
+                }`}
+              >
+                {step.ready ? <Check size={9} strokeWidth={3} /> : <Icon size={9} />}
+              </span>
+              {step.label}
+            </button>
+          </div>
+        );
+      })}
+    </nav>
   );
 }
 

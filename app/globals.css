@@ -94,6 +94,77 @@ kbd {
   text-transform: uppercase;
 }
 
+.brand-mark {
+  position: relative;
+  display: flex;
+  height: 32px;
+  width: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 10px;
+  background:
+    linear-gradient(145deg, #f7c47f, var(--cut));
+  color: #1b140b;
+  box-shadow:
+    0 8px 20px rgba(242, 182, 109, 0.12),
+    inset 0 1px rgba(255, 255, 255, 0.28);
+}
+
+.header-utility,
+.header-icon,
+.command-trigger {
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  color: #778491;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+}
+
+.header-utility {
+  height: 30px;
+  gap: 4px;
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.header-icon {
+  display: inline-flex;
+  height: 30px;
+  width: 30px;
+}
+
+.header-utility:hover,
+.header-icon:hover,
+.command-trigger:hover {
+  background: rgba(255, 255, 255, 0.055);
+  color: #d4dce3;
+}
+
+.header-icon:disabled {
+  opacity: 0.25;
+}
+
+.command-trigger {
+  display: inline-flex;
+  height: 32px;
+  gap: 6px;
+  padding: 0 7px;
+  background: rgba(255, 255, 255, 0.025);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.065);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.command-trigger kbd {
+  color: #66727e;
+}
+
 .primary-compact,
 .secondary-compact {
   display: flex;

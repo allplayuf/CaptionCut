@@ -51,6 +51,32 @@ const TRACK_COLORS: Record<Track["type"], string> = {
   effects: "from-[#517ca8]/70 to-[#314f72]/70",
 };
 
+const TRACK_LABELS_SV: Record<Track["type"], string> = {
+  video: "Huvudvideo",
+  broll: "B-roll",
+  image: "Bilder",
+  caption: "Captions",
+  text: "Textgrafik",
+  sticker: "Stickers",
+  music: "Musik",
+  sfx: "Ljudeffekter",
+  voice: "Berättarröst",
+  effects: "Effekter",
+};
+
+const TRACK_DOTS: Record<Track["type"], string> = {
+  video: "#a6b1bc",
+  broll: "#78b8ed",
+  image: "#78d9c5",
+  caption: "#78d9c5",
+  text: "#f2b66d",
+  sticker: "#ee93bd",
+  music: "#66c99b",
+  sfx: "#9ed47a",
+  voice: "#6fd1dd",
+  effects: "#c49af6",
+};
+
 export default function Timeline() {
   const tracks = useEditorStore((s) => s.tracks);
   const media = useEditorStore((s) => s.media);
@@ -262,10 +288,10 @@ export default function Timeline() {
   };
 
   return (
-    <div className="flex h-full flex-col border-t border-white/[0.07] bg-[#0b0e13]">
+    <div className="flex h-full flex-col border-t border-white/[0.07] bg-[#0a0e13] shadow-[0_-12px_40px_rgba(0,0,0,.2)]">
       {/* toolbar */}
-      <div className="flex h-10 items-center gap-1 border-b border-white/[0.055] px-3">
-        <span className="mr-2 font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-[#65717f]">
+      <div className="flex h-10 items-center gap-1 border-b border-white/[0.06] bg-[linear-gradient(90deg,rgba(120,184,237,.025),transparent_42%)] px-3">
+        <span className="mr-2 font-mono text-[9px] font-bold uppercase tracking-[0.18em] text-[#6d7986]">
           Tidslinje
         </span>
         <ToolButton onClick={splitAtPlayhead} disabled={duration <= 0.001} title="Dela vid spelhuvudet (S)">
@@ -463,6 +489,28 @@ export default function Timeline() {
               />
             )}
 
+            {duration <= 0.001 && (
+              <div
+                className="pointer-events-none absolute flex flex-col items-center justify-center text-center"
+                style={{
+                  left: PAD,
+                  top: RULER_H + 8,
+                  width: Math.max(260, viewportW - PAD * 2),
+                  height: 112,
+                }}
+              >
+                <div className="flex items-center gap-2 rounded-full bg-white/[0.025] px-3 py-1.5 ring-1 ring-white/[0.055]">
+                  <Scissors size={11} className="text-[var(--cut)]" />
+                  <span className="text-[9px] font-semibold text-[#74818d]">
+                    Tidslinjen väntar på material
+                  </span>
+                </div>
+                <p className="mt-2 text-[8px] text-[#4e5a66]">
+                  Importera i Bibliotek · dra klipp för att ordna · tryck S för att dela
+                </p>
+              </div>
+            )}
+
             {/* playhead */}
             {duration > 0.001 && (
               <div
@@ -491,12 +539,16 @@ function TrackHeader({ track }: { track: Track }) {
 
   return (
     <div className="flex items-center gap-0.5 border-t border-white/5 px-1.5" style={{ height }}>
-      <span className={`min-w-0 flex-1 truncate text-[10px] font-medium ${track.hidden ? "text-zinc-600" : "text-zinc-400"}`}>
-        {track.name}
+      <span
+        className="mr-1 h-1.5 w-1.5 shrink-0 rounded-full"
+        style={{ backgroundColor: TRACK_DOTS[track.type], opacity: track.hidden ? 0.3 : 0.8 }}
+      />
+      <span className={`min-w-0 flex-1 truncate text-[9px] font-semibold ${track.hidden ? "text-zinc-600" : "text-zinc-400"}`}>
+        {TRACK_LABELS_SV[track.type]}
       </span>
       <HeaderIcon
         onClick={() => toggleTrackLocked(track.id)}
-        title={track.locked ? "Unlock track" : "Lock track"}
+        title={track.locked ? "Lås upp spåret" : "Lås spåret"}
         active={track.locked}
       >
         {track.locked ? <Lock size={11} /> : <LockOpen size={11} />}
@@ -504,7 +556,7 @@ function TrackHeader({ track }: { track: Track }) {
       {audible && (
         <HeaderIcon
           onClick={() => toggleTrackMuted(track.id)}
-          title={track.muted ? "Unmute track" : "Mute track"}
+          title={track.muted ? "Slå på ljudet" : "Stäng av ljudet"}
           active={track.muted}
         >
           {track.muted ? <VolumeX size={11} /> : <Volume2 size={11} />}
@@ -513,7 +565,7 @@ function TrackHeader({ track }: { track: Track }) {
       {visual && (
         <HeaderIcon
           onClick={() => toggleTrackHidden(track.id)}
-          title={track.hidden ? "Show track" : "Hide track"}
+          title={track.hidden ? "Visa spåret" : "Dölj spåret"}
           active={track.hidden}
         >
           {track.hidden ? <EyeOff size={11} /> : <Eye size={11} />}

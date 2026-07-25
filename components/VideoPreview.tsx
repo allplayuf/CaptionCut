@@ -19,7 +19,7 @@ import { Eye, EyeOff, Maximize2, Minimize2, Pause, Play, Scissors, SkipBack } fr
  * composites the overlay tracks (b-roll, images, text, stickers), effects
  * (punch-zooms, freeze-frames, flashes) and audio tracks on top.
  */
-export default function VideoPreview() {
+export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => void }) {
   const tracks = useEditorStore((s) => s.tracks);
   const media = useEditorStore((s) => s.media);
   const analyses = useEditorStore((s) => s.analyses);
@@ -283,7 +283,22 @@ export default function VideoPreview() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col items-center bg-[#080b10]">
+    <div className="flex h-full min-h-0 flex-col items-center bg-transparent">
+      <div className="flex h-8 w-full shrink-0 items-center justify-between px-1">
+        <div className="flex items-center gap-2">
+          <span className="panel-eyebrow text-[#667482]">Förhandsvisning</span>
+          {hasContent && (
+            <span className="rounded-full bg-[var(--caption)]/[0.06] px-2 py-0.5 text-[8px] font-semibold text-[var(--caption)] ring-1 ring-[var(--caption)]/10">
+              Live
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 font-mono text-[8px] text-[#586571]">
+          <span>{canvas.width}×{canvas.height}</span>
+          <span>·</span>
+          <span>{canvas.id}</span>
+        </div>
+      </div>
       <div ref={wrapperRef} className="flex min-h-0 w-full flex-1 items-center justify-center">
         <div
           data-preview-frame
@@ -376,14 +391,23 @@ export default function VideoPreview() {
               )}
             </>
           ) : (
-            <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[#05070a] px-6 text-center">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#ffb45b]/10 text-[#ffb45b]">
-                <Scissors size={18} />
+            <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-[#05070a] px-4 text-center">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[var(--cut)]/10 text-[var(--cut)]">
+                <Scissors size={14} />
               </div>
-              <p className="text-sm font-semibold text-[#b8c1cc]">Ingen video på tidslinjen</p>
-              <p className="max-w-[220px] text-[11px] leading-relaxed text-[#596471]">
-                Öppna Bibliotek till vänster och lägg till ett klipp. Formatet anpassas till {canvas.id}.
+              <p className="text-[11px] font-semibold text-[#b8c1cc]">Tidslinjen är tom</p>
+              <p className="max-w-[180px] text-[9px] leading-relaxed text-[#596471]">
+                Välj en video i Bibliotek. Den anpassas automatiskt till {canvas.id}.
               </p>
+              {onOpenLibrary && (
+                <button
+                  type="button"
+                  onClick={onOpenLibrary}
+                  className="rounded-lg bg-[var(--cut)] px-3 py-1.5 text-[8px] font-extrabold text-[#1b140b] transition hover:bg-[#fac688]"
+                >
+                  Öppna bibliotek
+                </button>
+              )}
             </div>
           )}
 

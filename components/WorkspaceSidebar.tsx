@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { EditorTool } from "@/lib/ui/editorTools";
 import {
   Captions,
   FolderOpen,
@@ -23,19 +24,8 @@ import LibraryPanel from "./LibraryPanel";
 import SequenceBuilderPanel from "./SequenceBuilderPanel";
 import StylePanel from "./StylePanel";
 
-type Tool =
-  | "cut"
-  | "captions"
-  | "media"
-  | "effects"
-  | "adjust"
-  | "more"
-  | "smart"
-  | "sequence"
-  | "style";
-
 const PRIMARY_TOOLS: Array<{
-  id: Tool;
+  id: EditorTool;
   label: string;
   icon: typeof Scissors;
 }> = [
@@ -50,16 +40,22 @@ export default function WorkspaceSidebar({
   width = 408,
   collapsed = false,
   onToggleCollapsed,
+  activeTool,
+  onToolChange,
 }: {
   width?: number;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
+  activeTool?: EditorTool;
+  onToolChange?: (tool: EditorTool) => void;
 }) {
-  const [tool, setTool] = useState<Tool>("cut");
+  const [localTool, setLocalTool] = useState<EditorTool>("cut");
+  const tool = activeTool ?? localTool;
+  const setTool = onToolChange ?? setLocalTool;
 
   return (
     <aside
-      className="flex min-h-0 shrink-0 border-r border-white/[0.07] bg-[#0b0e13] transition-[width] duration-150"
+      className="flex min-h-0 shrink-0 border-r border-white/[0.07] bg-[#0a0e13] shadow-[12px_0_35px_rgba(0,0,0,.08)] transition-[width] duration-150"
       style={{ width: collapsed ? 68 : width }}
     >
       <nav
@@ -148,12 +144,12 @@ function RailButton({
       onClick={onClick}
       className={`relative flex w-full flex-col items-center gap-1 rounded-xl py-1.5 text-[9px] font-semibold transition ${
         active
-          ? "bg-[#ffb45b]/10 text-[#ffc477]"
+          ? "bg-[var(--cut)]/10 text-[#f6c98f]"
           : "text-[#65717f] hover:bg-white/[0.04] hover:text-[#b8c1cb]"
       }`}
     >
       {active && (
-        <span className="absolute -left-2 top-2 h-5 w-[3px] rounded-r-full bg-[#ffb45b]" />
+        <span className="absolute -left-2 top-2 h-5 w-[3px] rounded-r-full bg-[var(--cut)] shadow-[0_0_12px_rgba(242,182,109,.35)]" />
       )}
       {icon}
       <span>{label}</span>
@@ -161,7 +157,7 @@ function RailButton({
   );
 }
 
-function MoreTools({ onPick }: { onPick: (tool: Tool) => void }) {
+function MoreTools({ onPick }: { onPick: (tool: EditorTool) => void }) {
   const tools = [
     {
       id: "smart" as const,

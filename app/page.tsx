@@ -11,10 +11,12 @@ import StartScreen from "@/components/StartScreen";
 import Timeline from "@/components/Timeline";
 import ExportModal from "@/components/ExportModal";
 import Toasts from "@/components/Toasts";
+import { CommandPalette, HelpDrawer } from "@/components/WorkspaceOverlays";
+import type { EditorTool } from "@/lib/ui/editorTools";
 import { GripHorizontal, GripVertical } from "lucide-react";
 
 const DEFAULT_SIDEBAR_WIDTH = 408;
-const DEFAULT_TIMELINE_HEIGHT = 310;
+const DEFAULT_TIMELINE_HEIGHT = 286;
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -22,6 +24,9 @@ function clamp(value: number, min: number, max: number) {
 
 export default function EditorPage() {
   const [exportOpen, setExportOpen] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [activeTool, setActiveTool] = useState<EditorTool>("cut");
   const revision = useEditorStore((s) => s.revision);
   const projectId = useEditorStore((s) => s.projectId);
   const mediaCount = useEditorStore((s) => s.media.length);
@@ -144,6 +149,17 @@ export default function EditorPage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        setCommandOpen(true);
+        return;
+      }
+      if (mod && (e.key === "e" || e.key === "E")) {
+        e.preventDefault();
+        setExportOpen(true);
+        return;
+      }
       if (
         target.tagName === "INPUT" ||
         target.tagName === "TEXTAREA" ||
@@ -152,8 +168,11 @@ export default function EditorPage() {
       ) {
         return;
       }
+      if (e.key === "?" && !mod && !e.altKey) {
+        setHelpOpen(true);
+        return;
+      }
       const s = useEditorStore.getState();
-      const mod = e.ctrlKey || e.metaKey;
 
       if (mod && (e.key === "z" || e.key === "Z")) {
         e.preventDefault();
@@ -215,13 +234,20 @@ export default function EditorPage() {
 
   return (
     <div className="captioncut-shell relative flex h-screen flex-col bg-[var(--ink)] text-[var(--text)]">
-      <Header onExport={() => setExportOpen(true)} />
+      <Header
+        onExport={() => setExportOpen(true)}
+        onCommand={() => setCommandOpen(true)}
+        onHelp={() => setHelpOpen(true)}
+        onOpenTool={setActiveTool}
+      />
 
       <div className="flex min-h-0 flex-1">
         <WorkspaceSidebar
           width={sidebarWidth}
           collapsed={sidebarCollapsed}
           onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
+          activeTool={activeTool}
+          onToolChange={setActiveTool}
         />
 
         {!sidebarCollapsed && (
@@ -244,7 +270,7 @@ export default function EditorPage() {
         )}
 
         <main className="preview-stage min-w-0 flex-1 px-4 pb-3 pt-2">
-          <VideoPreview />
+          <VideoPreview onOpenLibrary={() => setActiveTool("media")} />
         </main>
       </div>
 
@@ -277,6 +303,22 @@ export default function EditorPage() {
       )}
 
       <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} />
+      <CommandPalette
+        open={commandOpen}
+        onClose={() => setCommandOpen(false)}
+        onOpenTool={setActiveTool}
+        onExport={() => setExportOpen(true)}
+        onHelp={() => {
+          setCommandOpen(false);
+          setHelpOpen(true);
+        }}
+      />
+      <HelpDrawer
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        onOpenTool={setActiveTool}
+        onExport={() => setExportOpen(true)}
+      />
       <Toasts />
     </div>
   );

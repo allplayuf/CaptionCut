@@ -20,6 +20,10 @@ the timeline to give the current task more room. Sizes persist on the device,
 the tool panel can collapse to its rail, and the timeline can switch between
 active tracks and every available layer.
 
+The header mirrors the full workflow from **Material** to **Export** and shows
+which stages are ready. Press `Ctrl+K` to search tools and actions from anywhere,
+or `?` for a project-aware guide with progress, next steps and shortcuts.
+
 ## Local development
 
 Requirements: Node.js 20+ and npm.
