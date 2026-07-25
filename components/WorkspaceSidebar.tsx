@@ -6,16 +6,20 @@ import {
   FolderOpen,
   LayoutTemplate,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   Scissors,
   SlidersHorizontal,
   Sparkles,
   SwatchBook,
+  WandSparkles,
 } from "lucide-react";
 import AIPanel from "./AIPanel";
 import CaptionsPanel from "./CaptionsPanel";
 import CutPanel from "./CutPanel";
+import EffectsPanel from "./EffectsPanel";
 import InspectorPanel from "./InspectorPanel";
-import MediaPanel from "./MediaPanel";
+import LibraryPanel from "./LibraryPanel";
 import SequenceBuilderPanel from "./SequenceBuilderPanel";
 import StylePanel from "./StylePanel";
 
@@ -23,6 +27,7 @@ type Tool =
   | "cut"
   | "captions"
   | "media"
+  | "effects"
   | "adjust"
   | "more"
   | "smart"
@@ -36,17 +41,29 @@ const PRIMARY_TOOLS: Array<{
 }> = [
   { id: "cut", label: "Klipp", icon: Scissors },
   { id: "captions", label: "Text", icon: Captions },
-  { id: "media", label: "Media", icon: FolderOpen },
+  { id: "media", label: "Bibliotek", icon: FolderOpen },
+  { id: "effects", label: "Effekter", icon: WandSparkles },
   { id: "adjust", label: "Justera", icon: SlidersHorizontal },
 ];
 
-export default function WorkspaceSidebar() {
+export default function WorkspaceSidebar({
+  width = 408,
+  collapsed = false,
+  onToggleCollapsed,
+}: {
+  width?: number;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
+}) {
   const [tool, setTool] = useState<Tool>("cut");
 
   return (
-    <aside className="flex min-h-0 w-[388px] max-w-[48vw] shrink-0 border-r border-white/[0.07] bg-[#0b0e13]">
+    <aside
+      className="flex min-h-0 shrink-0 border-r border-white/[0.07] bg-[#0b0e13] transition-[width] duration-150"
+      style={{ width: collapsed ? 68 : width }}
+    >
       <nav
-        className="flex w-[68px] shrink-0 flex-col border-r border-white/[0.07] px-2 py-3"
+        className="flex w-[68px] shrink-0 flex-col overflow-y-auto border-r border-white/[0.07] px-2 py-1.5"
         aria-label="Redigeringsverktyg"
       >
         <div className="space-y-1">
@@ -60,17 +77,25 @@ export default function WorkspaceSidebar() {
             />
           ))}
         </div>
-        <div className="mt-auto">
+        <div className="mt-auto space-y-1">
           <RailButton
             active={["more", "smart", "sequence", "style"].includes(tool)}
             icon={<MoreHorizontal size={18} />}
             label="Mer"
             onClick={() => setTool("more")}
           />
+          {onToggleCollapsed && (
+            <RailButton
+              active={false}
+              icon={collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+              label={collapsed ? "Öppna" : "Dölj"}
+              onClick={onToggleCollapsed}
+            />
+          )}
         </div>
       </nav>
 
-      <div className="min-w-0 flex-1">
+      {!collapsed && <div className="min-w-0 flex-1">
         <Panel active={tool === "cut"}>
           <CutPanel />
         </Panel>
@@ -78,7 +103,10 @@ export default function WorkspaceSidebar() {
           <CaptionsPanel />
         </Panel>
         <Panel active={tool === "media"}>
-          <MediaPanel />
+          <LibraryPanel onOpenSmart={() => setTool("smart")} />
+        </Panel>
+        <Panel active={tool === "effects"}>
+          <EffectsPanel />
         </Panel>
         <Panel active={tool === "adjust"}>
           <InspectorPanel />
@@ -95,7 +123,7 @@ export default function WorkspaceSidebar() {
         <Panel active={tool === "more"}>
           <MoreTools onPick={setTool} />
         </Panel>
-      </div>
+      </div>}
     </aside>
   );
 }
@@ -118,14 +146,14 @@ function RailButton({
   return (
     <button
       onClick={onClick}
-      className={`relative flex w-full flex-col items-center gap-1 rounded-xl py-2.5 text-[9px] font-semibold transition ${
+      className={`relative flex w-full flex-col items-center gap-1 rounded-xl py-1.5 text-[9px] font-semibold transition ${
         active
           ? "bg-[#ffb45b]/10 text-[#ffc477]"
           : "text-[#65717f] hover:bg-white/[0.04] hover:text-[#b8c1cb]"
       }`}
     >
       {active && (
-        <span className="absolute -left-2 top-3 h-6 w-[3px] rounded-r-full bg-[#ffb45b]" />
+        <span className="absolute -left-2 top-2 h-5 w-[3px] rounded-r-full bg-[#ffb45b]" />
       )}
       {icon}
       <span>{label}</span>

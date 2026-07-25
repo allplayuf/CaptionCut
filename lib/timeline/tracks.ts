@@ -398,6 +398,17 @@ export function shakeOffset(localT: number, intensity: number): { x: number; y: 
   };
 }
 
+/** Shared motion curve so preview and export use the same perceived acceleration. */
+export function effectEase(
+  progress: number,
+  easing: "smooth" | "linear" | "snappy" = "smooth"
+): number {
+  const p = Math.max(0, Math.min(1, progress));
+  if (easing === "linear") return p;
+  if (easing === "snappy") return 1 - Math.pow(1 - p, 3);
+  return p * p * (3 - 2 * p);
+}
+
 export interface EffectState {
   /** Combined zoom factor (1 = none). */
   scale: number;
@@ -424,21 +435,30 @@ export function effectStateAt(tracks: Track[], time: number): EffectState {
     const dur = Math.max(0.05, clip.endTime - clip.startTime);
     if (state === NO_EFFECT) state = { ...NO_EFFECT };
 
-    if (fx.kind === "zoom" || fx.kind === "impact") {
-      state.scale = Math.max(state.scale, fx.zoomScale ?? (fx.kind === "impact" ? 1.2 : 1.15));
+    if (fx.kind === "zoom") {
+      state.scale = Math.max(state.scale, fx.zoomScale ?? 1.15);
+      state.anchorX = fx.anchorX ?? 0.5;
+      state.anchorY = fx.anchorY ?? 0.45;
+    } else if (fx.kind === "impact") {
+      // Hit hard, then settle instead of holding a static digital crop.
+      const peak = fx.zoomScale ?? 1.2;
+      const p = effectEase(localT / dur, fx.easing ?? "snappy");
+      state.scale = Math.max(state.scale, peak + (1.02 - peak) * p);
       state.anchorX = fx.anchorX ?? 0.5;
       state.anchorY = fx.anchorY ?? 0.45;
     } else if (fx.kind === "slow-zoom") {
       const end = fx.zoomScale ?? 1.25;
-      const k = 1 + (end - 1) * Math.min(1, localT / dur);
+      const k = 1 + (end - 1) * effectEase(localT / dur, fx.easing ?? "smooth");
       state.scale = Math.max(state.scale, k);
       state.anchorX = fx.anchorX ?? 0.5;
       state.anchorY = fx.anchorY ?? 0.45;
     }
     if (fx.kind === "shake" || fx.kind === "impact") {
       const jitter = shakeOffset(localT, fx.intensity ?? 0.6);
-      state.shakeX += jitter.x;
-      state.shakeY += jitter.y;
+      // A short envelope removes the mechanical jump at both clip edges.
+      const envelope = Math.min(1, localT / 0.06, Math.max(0, (dur - localT) / 0.12));
+      state.shakeX += jitter.x * envelope;
+      state.shakeY += jitter.y * envelope;
     }
     if (fx.kind === "vignette") {
       state.vignette = Math.max(state.vignette, fx.strength ?? 0.5);

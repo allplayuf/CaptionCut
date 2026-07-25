@@ -13,6 +13,7 @@ import type {
   EditVersion,
   MediaAnalysis,
   MediaAsset,
+  MediaFolder,
   LinkedAudioSource,
   Project,
   TimeRange,
@@ -72,6 +73,7 @@ interface EditorState {
   projectName: string;
   createdAt: number;
   media: MediaAsset[];
+  mediaFolders: MediaFolder[];
   tracks: Track[];
   captions: Caption[];
   captionCoverage: CaptionCoverage | null;
@@ -139,6 +141,12 @@ interface EditorState {
 
   // media / clips
   addMedia: (asset: MediaAsset) => void;
+  createMediaFolder: (name: string) => string;
+  renameMediaFolder: (folderId: string, name: string) => void;
+  deleteMediaFolder: (folderId: string) => void;
+  moveMediaToFolder: (mediaIds: string[], folderId: string | null) => void;
+  /** Append several library videos as one ripple-laid-out main sequence. */
+  addMediaBatchToTimeline: (mediaIds: string[]) => void;
   /** Link a separately recorded audio source to a video at source level. */
   linkAudioToVideo: (
     videoMediaId: string,
@@ -322,6 +330,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     projectName: "Untitled project",
     createdAt: Date.now(),
     media: [],
+    mediaFolders: [],
     tracks: createDefaultTracks(),
     captions: [],
     captionCoverage: null,
@@ -357,6 +366,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         projectName: "Untitled project",
         createdAt: Date.now(),
         media: [],
+        mediaFolders: [],
         tracks: createDefaultTracks(),
         captions: [],
         captionCoverage: null,
@@ -382,6 +392,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         projectName: project.name,
         createdAt: project.createdAt,
         media: project.media ?? [],
+        mediaFolders: project.mediaFolders ?? [],
         tracks: migrateTracks(project),
         captions: project.captions ?? [],
         captionCoverage: project.captionCoverage ?? null,
@@ -507,6 +518,83 @@ export const useEditorStore = create<EditorState>((set, get) => {
           ...sel(clip.id),
         };
       }),
+
+    createMediaFolder: (name) => {
+      const id = nanoid(8);
+      const cleanName = name.trim() || "Ny mapp";
+      const colors = ["#63d9c6", "#78aef8", "#f5b86b", "#c49af6", "#f08ca0", "#9ed47a"];
+      set((s) => ({
+        mediaFolders: [
+          ...s.mediaFolders,
+          {
+            id,
+            name: cleanName,
+            color: colors[s.mediaFolders.length % colors.length],
+            createdAt: Date.now(),
+          },
+        ],
+        revision: s.revision + 1,
+      }));
+      return id;
+    },
+
+    renameMediaFolder: (folderId, name) => {
+      const cleanName = name.trim();
+      if (!cleanName) return;
+      set((s) => ({
+        mediaFolders: s.mediaFolders.map((folder) =>
+          folder.id === folderId ? { ...folder, name: cleanName } : folder
+        ),
+        revision: s.revision + 1,
+      }));
+    },
+
+    deleteMediaFolder: (folderId) =>
+      set((s) => ({
+        mediaFolders: s.mediaFolders.filter((folder) => folder.id !== folderId),
+        media: s.media.map((asset) =>
+          asset.folderId === folderId ? { ...asset, folderId: undefined } : asset
+        ),
+        revision: s.revision + 1,
+      })),
+
+    moveMediaToFolder: (mediaIds, folderId) => {
+      const ids = new Set(mediaIds);
+      set((s) => ({
+        media: s.media.map((asset) =>
+          ids.has(asset.id) ? { ...asset, folderId: folderId ?? undefined } : asset
+        ),
+        revision: s.revision + 1,
+      }));
+    },
+
+    addMediaBatchToTimeline: (mediaIds) => {
+      const orderedIds = [...new Set(mediaIds)];
+      let added = 0;
+      commit((s) => {
+        const assets = orderedIds
+          .map((id) => s.media.find((asset) => asset.id === id))
+          .filter((asset): asset is MediaAsset => Boolean(asset && assetKind(asset) === "video"));
+        if (assets.length === 0) return {};
+        const vi = s.tracks.findIndex((track) => track.type === "video");
+        const video = s.tracks[vi];
+        if (!video || guardLocked(video)) return {};
+        const clips = assets.map((asset) => makeMainClip(asset));
+        added = clips.length;
+        const nextMain = rippleMainTrack({ ...video, clips: [...video.clips, ...clips] });
+        return {
+          ...mainEdit(s, vi, nextMain),
+          selectedClipId: clips.at(-1)?.id ?? null,
+          selectedClipIds: clips.map((clip) => clip.id),
+        };
+      });
+      if (added > 0) {
+        get().addToast(
+          "success",
+          `${added} ${added === 1 ? "klipp lades" : "klipp lades"} i en sammanhängande sekvens.`
+        );
+      }
+    },
 
     linkAudioToVideo: (videoMediaId, audioMediaId, link) => {
       const state = get();
@@ -1709,6 +1797,7 @@ export function buildProjectSnapshot(state: {
   projectName: string;
   createdAt: number;
   media: MediaAsset[];
+  mediaFolders: MediaFolder[];
   tracks: Track[];
   captions: Caption[];
   captionCoverage: CaptionCoverage | null;
@@ -1724,6 +1813,7 @@ export function buildProjectSnapshot(state: {
     createdAt: state.createdAt,
     updatedAt: Date.now(),
     media: state.media,
+    mediaFolders: state.mediaFolders,
     // Legacy mirror of the main track so older tooling keeps working.
     clips: mainClips(state.tracks),
     tracks: state.tracks,

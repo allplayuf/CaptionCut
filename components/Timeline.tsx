@@ -11,8 +11,10 @@ import { timelineBeatMarkers } from "@/lib/autoEdit/signals";
 import {
   Eye,
   EyeOff,
+  Layers3,
   Lock,
   LockOpen,
+  Magnet,
   Scissors,
   Trash2,
   Volume2,
@@ -78,8 +80,11 @@ export default function Timeline() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const headerScrollRef = useRef<HTMLDivElement>(null);
   const [viewportW, setViewportW] = useState(800);
   const [zoom, setZoom] = useState<number | null>(null); // px per second; null = fit
+  const [showAllTracks, setShowAllTracks] = useState(false);
+  const [snapEnabled, setSnapEnabled] = useState(true);
   /** Live drag-reorder of a main-track clip: visual offset + insertion slot. */
   const [reorder, setReorder] = useState<{ clipId: string; dx: number; slot: number } | null>(null);
   /** Live marquee selection rectangle, in content-div pixel coordinates. */
@@ -184,7 +189,9 @@ export default function Timeline() {
   };
 
   // Visible tracks: main video always; others when they have clips.
-  const visibleTracks = tracks.filter((t) => t.type === "video" || t.clips.length > 0);
+  const visibleTracks = showAllTracks
+    ? tracks
+    : tracks.filter((t) => t.type === "video" || t.clips.length > 0);
   const playheadX = PAD + currentTime * pxPerSec;
 
   // Vertical lane geometry inside the content div (ruler is 20px tall) —
@@ -276,6 +283,20 @@ export default function Timeline() {
           <Trash2 size={13} /> Radera
           {selectedClipIds.length > 1 && <span>{selectedClipIds.length}</span>}
         </ToolButton>
+        <ToolButton
+          onClick={() => setSnapEnabled((value) => !value)}
+          title={snapEnabled ? "Fästning är på · Shift kringgår tillfälligt" : "Slå på fästning"}
+        >
+          <Magnet size={13} className={snapEnabled ? "text-[var(--timeline)]" : ""} />
+          Fäst
+        </ToolButton>
+        <ToolButton
+          onClick={() => setShowAllTracks((value) => !value)}
+          title={showAllTracks ? "Dölj tomma spår" : "Visa alla video-, ljud- och effektspår"}
+        >
+          <Layers3 size={13} className={showAllTracks ? "text-[var(--caption)]" : ""} />
+          {showAllTracks ? "Aktiva spår" : "Alla spår"}
+        </ToolButton>
         <div className="ml-auto flex items-center gap-1">
           <ToolButton onClick={() => zoomBy(1 / 1.4)} title="Zooma ut tidslinjen">
             <ZoomOut size={13} />
@@ -299,7 +320,11 @@ export default function Timeline() {
       {/* tracks */}
       <div className="flex min-h-0 flex-1">
         {/* headers */}
-        <div className="shrink-0 overflow-hidden border-r border-white/[0.07]" style={{ width: HEADER_W }}>
+        <div
+          ref={headerScrollRef}
+          className="shrink-0 overflow-hidden border-r border-white/[0.07]"
+          style={{ width: HEADER_W }}
+        >
           <div className="h-5" />
           {visibleTracks.map((track) => (
             <TrackHeader key={track.id} track={track} />
@@ -310,8 +335,15 @@ export default function Timeline() {
         </div>
 
         {/* scrollable lanes */}
-        <div ref={scrollRef} className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden select-none" onWheel={onWheel}>
-          <div ref={contentRef} className="relative" style={{ width: contentW }}>
+        <div
+          ref={scrollRef}
+          className="min-w-0 flex-1 select-none overflow-auto"
+          onWheel={onWheel}
+          onScroll={(event) => {
+            if (headerScrollRef.current) headerScrollRef.current.scrollTop = event.currentTarget.scrollTop;
+          }}
+        >
+          <div ref={contentRef} className="relative min-h-full" style={{ width: contentW }}>
             {/* ruler */}
             <div className="relative h-5 cursor-col-resize text-[9px] text-zinc-600" onPointerDown={onScrub}>
               {ruler.marks.map((t) => (
@@ -356,7 +388,7 @@ export default function Timeline() {
                   const s = useEditorStore.getState();
                   const grouped = s.selectedClipIds.length > 1 && s.selectedClipIds.includes(clipId);
                   let start = newStart;
-                  if (snap) {
+                  if (snap && snapEnabled) {
                     const targets = allSnapTargets().filter(
                       (t) => t !== dragged.startTime && t !== dragged.endTime
                     );
@@ -369,7 +401,7 @@ export default function Timeline() {
                   else moveTimelineClip(clipId, start, { transient: true });
                 }}
                 onTrim={(clipId, edge, newTime, snap) => {
-                  const time = snap
+                  const time = snap && snapEnabled
                     ? snapTime(newTime, allSnapTargets(), SNAP_PX / pxPerSec)
                     : newTime;
                   trimTimelineClip(clipId, edge, time, { transient: true });
@@ -395,7 +427,7 @@ export default function Timeline() {
                   onMove={(newStart, snap) => {
                     const dur = cap.endTime - cap.startTime;
                     let start = newStart;
-                    if (snap) {
+                    if (snap && snapEnabled) {
                       const targets = allSnapTargets().filter(
                         (t) => t !== cap.startTime && t !== cap.endTime
                       );
@@ -407,7 +439,10 @@ export default function Timeline() {
                     updateCaptionTiming(cap.id, start, start + dur, { transient: true });
                   }}
                   onTrim={(edge, newTime, snap) => {
-                    const t = snap ? snapTime(newTime, allSnapTargets(), SNAP_PX / pxPerSec) : newTime;
+                    const t =
+                      snap && snapEnabled
+                        ? snapTime(newTime, allSnapTargets(), SNAP_PX / pxPerSec)
+                        : newTime;
                     if (edge === "start") updateCaptionTiming(cap.id, t, cap.endTime, { transient: true });
                     else updateCaptionTiming(cap.id, cap.startTime, t, { transient: true });
                   }}

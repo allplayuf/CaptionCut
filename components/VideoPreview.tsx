@@ -382,7 +382,7 @@ export default function VideoPreview() {
               </div>
               <p className="text-sm font-semibold text-[#b8c1cc]">Ingen video på tidslinjen</p>
               <p className="max-w-[220px] text-[11px] leading-relaxed text-[#596471]">
-                Öppna Media till vänster och lägg till ett klipp. Formatet anpassas till {canvas.id}.
+                Öppna Bibliotek till vänster och lägg till ett klipp. Formatet anpassas till {canvas.id}.
               </p>
             </div>
           )}

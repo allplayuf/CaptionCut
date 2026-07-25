@@ -31,6 +31,14 @@ export interface CaptionCoverage {
 
 export type AssetKind = "video" | "audio" | "image";
 
+/** A user-created bin in the project media library. */
+export interface MediaFolder {
+  id: string;
+  name: string;
+  color: string;
+  createdAt: number;
+}
+
 /**
  * A source-level link between separately recorded video and audio files.
  * `offsetSeconds` is the delay of the audio relative to the video: positive
@@ -63,6 +71,8 @@ export interface MediaAsset {
   hasAudio: boolean;
   /** Missing on legacy assets — use assetKind() from lib/timeline/tracks. */
   kind?: AssetKind;
+  /** Optional project-library bin. The source file itself is unchanged. */
+  folderId?: string;
   /** Separate recorder/microphone audio that follows this video source. */
   linkedAudio?: LinkedAudioSource;
 }
@@ -155,6 +165,8 @@ export interface ClipEffect {
   intensity?: number;
   /** vignette: darkening strength 0..1. */
   strength?: number;
+  /** Motion character for animated zooms. Defaults to smooth. */
+  easing?: "smooth" | "linear" | "snappy";
 }
 
 /** One clip on any track. Times are absolute timeline seconds. */
@@ -470,6 +482,8 @@ export interface Project {
   createdAt: number;
   updatedAt: number;
   media: MediaAsset[];
+  /** Named bins in the non-destructive media library. */
+  mediaFolders?: MediaFolder[];
   /** Legacy v1 main-track clips; superseded by tracks (kept for old saves). */
   clips?: Clip[];
   /** v2 multi-track timeline. Absent on legacy projects (migrated on load). */

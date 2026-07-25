@@ -11,6 +11,14 @@ import StartScreen from "@/components/StartScreen";
 import Timeline from "@/components/Timeline";
 import ExportModal from "@/components/ExportModal";
 import Toasts from "@/components/Toasts";
+import { GripHorizontal, GripVertical } from "lucide-react";
+
+const DEFAULT_SIDEBAR_WIDTH = 408;
+const DEFAULT_TIMELINE_HEIGHT = 310;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
 
 export default function EditorPage() {
   const [exportOpen, setExportOpen] = useState(false);
@@ -21,6 +29,80 @@ export default function EditorPage() {
   const [booted, setBooted] = useState(false);
   /** Project ids whose start screen the user skipped this session. */
   const [skippedStartId, setSkippedStartId] = useState<string | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const [timelineHeight, setTimelineHeight] = useState(DEFAULT_TIMELINE_HEIGHT);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [layoutReady, setLayoutReady] = useState(false);
+
+  // Personal workspace sizing persists on this device.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const savedSidebar = Number(localStorage.getItem("captioncut.sidebarWidth"));
+      const savedTimeline = Number(localStorage.getItem("captioncut.timelineHeight"));
+      const savedCollapsed = localStorage.getItem("captioncut.sidebarCollapsed");
+      if (Number.isFinite(savedSidebar) && savedSidebar > 0) {
+        setSidebarWidth(clamp(savedSidebar, 320, Math.min(620, window.innerWidth - 360)));
+      }
+      if (Number.isFinite(savedTimeline) && savedTimeline > 0) {
+        setTimelineHeight(clamp(savedTimeline, 220, window.innerHeight - 180));
+      }
+      setSidebarCollapsed(savedCollapsed === "true");
+      setLayoutReady(true);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    if (!layoutReady) return;
+    localStorage.setItem("captioncut.sidebarWidth", String(Math.round(sidebarWidth)));
+  }, [layoutReady, sidebarWidth]);
+
+  useEffect(() => {
+    if (!layoutReady) return;
+    localStorage.setItem("captioncut.timelineHeight", String(Math.round(timelineHeight)));
+  }, [layoutReady, timelineHeight]);
+
+  useEffect(() => {
+    if (!layoutReady) return;
+    localStorage.setItem("captioncut.sidebarCollapsed", String(sidebarCollapsed));
+  }, [layoutReady, sidebarCollapsed]);
+
+  const beginSidebarResize = (event: React.PointerEvent) => {
+    if (sidebarCollapsed) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+    document.body.classList.add("is-resizing");
+    const move = (moveEvent: PointerEvent) =>
+      setSidebarWidth(
+        clamp(startWidth + moveEvent.clientX - startX, 320, Math.min(620, window.innerWidth - 360))
+      );
+    const up = () => {
+      document.body.classList.remove("is-resizing");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  const beginTimelineResize = (event: React.PointerEvent) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = timelineHeight;
+    document.body.classList.add("is-resizing");
+    const move = (moveEvent: PointerEvent) =>
+      setTimelineHeight(
+        clamp(startHeight - (moveEvent.clientY - startY), 220, window.innerHeight - 180)
+      );
+    const up = () => {
+      document.body.classList.remove("is-resizing");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
 
   // Resume the most recently edited project on load.
   useEffect(() => {
@@ -132,18 +214,61 @@ export default function EditorPage() {
   }, []);
 
   return (
-    <div className="captioncut-shell relative flex h-screen flex-col bg-[#080b10] text-[#e8edf2]">
+    <div className="captioncut-shell relative flex h-screen flex-col bg-[var(--ink)] text-[var(--text)]">
       <Header onExport={() => setExportOpen(true)} />
 
       <div className="flex min-h-0 flex-1">
-        <WorkspaceSidebar />
+        <WorkspaceSidebar
+          width={sidebarWidth}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
+        />
 
-        <main className="min-w-0 flex-1 bg-[#080b10] px-4 pb-3 pt-2">
+        {!sidebarCollapsed && (
+          <button
+            type="button"
+            role="separator"
+            aria-label="Ändra verktygspanelens bredd"
+            aria-orientation="vertical"
+            className="workspace-resizer workspace-resizer-vertical"
+            onPointerDown={beginSidebarResize}
+            onDoubleClick={() => setSidebarWidth(DEFAULT_SIDEBAR_WIDTH)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowLeft") setSidebarWidth((value) => clamp(value - 16, 320, 620));
+              if (event.key === "ArrowRight") setSidebarWidth((value) => clamp(value + 16, 320, 620));
+            }}
+            title="Dra för större eller mindre verktyg · dubbelklicka för standard"
+          >
+            <GripVertical size={12} />
+          </button>
+        )}
+
+        <main className="preview-stage min-w-0 flex-1 px-4 pb-3 pt-2">
           <VideoPreview />
         </main>
       </div>
 
-      <div className="h-[278px] shrink-0">
+      <button
+        type="button"
+        role="separator"
+        aria-label="Ändra tidslinjens höjd"
+        aria-orientation="horizontal"
+        className="workspace-resizer workspace-resizer-horizontal"
+        onPointerDown={beginTimelineResize}
+        onDoubleClick={() => setTimelineHeight(DEFAULT_TIMELINE_HEIGHT)}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowUp") {
+            setTimelineHeight((value) => clamp(value + 20, 220, window.innerHeight - 180));
+          }
+          if (event.key === "ArrowDown") {
+            setTimelineHeight((value) => clamp(value - 20, 220, window.innerHeight - 180));
+          }
+        }}
+        title="Dra upp för större tidslinje · dubbelklicka för standard"
+      >
+        <GripHorizontal size={14} />
+      </button>
+      <div className="shrink-0" style={{ height: timelineHeight }}>
         <Timeline />
       </div>
 

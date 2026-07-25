@@ -6,13 +6,19 @@ creating captions and exporting social video without fighting a crowded UI.
 The main workflow is intentionally short:
 
 1. Import video.
-2. Find and review pauses.
-3. Cut by clicking the transcript or splitting the timeline.
-4. Generate and style captions.
-5. Export an MP4.
+2. Organize source files in searchable project folders.
+3. Select many clips and append them as one contiguous sequence.
+4. Find and review pauses, or open Smart editing for a complete first cut.
+5. Cut by clicking the transcript or splitting the timeline.
+6. Add polished motion effects, generate captions and export an MP4.
 
 The editor still includes advanced sequence, styling and auto-edit tools under
 **Mer**, but they no longer compete with the core cutting workflow.
+
+The workspace is adjustable: drag the divider beside the tool panel or above
+the timeline to give the current task more room. Sizes persist on the device,
+the tool panel can collapse to its rail, and the timeline can switch between
+active tracks and every available layer.
 
 ## Local development
 

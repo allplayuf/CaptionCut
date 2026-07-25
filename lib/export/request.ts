@@ -49,6 +49,7 @@ export interface ZoomPayload {
   anchorY: number;
   /** When set, the zoom ramps scale → endScale across the window (slow zoom). */
   endScale?: number;
+  easing?: "smooth" | "linear" | "snappy";
 }
 
 /** Handheld-shake window: deterministic jitter, mirrors shakeOffset(). */
@@ -57,6 +58,7 @@ export interface ShakePayload {
   end: number;
   /** 0..1 */
   intensity: number;
+  easing?: "smooth" | "linear" | "snappy";
 }
 
 /** Vignette + slight contrast-boost window. */
@@ -234,6 +236,7 @@ export function buildExportRequest(input: {
           end,
           scale: 1,
           endScale,
+          easing: fx.easing ?? "smooth",
           anchorX: fx.anchorX ?? 0.5,
           anchorY: fx.anchorY ?? 0.45,
         });
@@ -243,13 +246,25 @@ export function buildExportRequest(input: {
           start,
           end,
           scale: Math.min(2.5, fx.zoomScale ?? 1.2),
+          endScale: 1.02,
+          easing: fx.easing ?? "snappy",
           anchorX: fx.anchorX ?? 0.5,
           anchorY: fx.anchorY ?? 0.45,
         });
-        shakes.push({ start, end, intensity: Math.min(1, Math.max(0.1, fx.intensity ?? 0.6)) });
+        shakes.push({
+          start,
+          end,
+          intensity: Math.min(1, Math.max(0.1, fx.intensity ?? 0.6)),
+          easing: fx.easing ?? "smooth",
+        });
         flashes.push({ start, end: Math.min(end, start + IMPACT_FLASH) });
       } else if (fx.kind === "shake") {
-        shakes.push({ start, end, intensity: Math.min(1, Math.max(0.1, fx.intensity ?? 0.6)) });
+        shakes.push({
+          start,
+          end,
+          intensity: Math.min(1, Math.max(0.1, fx.intensity ?? 0.6)),
+          easing: fx.easing ?? "smooth",
+        });
       } else if (fx.kind === "vignette") {
         vignettes.push({ start, end, strength: Math.min(1, Math.max(0.05, fx.strength ?? 0.5)) });
       } else if (fx.kind === "freeze") {

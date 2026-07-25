@@ -262,7 +262,14 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
           // Animated ramp: 2x over-sample + zoompan for sub-pixel smoothness.
           const off = Math.max(0, piece.tlStart - z.start).toFixed(4);
           const dur = Math.max(0.05, z.end - z.start).toFixed(4);
-          const zExpr = `max(1,${k0.toFixed(4)}+(${k1.toFixed(4)}-${k0.toFixed(4)})*min((it+${off})/${dur},1))`;
+          const rawP = `min(max((it+${off})/${dur},0),1)`;
+          const easedP =
+            z.easing === "linear"
+              ? rawP
+              : z.easing === "snappy"
+                ? `(1-pow(1-(${rawP}),3))`
+                : `((${rawP})*(${rawP})*(3-2*(${rawP})))`;
+          const zExpr = `max(1,${k0.toFixed(4)}+(${k1.toFixed(4)}-${k0.toFixed(4)})*${easedP})`;
           chain +=
             `,scale=${CW * 2}:${CH * 2},` +
             `zoompan=z='${zExpr}':x='(iw-iw/zoom)*${ax}':y='(ih-ih/zoom)*${ay}':d=1:s=${CW}x${CH}:fps=${preset.fps},` +
@@ -278,8 +285,10 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
         const ayp = ((18 * s.intensity * CH) / REF_H).toFixed(3);
         const off = Math.max(0, piece.tlStart - s.start).toFixed(4);
         const T = `(t+${off})`;
-        const jx = `${axp}*(0.62*sin(2*PI*8.3*${T})+0.38*sin(2*PI*3.4*${T}+1.7))`;
-        const jy = `${ayp}*(0.55*sin(2*PI*7.1*${T}+0.9)+0.45*sin(2*PI*2.8*${T}+2.3))`;
+        const dur = Math.max(0.05, s.end - s.start).toFixed(4);
+        const envelope = `min(1,min(max(0,${T}/0.06),max(0,(${dur}-${T})/0.12)))`;
+        const jx = `${axp}*${envelope}*(0.62*sin(2*PI*8.3*${T})+0.38*sin(2*PI*3.4*${T}+1.7))`;
+        const jy = `${ayp}*${envelope}*(0.55*sin(2*PI*7.1*${T}+0.9)+0.45*sin(2*PI*2.8*${T}+2.3))`;
         chain +=
           `,scale=trunc(iw*1.06/2)*2:trunc(ih*1.06/2)*2,` +
           `crop=${CW}:${CH}:x='max(0,min(iw-${CW},(iw-${CW})/2-(${jx})))':y='max(0,min(ih-${CH},(ih-${CH})/2-(${jy})))',` +

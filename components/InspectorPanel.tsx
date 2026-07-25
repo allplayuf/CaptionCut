@@ -410,6 +410,43 @@ function ClipInspector({ track, clip }: { track: Track; clip: TimelineClip }) {
             format={(v) => `${Math.round(v * 100)}%`}
             onChange={(v) => updateTimelineClip(clip.id, { effect: { ...clip.effect!, anchorY: v } })}
           />
+          {(fxKind === "slow-zoom" || fxKind === "impact") && (
+            <div className="mt-2">
+              <p className="mb-1.5 flex items-center justify-between text-[10px] text-zinc-500">
+                Rörelsekurva
+                <span className="text-[9px] text-zinc-600">
+                  {fxKind === "impact" ? "hur zoomen landar" : "hur zoomen accelererar"}
+                </span>
+              </p>
+              <div className="grid grid-cols-3 gap-1">
+                {(
+                  [
+                    ["smooth", "Mjuk"],
+                    ["snappy", "Snabb"],
+                    ["linear", "Linjär"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() =>
+                      updateTimelineClip(clip.id, {
+                        effect: { ...clip.effect!, easing: value },
+                      })
+                    }
+                    className={`rounded-lg px-2 py-1.5 text-[9px] font-semibold ring-1 transition ${
+                      (clip.effect?.easing ?? (fxKind === "impact" ? "snappy" : "smooth")) ===
+                      value
+                        ? "bg-[var(--timeline)]/15 text-[#a9d2f3] ring-[var(--timeline)]/35"
+                        : "bg-white/[0.035] text-zinc-500 ring-white/[0.07] hover:bg-white/[0.07]"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </Section>
       )}
 

@@ -360,7 +360,7 @@ function ImageActions({ asset }: { asset: MediaAsset }) {
   );
 }
 
-function PairAudioModal({
+export function PairAudioModal({
   video,
   audios,
   onClose,
