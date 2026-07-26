@@ -63,6 +63,58 @@ interface HistoryEntry {
 const HISTORY_LIMIT = 100;
 const MIN_CLIP = 0.15;
 const MAX_VERSIONS = 12;
+const MAX_VERSION_BYTES = 2 * 1024 * 1024;
+
+function historyLimitFor(entry: HistoryEntry): number {
+  const clips = entry.tracks.reduce((sum, track) => sum + track.clips.length, 0);
+  const words = entry.captions.reduce(
+    (sum, caption) => sum + (caption.words?.length ?? Math.max(1, caption.text.split(/\s+/).length)),
+    0
+  );
+  const pressure = clips * 3 + entry.captions.length + words * 0.2;
+  if (pressure > 6_000) return 12;
+  if (pressure > 3_000) return 20;
+  if (pressure > 1_200) return 35;
+  if (pressure > 500) return 60;
+  return HISTORY_LIMIT;
+}
+
+function appendPast(entries: HistoryEntry[], entry: HistoryEntry): HistoryEntry[] {
+  return [...entries, entry].slice(-historyLimitFor(entry));
+}
+
+function prependFuture(entries: HistoryEntry[], entry: HistoryEntry): HistoryEntry[] {
+  return [entry, ...entries].slice(0, historyLimitFor(entry));
+}
+
+function serializedBytes(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+function compactVersion(version: EditVersion): EditVersion {
+  if (serializedBytes(version) <= MAX_VERSION_BYTES) return version;
+  return {
+    ...version,
+    captions: version.captions.map((caption) => {
+      const compact = { ...caption };
+      delete compact.words;
+      return compact;
+    }),
+  };
+}
+
+function fitVersionHistory(versions: EditVersion[]): EditVersion[] {
+  const fitted: EditVersion[] = [];
+  let bytes = 0;
+  for (const candidate of versions.slice(0, MAX_VERSIONS)) {
+    const version = compactVersion(candidate);
+    const size = serializedBytes(version);
+    if (fitted.length > 0 && bytes + size > MAX_VERSION_BYTES) continue;
+    fitted.push(version);
+    bytes += size;
+  }
+  return fitted;
+}
 
 /** One-click football effect presets. */
 export type EffectPresetId = "goal-impact" | "reaction" | "ending-freeze";
@@ -274,7 +326,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       if (Object.keys(patch).length === 0) return s;
       return {
         ...patch,
-        past: [...s.past, snapshotOf(s)].slice(-HISTORY_LIMIT),
+        past: appendPast(s.past, snapshotOf(s)),
         future: [],
         revision: s.revision + 1,
       };
@@ -404,7 +456,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         captionCoverage: project.captionCoverage ?? null,
         style: { ...DEFAULT_STYLE, ...project.style },
         format: project.format ?? "9:16",
-        versions: project.versions ?? [],
+        versions: fitVersionHistory(project.versions ?? []),
         beat: { bpmOverride: null, beatSyncEnabled: true, ...project.beat },
         editRecipe: project.editRecipe ?? null,
         editRecipeRevision: -1,
@@ -427,7 +479,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         return {
           ...entry,
           past: s.past.slice(0, -1),
-          future: [snapshotOf(s), ...s.future].slice(0, HISTORY_LIMIT),
+          future: prependFuture(s.future, snapshotOf(s)),
           revision: s.revision + 1,
           ...sel(null),
           selectedCaptionId: null,
@@ -440,7 +492,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         if (!entry) return s;
         return {
           ...entry,
-          past: [...s.past, snapshotOf(s)].slice(-HISTORY_LIMIT),
+          past: appendPast(s.past, snapshotOf(s)),
           future: s.future.slice(1),
           revision: s.revision + 1,
           ...sel(null),
@@ -450,7 +502,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
 
     pushHistory: () =>
       set((s) => ({
-        past: [...s.past, snapshotOf(s)].slice(-HISTORY_LIMIT),
+        past: appendPast(s.past, snapshotOf(s)),
         future: [],
       })),
 
@@ -471,7 +523,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         // Auto kinds keep only their newest snapshot; manual saves stack up.
         const kept = kind === "manual" ? s.versions : s.versions.filter((v) => v.kind !== kind);
         return {
-          versions: [version, ...kept].slice(0, MAX_VERSIONS),
+          versions: fitVersionHistory([version, ...kept]),
           revision: s.revision + 1,
         };
       }),

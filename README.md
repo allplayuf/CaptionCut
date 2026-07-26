@@ -109,6 +109,7 @@ npx tsx scripts/verify-effects.ts
 npx tsx scripts/verify-fast-interview.ts
 npx tsx scripts/verify-drive-pairing.ts
 npm run verify-boundaries
+npm run verify-large-project
 ```
 
 ## Architecture

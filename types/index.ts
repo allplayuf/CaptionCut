@@ -516,12 +516,16 @@ export interface ProjectSummary {
 }
 
 export type ExportStatus = "processing" | "done" | "error";
+export type ExportPhase = "queued" | "preparing" | "rendering" | "uploading" | "done" | "failed";
 
 export interface ExportJobState {
   id: string;
   status: ExportStatus;
   /** 0..1 */
   progress: number;
+  phase?: ExportPhase;
+  /** Human-readable durable stage, so a reload can resume useful progress UI. */
+  detail?: string;
   error?: string;
   /** Durable download URL for completed cloud exports. */
   downloadUrl?: string;

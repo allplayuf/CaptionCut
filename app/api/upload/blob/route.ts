@@ -7,7 +7,9 @@ export const runtime = "nodejs";
 
 const MEDIA_FILE = /^[a-zA-Z0-9_-]{6,32}\.(mp4|mov|webm|m4v|mkv|avi|mp3|wav|m4a|aac|ogg|flac|png|jpe?g|webp|gif|bmp|avif)$/i;
 const TOKEN_WINDOW_MS = 60 * 60 * 1000;
-const TOKENS_PER_WINDOW = 20;
+// One authorization is issued per imported file. Keep abuse protection while
+// allowing real multi-camera/event projects with 30–100 source files.
+const TOKENS_PER_WINDOW = 200;
 const tokenWindows = new Map<string, { count: number; startedAt: number }>();
 
 class UploadRateLimitError extends Error {}

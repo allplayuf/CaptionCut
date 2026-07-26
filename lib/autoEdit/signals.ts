@@ -19,11 +19,114 @@ import { findTrack, mainClips, round3, tracksDuration } from "@/lib/timeline/tra
 /** Samples/sec of the stitched curves. */
 export const SIGNAL_RATE = 10;
 
+const ANALYSIS_BATCH_SIZE = 4;
+const ANALYSIS_BATCH_DELAY_MS = 60;
+
+export interface AnalysisProgress {
+  completed: number;
+  total: number;
+  current?: string;
+}
+
+interface QueuedAnalysis {
+  asset: MediaAsset;
+  promise: Promise<MediaAnalysis | null>;
+  resolve: (analysis: MediaAnalysis | null) => void;
+  reject: (error: Error) => void;
+}
+
+const analysisJobs = new Map<string, QueuedAnalysis>();
+const analysisQueue: string[] = [];
+let drainingAnalyses = false;
+
 /** Fetch (and lazily compute) analyses for the given assets. */
 export async function fetchAnalyses(
-  media: MediaAsset[]
+  media: MediaAsset[],
+  onProgress?: (progress: AnalysisProgress) => void
 ): Promise<Record<string, MediaAnalysis | null>> {
   if (media.length === 0) return {};
+  const unique = [...new Map(media.map((asset) => [asset.id, asset])).values()];
+  let completed = 0;
+  const settled = await Promise.all(
+    unique.map(async (asset) => {
+      try {
+        const analysis = await enqueueAnalysis(asset);
+        return { asset, analysis, failed: false };
+      } catch {
+        return { asset, analysis: null, failed: true };
+      } finally {
+        completed += 1;
+        onProgress?.({ completed, total: unique.length, current: asset.originalName });
+      }
+    })
+  );
+  if (settled.every((item) => item.failed)) {
+    throw new Error("Media analysis failed.");
+  }
+  return Object.fromEntries(settled.map(({ asset, analysis }) => [asset.id, analysis]));
+}
+
+function enqueueAnalysis(asset: MediaAsset): Promise<MediaAnalysis | null> {
+  const existing = analysisJobs.get(asset.id);
+  if (existing) return existing.promise;
+  let resolve!: (analysis: MediaAnalysis | null) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<MediaAnalysis | null>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  analysisJobs.set(asset.id, { asset, promise, resolve, reject });
+  analysisQueue.push(asset.id);
+  void drainAnalysisQueue();
+  return promise;
+}
+
+async function drainAnalysisQueue(): Promise<void> {
+  if (drainingAnalyses) return;
+  drainingAnalyses = true;
+  await new Promise((resolve) => setTimeout(resolve, ANALYSIS_BATCH_DELAY_MS));
+  try {
+    while (analysisQueue.length > 0) {
+      const ids = analysisQueue.splice(0, ANALYSIS_BATCH_SIZE);
+      const jobs = ids
+        .map((id) => analysisJobs.get(id))
+        .filter((job): job is QueuedAnalysis => Boolean(job));
+      if (jobs.length === 0) continue;
+      try {
+        const analyses = await requestAnalysisBatch(jobs.map((job) => job.asset));
+        for (const job of jobs) job.resolve(analyses[job.asset.id] ?? null);
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error("Media analysis failed.");
+        for (const job of jobs) job.reject(failure);
+      } finally {
+        for (const job of jobs) analysisJobs.delete(job.asset.id);
+      }
+    }
+  } finally {
+    drainingAnalyses = false;
+    if (analysisQueue.length > 0) void drainAnalysisQueue();
+  }
+}
+
+async function requestAnalysisBatch(
+  media: MediaAsset[]
+): Promise<Record<string, MediaAnalysis | null>> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 500));
+    try {
+      const result = await postAnalysisBatch(media);
+      return result;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error("Media analysis failed.");
+    }
+  }
+  throw lastError ?? new Error("Media analysis failed.");
+}
+
+async function postAnalysisBatch(
+  media: MediaAsset[]
+): Promise<Record<string, MediaAnalysis | null>> {
   const res = await fetch("/api/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -226,7 +226,9 @@ export default function AIPanel() {
     if (missing.length > 0) {
       setStage(`Analyserar rörelse, ljud och klipptempo (${missing.length} ${missing.length === 1 ? "fil" : "filer"})…`);
       try {
-        const fresh = await fetchAnalyses(missing);
+        const fresh = await fetchAnalyses(missing, ({ completed, total }) => {
+          setStage(`Analyserar rörelse, ljud och klipptempo (${completed}/${total})…`);
+        });
         s.mergeAnalyses(fresh);
       } catch {
         // Analysis is an enhancement, never a blocker.

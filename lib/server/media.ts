@@ -7,23 +7,40 @@ import { MEDIA_DIR, ensureDataDirs } from "./paths";
 
 type MediaLocation = Pick<MediaAsset, "id" | "filename" | "storageUrl">;
 
-/** Returns a local FFmpeg-readable path, downloading a Blob asset to /tmp once. */
-export async function materializeMedia(asset: MediaLocation): Promise<string> {
+function validateLocation(asset: MediaLocation): { localPath: string; storageUrl?: string } {
   if (!/^[a-zA-Z0-9_-]+$/.test(asset.id)) throw new Error("Invalid media id");
   if (!/^[a-zA-Z0-9_-]+\.[a-zA-Z0-9]+$/.test(asset.filename)) {
     throw new Error("Invalid media filename");
   }
-
-  ensureDataDirs();
   const localPath = path.join(MEDIA_DIR, asset.filename);
-  if (fs.existsSync(localPath)) return localPath;
-  if (!asset.storageUrl) throw new Error("Media is missing");
-
+  if (!asset.storageUrl) return { localPath };
   const url = new URL(asset.storageUrl);
   if (url.protocol !== "https:" || !url.hostname.endsWith(".blob.vercel-storage.com")) {
     throw new Error("Untrusted media URL");
   }
-  const response = await fetch(url, { cache: "no-store" });
+  return { localPath, storageUrl: url.toString() };
+}
+
+/**
+ * Return an FFmpeg-readable input without copying a cloud source into /tmp.
+ * FFmpeg can range-read public Vercel Blob URLs directly, which keeps a large
+ * 30+ source project from exhausting serverless scratch disk before rendering.
+ */
+export function resolveMediaInput(asset: MediaLocation): string {
+  ensureDataDirs();
+  const { localPath, storageUrl } = validateLocation(asset);
+  if (fs.existsSync(localPath)) return localPath;
+  if (storageUrl) return storageUrl;
+  throw new Error("Media is missing");
+}
+
+/** Returns a local FFmpeg-readable path, downloading a Blob asset to /tmp once. */
+export async function materializeMedia(asset: MediaLocation): Promise<string> {
+  ensureDataDirs();
+  const { localPath, storageUrl } = validateLocation(asset);
+  if (fs.existsSync(localPath)) return localPath;
+  if (!storageUrl) throw new Error("Media is missing");
+  const response = await fetch(storageUrl, { cache: "no-store" });
   if (!response.ok || !response.body) throw new Error("Could not download media");
 
   const partial = `${localPath}.${process.pid}.partial`;

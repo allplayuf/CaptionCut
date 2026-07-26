@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import type { ExportJobState, ExportPresetId, MediaAsset, Track } from "@/types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ExportJobState, ExportPhase, ExportPresetId, MediaAsset, Track } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { formatTime } from "@/lib/video/timeline";
@@ -9,6 +9,7 @@ import { mainVideoTrack, tracksDuration } from "@/lib/timeline/tracks";
 import { buildExportRequest } from "@/lib/export/request";
 import { EXPORT_PRESETS } from "@/lib/export/presets";
 import { FORMATS } from "@/lib/video/formats";
+import { mapWithConcurrency } from "@/lib/shared/concurrency";
 import {
   AlertTriangle,
   Captions,
@@ -46,8 +47,7 @@ async function runPreflight(
   }
 
   const missing: string[] = [];
-  await Promise.all(
-    [...referenced].map(async (id) => {
+  await mapWithConcurrency([...referenced], 4, async (id) => {
       const asset = mediaById.get(id);
       if (!asset) {
         missing.push(id);
@@ -62,16 +62,62 @@ async function runPreflight(
       } catch {
         missing.push(asset.originalName);
       }
-    })
-  );
+    });
   return missing.sort();
 }
 
 type Phase =
   | { name: "idle" }
-  | { name: "running"; jobId: string; progress: number }
+  | { name: "running"; jobId: string; progress: number; phase?: ExportPhase; detail?: string }
   | { name: "done"; jobId: string }
   | { name: "error"; message: string };
+
+const ACTIVE_EXPORT_KEY = "captioncut-active-export-v1";
+
+function rememberActiveExport(jobId: string, startedAt: number): void {
+  try {
+    window.localStorage.setItem(ACTIVE_EXPORT_KEY, JSON.stringify({ jobId, startedAt }));
+  } catch {
+    // Durable server-side job state still works when browser storage is unavailable.
+  }
+}
+
+function recallActiveExport(): { jobId: string; startedAt: number } | null {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(ACTIVE_EXPORT_KEY) ?? "null") as {
+      jobId?: unknown;
+      startedAt?: unknown;
+    } | null;
+    if (
+      value &&
+      typeof value.jobId === "string" &&
+      /^[a-zA-Z0-9_-]{6,32}$/.test(value.jobId) &&
+      typeof value.startedAt === "number" &&
+      Date.now() - value.startedAt < 24 * 60 * 60 * 1000
+    ) {
+      return { jobId: value.jobId, startedAt: value.startedAt };
+    }
+  } catch {
+    // Ignore corrupt or unavailable browser storage.
+  }
+  forgetActiveExport();
+  return null;
+}
+
+function forgetActiveExport(): void {
+  try {
+    window.localStorage.removeItem(ACTIVE_EXPORT_KEY);
+  } catch {
+    // Nothing else to clean up.
+  }
+}
+
+function exportPhaseLabel(phase?: ExportPhase): string {
+  if (phase === "queued") return "Återansluter till renderingen…";
+  if (phase === "preparing") return "Kontrollerar och förbereder källmaterialet…";
+  if (phase === "uploading") return "Slutför och sparar masterfilen…";
+  return "Klipp, effekter, ljud och captions renderas i den färdiga videon.";
+}
 
 export default function ExportModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   return open ? <ExportDialog onClose={onClose} /> : null;
@@ -92,6 +138,45 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const [startedAt, setStartedAt] = useState(0);
+
+  const pollExport = useCallback(
+    async function pollExportJob(jobId: string, jobStartedAt: number, failures = 0) {
+      try {
+        const statusResponse = await fetch(`/api/export/${jobId}`, { cache: "no-store" });
+        if (!statusResponse.ok) {
+          if (statusResponse.status === 404) forgetActiveExport();
+          throw new Error("Exportstatus saknas.");
+        }
+        const status = (await statusResponse.json()) as ExportJobState & { error?: string };
+        if (status.status === "done") {
+          setPhase({ name: "done", jobId });
+          return;
+        }
+        if (status.status === "error") {
+          forgetActiveExport();
+          setPhase({ name: "error", message: status.error ?? "Renderingen misslyckades." });
+          return;
+        }
+        setPhase({
+          name: "running",
+          jobId,
+          progress: status.progress ?? 0,
+          phase: status.phase,
+          detail: status.detail,
+        });
+        failures = 0;
+      } catch {
+        failures += 1;
+      }
+      const elapsed = Date.now() - jobStartedAt;
+      const delay = failures > 0 ? Math.min(8_000, 1_500 * 2 ** Math.min(2, failures)) : elapsed > 60_000 ? 2_500 : 1_200;
+      pollRef.current = setTimeout(
+        () => void pollExportJob(jobId, jobStartedAt, failures),
+        delay
+      );
+    },
+    []
+  );
 
   const duration = tracksDuration(tracks);
   const preset = EXPORT_PRESETS.find((candidate) => candidate.id === presetId) ?? EXPORT_PRESETS[0];
@@ -124,6 +209,14 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
   }, []);
 
   useEffect(() => {
+    const active = recallActiveExport();
+    if (!active) return;
+    setStartedAt(active.startedAt);
+    setPhase({ name: "running", jobId: active.jobId, progress: 0, phase: "queued" });
+    void pollExport(active.jobId, active.startedAt);
+  }, [pollExport]);
+
+  useEffect(() => {
     return () => {
       if (pollRef.current) clearTimeout(pollRef.current);
     };
@@ -150,29 +243,11 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
       if (!response.ok) throw new Error(body.error ?? "Renderingen kunde inte starta.");
 
       const jobId = body.id;
-      setStartedAt(Date.now());
-      setPhase({ name: "running", jobId, progress: 0 });
-
-      const poll = async () => {
-        try {
-          const statusResponse = await fetch(`/api/export/${jobId}`, { cache: "no-store" });
-          const status = (await statusResponse.json()) as ExportJobState & { error?: string };
-          if (status.status === "done") {
-            setPhase({ name: "done", jobId });
-            return;
-          }
-          if (status.status === "error") {
-            setPhase({ name: "error", message: status.error ?? "Renderingen misslyckades." });
-            return;
-          }
-          setPhase({ name: "running", jobId, progress: status.progress ?? 0 });
-        } catch {
-          // A status request can land on a cold function. The durable job keeps
-          // rendering, so retry instead of turning a transient miss into data loss.
-        }
-        pollRef.current = setTimeout(poll, 900);
-      };
-      pollRef.current = setTimeout(poll, 500);
+      const jobStartedAt = Date.now();
+      setStartedAt(jobStartedAt);
+      rememberActiveExport(jobId, jobStartedAt);
+      setPhase({ name: "running", jobId, progress: 0, phase: body.phase, detail: body.detail });
+      pollRef.current = setTimeout(() => void pollExport(jobId, jobStartedAt), 500);
     } catch (error) {
       setPhase({
         name: "error",
@@ -181,7 +256,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const canClose = phase.name !== "running";
+  const canClose = true;
   const dialogRef = useDialogA11y<HTMLDivElement>({
     open: true,
     onClose,
@@ -229,7 +304,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
             disabled={!canClose}
             className="icon-button h-8 w-8 disabled:cursor-not-allowed disabled:opacity-25"
             aria-label="Stäng export"
-            title={canClose ? "Stäng" : "Vänta tills renderingen är klar"}
+            title="Stäng — exporten fortsätter"
           >
             <X size={16} />
           </button>
@@ -341,7 +416,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
                   Bygger din färdiga video
                 </h3>
                 <p className="mt-2 text-[11px] leading-relaxed text-[#71808c]">
-                  Klipp och effekter komponeras först. Därefter mixas ljudet och captions bränns in permanent.
+                  {phase.detail ?? exportPhaseLabel(phase.phase)}
                 </p>
               </div>
               <div className="mx-auto mt-7 max-w-[500px]">
@@ -361,7 +436,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
                   />
                 </div>
                 <p className="mt-3 text-center font-mono text-[9px] text-[#5e6b76]">
-                  Stäng inte fönstret{remainingLabel(phase.progress, startedAt)}
+                  Exporten fortsätter om du stänger rutan eller laddar om{remainingLabel(phase.progress, startedAt)}
                 </p>
               </div>
             </div>
@@ -387,6 +462,16 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
               >
                 <Download size={16} /> Ladda ner färdig MP4
               </a>
+              <button
+                type="button"
+                onClick={() => {
+                  forgetActiveExport();
+                  setPhase({ name: "idle" });
+                }}
+                className="secondary-compact mt-3 h-10 w-full max-w-[440px] rounded-xl"
+              >
+                Exportera en ny version
+              </button>
               <button type="button" onClick={onClose} className="mt-3 text-[10px] font-semibold text-[#6f7b86] transition hover:text-[#c8d0d7]">
                 Tillbaka till editorn
               </button>

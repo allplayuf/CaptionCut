@@ -4,7 +4,8 @@ import path from "path";
 import type { AudioAnalysis, MediaAnalysis, VideoAnalysis } from "@/types";
 import { FFMPEG } from "./ffmpeg";
 import { ANALYSIS_DIR, ensureDataDirs, safeId } from "./paths";
-import { materializeMedia } from "./media";
+import { resolveMediaInput } from "./media";
+import { writeFileAtomicSync } from "./atomicFile";
 
 /**
  * Local media analysis — the auto editor's "eyes and ears". Two fast FFmpeg
@@ -54,7 +55,7 @@ export async function analyzeAsset(
 
   let file: string;
   try {
-    file = await materializeMedia({ id: assetId, filename, storageUrl });
+    file = resolveMediaInput({ id: assetId, filename, storageUrl });
   } catch {
     return null;
   }
@@ -74,7 +75,7 @@ export async function analyzeAsset(
     video,
   };
   try {
-    fs.writeFileSync(cacheFile, JSON.stringify(analysis), "utf8");
+    writeFileAtomicSync(cacheFile, JSON.stringify(analysis));
   } catch {
     // cache write is best-effort
   }

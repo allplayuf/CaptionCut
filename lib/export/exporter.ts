@@ -4,7 +4,8 @@ import { nanoid } from "nanoid";
 import type { ExportJobState, MediaAnalysis, MediaAsset } from "@/types";
 import { ANALYSIS_DIR, EXPORTS_DIR, MEDIA_DIR, TMP_DIR, ensureDataDirs, safeId } from "@/lib/server/paths";
 import { runFfmpeg } from "@/lib/server/ffmpeg";
-import { materializeMedia } from "@/lib/server/media";
+import { resolveMediaInput } from "@/lib/server/media";
+import { writeFileAtomic } from "@/lib/server/atomicFile";
 import { clipSpeed, totalDuration } from "@/lib/video/timeline";
 import { buildAss } from "./ass";
 import { getExportPreset } from "./presets";
@@ -35,12 +36,31 @@ const MAX_ZOOM_SEGMENTS = 80;
  */
 const LOUDNORM = "loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000";
 
+function appendInput(args: string[], file: string, options: string[] = []): void {
+  args.push(...options);
+  if (/^https:\/\//.test(file)) {
+    args.push(
+      "-reconnect", "1",
+      "-reconnect_streamed", "1",
+      "-reconnect_delay_max", "5",
+      "-rw_timeout", "30000000"
+    );
+  }
+  args.push("-i", file);
+}
+
 export async function startExportJob(
   req: ExportRequest
 ): Promise<{ state: ExportJobState; task: Promise<void> }> {
   ensureDataDirs();
   const jobId = nanoid(10);
-  const state: ExportJobState = { id: jobId, status: "processing", progress: 0 };
+  const state: ExportJobState = {
+    id: jobId,
+    status: "processing",
+    progress: 0,
+    phase: "preparing",
+    detail: "Förbereder källmaterial",
+  };
   await writeJobState(state);
 
   const task = runExport(jobId, req).catch(async (err) => {
@@ -49,6 +69,7 @@ export async function startExportJob(
       id: jobId,
       status: "error",
       progress: 0,
+      phase: "failed",
       error: friendlyExportError(err),
     });
   });
@@ -103,19 +124,28 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
       ...(req.audioClips ?? []).map((audio) => audio.assetId),
     ]);
     const localFiles = new Map<string, string>();
-    await Promise.all(
-      [...usedIds].map(async (id) => {
-        const asset = mediaById.get(id);
-        if (!asset) throw new Error("MEDIA_MISSING");
-        localFiles.set(id, await materializeMedia(asset));
-      })
-    );
+    for (const id of usedIds) {
+      const asset = mediaById.get(id);
+      if (!asset) throw new Error("MEDIA_MISSING");
+      try {
+        localFiles.set(id, resolveMediaInput(asset));
+      } catch {
+        throw new Error("MEDIA_MISSING");
+      }
+    }
+    await writeJobState({
+      id: jobId,
+      status: "processing",
+      progress: 0.03,
+      phase: "preparing",
+      detail: `${usedIds.size} källor kontrollerade`,
+    });
 
     const assetFile = (id: string): { asset: MediaAsset; file: string } => {
       const asset = mediaById.get(id);
       if (!asset) throw new Error("MEDIA_MISSING");
       const file = localFiles.get(id) ?? path.join(MEDIA_DIR, asset.filename);
-      if (!fs.existsSync(file)) throw new Error("MEDIA_MISSING");
+      if (!/^https:\/\//.test(file) && !fs.existsSync(file)) throw new Error("MEDIA_MISSING");
       return { asset, file };
     };
 
@@ -135,7 +165,7 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
     const mainInputIndex = new Map<string, number>();
     for (const id of mainIds) {
       const { file } = assetFile(id);
-      inputArgs.push("-i", file);
+      appendInput(inputArgs, file);
       mainInputIndex.set(id, inputCount++);
     }
 
@@ -144,9 +174,9 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
     for (const ov of overlays) {
       const { file } = assetFile(ov.assetId);
       if (ov.kind === "image") {
-        inputArgs.push("-loop", "1", "-t", (ov.end - ov.start + 0.5).toFixed(3), "-i", file);
+        appendInput(inputArgs, file, ["-loop", "1", "-t", (ov.end - ov.start + 0.5).toFixed(3)]);
       } else {
-        inputArgs.push("-i", file);
+        appendInput(inputArgs, file);
       }
       overlayInputIndex.push(inputCount++);
     }
@@ -155,7 +185,7 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
     const audioInputIndex: number[] = [];
     for (const a of audioClips) {
       const { file } = assetFile(a.assetId);
-      inputArgs.push("-i", file);
+      appendInput(inputArgs, file);
       audioInputIndex.push(inputCount++);
     }
 
@@ -517,7 +547,14 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
 
     /* ---------------- encode ---------------- */
     const outPath = exportOutputPath(jobId);
-    let lastSavedProgress = 0;
+    await writeJobState({
+      id: jobId,
+      status: "processing",
+      progress: 0.04,
+      phase: "rendering",
+      detail: `Renderar ${pieces.length} bildsegment`,
+    });
+    let lastSavedProgress = 0.04;
     const args = [
       "-y",
       ...inputArgs,
@@ -548,16 +585,37 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
         const now = Date.now();
         if (now - lastWrite > 400) {
           lastWrite = now;
-          if (fraction - lastSavedProgress >= 0.025) {
-            lastSavedProgress = fraction;
-            void writeJobState({ id: jobId, status: "processing", progress: fraction });
+          const progress = Math.min(0.96, 0.04 + fraction * 0.92);
+          if (progress - lastSavedProgress >= 0.025) {
+            lastSavedProgress = progress;
+            void writeJobState({
+              id: jobId,
+              status: "processing",
+              progress,
+              phase: "rendering",
+              detail: `Renderar ${pieces.length} bildsegment`,
+            });
           }
         }
       },
     });
 
+    await writeJobState({
+      id: jobId,
+      status: "processing",
+      progress: 0.97,
+      phase: "uploading",
+      detail: "Slutför masterfilen",
+    });
     const downloadUrl = await persistExport(jobId, outPath);
-    await writeJobState({ id: jobId, status: "done", progress: 1, downloadUrl });
+    await writeJobState({
+      id: jobId,
+      status: "done",
+      progress: 1,
+      phase: "done",
+      detail: "Masterfilen är klar",
+      downloadUrl,
+    });
   } finally {
     fs.rmSync(jobDir, { recursive: true, force: true });
   }
@@ -778,7 +836,7 @@ async function writeJobStateRaw(state: ExportJobState): Promise<void> {
     return;
   }
   const file = path.join(EXPORTS_DIR, `${state.id}.json`);
-  await fs.promises.writeFile(file, JSON.stringify(state), "utf8");
+  await writeFileAtomic(file, JSON.stringify(state));
 }
 
 async function persistExport(jobId: string, file: string): Promise<string | undefined> {

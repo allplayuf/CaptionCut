@@ -4,7 +4,8 @@ import path from "path";
 import { ANALYSIS_DIR, MEDIA_DIR, ensureDataDirs } from "@/lib/server/paths";
 import { FFPROBE, runFfmpeg } from "@/lib/server/ffmpeg";
 import { spawn } from "child_process";
-import { blobLocationFromUrl, materializeMedia } from "@/lib/server/media";
+import { blobLocationFromUrl, resolveMediaInput } from "@/lib/server/media";
+import { TaskQueue } from "@/lib/server/taskQueue";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,8 @@ export const runtime = "nodejs";
     Keep in sync with FILMSTRIP_FRAMES in lib/video/client.ts. */
 const FRAMES = 20;
 const FRAME_H = 108; // 2x the 54px video-lane height for crisp rendering
+const filmstripQueue = new TaskQueue(2);
+const filmstripJobs = new Map<string, Promise<void>>();
 
 /**
  * Returns a horizontal filmstrip sprite (FRAMES thumbnails tiled in one JPEG)
@@ -34,7 +37,7 @@ export async function GET(
     const storageUrl = request.nextUrl.searchParams.get("src");
     if (storageUrl) {
       try {
-        file = await materializeMedia(blobLocationFromUrl(id, storageUrl));
+        file = resolveMediaInput(blobLocationFromUrl(id, storageUrl));
       } catch {
         file = undefined;
       }
@@ -49,21 +52,7 @@ export async function GET(
     if (!file) return NextResponse.json({ error: "Media not found" }, { status: 404 });
 
     try {
-      const duration = await probeDuration(file);
-      // fps = FRAMES/duration samples evenly; tile lays them side by side.
-      const fps = Math.max(0.01, FRAMES / Math.max(0.5, duration));
-      await runFfmpeg(
-        [
-          "-y",
-          "-i", file,
-          "-an",
-          "-vf", `fps=${fps.toFixed(5)},scale=-2:${FRAME_H},tile=${FRAMES}x1`,
-          "-frames:v", "1",
-          "-q:v", "5",
-          cacheFile,
-        ],
-        { timeoutMs: 2 * 60 * 1000 }
-      );
+      await ensureFilmstrip(id, file, cacheFile);
     } catch (err) {
       console.error(`filmstrip for ${id} failed:`, err);
       return NextResponse.json({ error: "Could not generate thumbnails." }, { status: 500 });
@@ -79,6 +68,41 @@ export async function GET(
       "Cache-Control": "private, max-age=86400",
     },
   });
+}
+
+async function ensureFilmstrip(id: string, file: string, cacheFile: string): Promise<void> {
+  if (fs.existsSync(cacheFile)) return;
+  const existing = filmstripJobs.get(id);
+  if (existing) return existing;
+  const job = filmstripQueue.run(async () => {
+    if (fs.existsSync(cacheFile)) return;
+    const temporary = `${cacheFile}.${process.pid}.${Date.now()}.tmp.jpg`;
+    try {
+      const duration = await probeDuration(file);
+      const fps = Math.max(0.01, FRAMES / Math.max(0.5, duration));
+      await runFfmpeg(
+        [
+          "-y",
+          "-i", file,
+          "-an",
+          "-vf", `fps=${fps.toFixed(5)},scale=-2:${FRAME_H},tile=${FRAMES}x1`,
+          "-frames:v", "1",
+          "-q:v", "5",
+          temporary,
+        ],
+        { timeoutMs: 2 * 60 * 1000 }
+      );
+      await fs.promises.rename(temporary, cacheFile);
+    } finally {
+      await fs.promises.rm(temporary, { force: true }).catch(() => undefined);
+    }
+  });
+  filmstripJobs.set(id, job);
+  try {
+    await job;
+  } finally {
+    if (filmstripJobs.get(id) === job) filmstripJobs.delete(id);
+  }
 }
 
 function probeDuration(file: string): Promise<number> {

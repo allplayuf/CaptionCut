@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "verify-boundaries": "tsx scripts/verify-request-boundaries.ts",
+    "verify-large-project": "tsx scripts/verify-large-project.ts",
     "setup-whisper": "tsx scripts/setup-whisper.ts"
   },
   "dependencies": {

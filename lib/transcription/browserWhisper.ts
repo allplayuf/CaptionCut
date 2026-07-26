@@ -15,6 +15,7 @@ import { mediaUrl } from "@/lib/video/client";
 
 const TARGET_SAMPLE_RATE = 16_000;
 const MAX_TIMELINE_SECONDS = 60 * 60;
+const CAPTION_BATCH_SECONDS = 3 * 60;
 const NOISE_TOKEN = /^[[(].*[\])]$/;
 
 export interface LocalCaptionProgress {
@@ -68,6 +69,20 @@ interface WorkerError {
 
 type WorkerResponse = WorkerComplete | WorkerLoaded | WorkerProgress | WorkerError;
 
+export interface CaptionAudioSlice {
+  clip: Clip;
+  timelineStart: number;
+  timelineEnd: number;
+  sourceStart: number;
+  selected: boolean;
+}
+
+export interface CaptionAudioBatch {
+  start: number;
+  end: number;
+  slices: CaptionAudioSlice[];
+}
+
 interface PendingRequest {
   resolve: (result: WorkerComplete | WorkerLoaded) => void;
   reject: (error: Error) => void;
@@ -87,9 +102,19 @@ export function preloadLocalCaptionModel(
   const task = new Promise<void>((resolve, reject) => {
     const id = nanoid(10);
     const worker = getCaptionWorker();
+    const timeout = window.setTimeout(
+      () => stopCaptionWorker(new Error("The local caption model took too long to load.")),
+      10 * 60 * 1000
+    );
     pending.set(id, {
-      resolve: () => resolve(),
-      reject,
+      resolve: () => {
+        window.clearTimeout(timeout);
+        resolve();
+      },
+      reject: (error) => {
+        window.clearTimeout(timeout);
+        reject(error);
+      },
     });
     worker.postMessage({
       id,
@@ -114,18 +139,71 @@ export async function transcribeTimelineInBrowser(
     throw new Error("Local captions currently support timelines up to 60 minutes.");
   }
 
-  options.onProgress?.({
-    stage: "audio",
-    progress: 0,
-    detail: "Preparing timeline audio on this device",
-  });
-  const audio = await buildTimelineAudio(options.clips, options.media, selected, options.onProgress);
-  if (!hasAudibleSignal(audio)) {
+  const planned = planCaptionAudioBatches(options.clips, selected, CAPTION_BATCH_SECONDS);
+  const batches = planned.filter((batch) => batch.slices.some((slice) => slice.selected));
+  const allWords: WordTiming[] = [];
+  let model = "";
+  let device: "webgpu" | "wasm" = "wasm";
+  let audibleBatches = 0;
+
+  for (let index = 0; index < batches.length; index++) {
+    const batch = batches[index];
+    options.onProgress?.({
+      stage: "audio",
+      progress: index / Math.max(1, batches.length),
+      detail: `Preparing caption batch ${index + 1} of ${batches.length}`,
+    });
+    const audio = await buildCaptionBatchAudio(
+      batch,
+      options.media,
+      index,
+      batches.length,
+      options.onProgress
+    );
+    if (!hasAudibleSignal(audio)) continue;
+    audibleBatches += 1;
+    options.onProgress?.({
+      stage: "transcribing",
+      progress: index / Math.max(1, batches.length),
+      detail: `Transcribing batch ${index + 1} of ${batches.length}`,
+    });
+    const result = await runWorker(audio, {
+      ...options,
+      onProgress: (progress) =>
+        options.onProgress?.({
+          ...progress,
+          progress:
+            progress.stage === "transcribing"
+              ? index / Math.max(1, batches.length)
+              : progress.progress,
+          detail:
+            progress.stage === "transcribing"
+              ? `Transcribing batch ${index + 1} of ${batches.length}`
+              : progress.detail,
+        }),
+    });
+    model = result.model;
+    device = result.device;
+    allWords.push(
+      ...wordsFromResult(result.result).map((word) => ({
+        ...word,
+        startTime: word.startTime + batch.start,
+        endTime: word.endTime + batch.start,
+      }))
+    );
+    options.onProgress?.({
+      stage: "transcribing",
+      progress: (index + 1) / batches.length,
+      detail: `Captioned ${index + 1} of ${batches.length} batches`,
+      device,
+    });
+  }
+
+  if (audibleBatches === 0) {
     throw new Error("No readable speech audio was found in the selected video clips.");
   }
 
-  const result = await runWorker(audio, options);
-  const timedWords = stabilizeWordTimings(wordsFromResult(result.result))
+  const timedWords = stabilizeWordTimings(allWords)
     .filter((word) => word.startTime < duration)
     .map((word) => {
       const startTime = Math.max(0, Math.min(duration, word.startTime));
@@ -143,7 +221,7 @@ export async function transcribeTimelineInBrowser(
   if (captions.length === 0) {
     throw new Error("No speech was detected. Check the language and try the accurate model.");
   }
-  return { captions, model: modelLabel(result.model), device: result.device };
+  return { captions, model: modelLabel(model), device };
 }
 
 async function runWorker(
@@ -157,12 +235,20 @@ async function runWorker(
     audio.byteOffset + audio.byteLength
   ) as ArrayBuffer;
   return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(
+      () => stopCaptionWorker(new Error("This caption batch took too long and was stopped safely.")),
+      20 * 60 * 1000
+    );
     pending.set(id, {
       resolve: (result) => {
+        window.clearTimeout(timeout);
         if (result.type === "complete") resolve(result);
         else reject(new Error("The local caption engine returned no transcript."));
       },
-      reject,
+      reject: (error) => {
+        window.clearTimeout(timeout);
+        reject(error);
+      },
       onProgress: options.onProgress,
     });
     worker.postMessage(
@@ -207,55 +293,144 @@ function getCaptionWorker(): Worker {
       request.resolve(event.data);
     }
   });
-  captionWorker.addEventListener("error", () => {
-    const error = new Error(
-      "The browser could not start the local caption engine. Reload and try Chrome or Edge."
-    );
-    for (const request of pending.values()) request.reject(error);
-    pending.clear();
-    captionWorker?.terminate();
-    captionWorker = null;
-  });
+  captionWorker.addEventListener("error", () =>
+    stopCaptionWorker(
+      new Error("The browser could not start the local caption engine. Reload and try Chrome or Edge.")
+    )
+  );
   return captionWorker;
 }
 
-async function buildTimelineAudio(
+function stopCaptionWorker(error: Error): void {
+  const worker = captionWorker;
+  captionWorker = null;
+  worker?.terminate();
+  for (const request of pending.values()) request.reject(error);
+  pending.clear();
+}
+
+/**
+ * Split the edited timeline into bounded audio batches. Long source clips are
+ * sliced as needed, while timeline positions remain exact across boundaries.
+ */
+export function planCaptionAudioBatches(
   clips: Clip[],
-  media: MediaAsset[],
   selected: Set<string> | undefined,
+  maxBatchSeconds = CAPTION_BATCH_SECONDS
+): CaptionAudioBatch[] {
+  const target = Math.max(30, maxBatchSeconds);
+  const hardLimit = target + Math.min(30, target * 0.2);
+  const batches: CaptionAudioBatch[] = [];
+  let slices: CaptionAudioSlice[] = [];
+  let batchStart = 0;
+  let batchDuration = 0;
+  let timelineCursor = 0;
+
+  const finish = () => {
+    if (slices.length === 0) return;
+    batches.push({ start: batchStart, end: batchStart + batchDuration, slices });
+    slices = [];
+    batchDuration = 0;
+  };
+
+  for (const clip of clips) {
+    const speed = clipSpeed(clip);
+    const duration = clipDuration(clip);
+    if (duration <= 0.0005) continue;
+    // Prefer real clip joins over arbitrary audio cuts. A small amount of
+    // headroom keeps a spoken word from being split just because the target
+    // batch duration landed in the middle of a source clip.
+    if (duration <= hardLimit) {
+      if (slices.length > 0 && batchDuration + duration > hardLimit) finish();
+      if (slices.length === 0) batchStart = timelineCursor;
+      slices.push({
+        clip,
+        timelineStart: timelineCursor,
+        timelineEnd: timelineCursor + duration,
+        sourceStart: clip.sourceStart,
+        selected: !selected || selected.has(clip.id),
+      });
+      batchDuration += duration;
+      timelineCursor += duration;
+      if (batchDuration >= target) finish();
+      continue;
+    }
+
+    if (slices.length > 0) finish();
+    let consumed = 0;
+    while (consumed < duration - 0.0005) {
+      if (slices.length === 0) batchStart = timelineCursor + consumed;
+      const available = target - batchDuration;
+      const take = Math.min(duration - consumed, available);
+      const sliceStart = timelineCursor + consumed;
+      slices.push({
+        clip,
+        timelineStart: sliceStart,
+        timelineEnd: sliceStart + take,
+        sourceStart: clip.sourceStart + consumed * speed,
+        selected: !selected || selected.has(clip.id),
+      });
+      batchDuration += take;
+      consumed += take;
+      if (target - batchDuration < 0.0005) finish();
+    }
+    timelineCursor += duration;
+  }
+  finish();
+  return batches;
+}
+
+async function buildCaptionBatchAudio(
+  batch: CaptionAudioBatch,
+  media: MediaAsset[],
+  batchIndex: number,
+  batchCount: number,
   onProgress: BrowserTranscriptionOptions["onProgress"]
 ): Promise<Float32Array> {
   const mediaById = new Map(media.map((asset) => [asset.id, asset]));
-  const sourceIds = [
-    ...new Set(
-      clips
-        .filter((clip) => !selected || selected.has(clip.id))
-        .map((clip) => audioSourceForClip(clip, mediaById)?.asset.id)
-        .filter((id): id is string => Boolean(id))
-    ),
-  ];
+  const grouped = new Map<
+    string,
+    { source: { asset: MediaAsset; offsetSeconds: number }; slices: CaptionAudioSlice[] }
+  >();
+  for (const slice of batch.slices) {
+    if (!slice.selected) continue;
+    const source = audioSourceForClip(slice.clip, mediaById);
+    if (!source) continue;
+    const entry = grouped.get(source.asset.id) ?? { source, slices: [] };
+    entry.slices.push(slice);
+    grouped.set(source.asset.id, entry);
+  }
+  const sources = [...grouped.values()];
+  const sourceIds = sources.map((entry) => entry.source.asset.id);
   if (sourceIds.length === 0) {
-    throw new Error("The selected clips do not contain an audio source.");
+    return new Float32Array(Math.max(1, Math.round((batch.end - batch.start) * TARGET_SAMPLE_RATE)));
   }
 
-  const decoded = new Map<string, Float32Array>();
-  const context = new AudioContext();
+  const totalSamples = Math.max(1, Math.round((batch.end - batch.start) * TARGET_SAMPLE_RATE));
+  const timeline = new Float32Array(totalSamples);
+  type AudioContextCtor = typeof AudioContext;
+  const Ctor: AudioContextCtor =
+    window.AudioContext ??
+    (window as unknown as { webkitAudioContext: AudioContextCtor }).webkitAudioContext;
+  const context = new Ctor();
   try {
-    for (let index = 0; index < sourceIds.length; index++) {
-      const id = sourceIds[index];
-      const asset = mediaById.get(id);
-      if (!asset) continue;
+    for (let index = 0; index < sources.length; index++) {
+      const { source, slices: sourceSlices } = sources[index];
+      const asset = source.asset;
       onProgress?.({
         stage: "audio",
-        progress: index / sourceIds.length,
-        detail: `Reading ${asset.originalName}`,
+        progress: (batchIndex + index / Math.max(1, sources.length)) / Math.max(1, batchCount),
+        detail: `Reading ${asset.originalName} (${batchIndex + 1}/${batchCount})`,
       });
       const response = await fetch(mediaUrl(asset));
       if (!response.ok) {
         throw new Error(`Could not read "${asset.originalName}" for local captions.`);
       }
       const buffer = await context.decodeAudioData(await response.arrayBuffer());
-      decoded.set(id, resampleToMono(buffer));
+      const level = measureAudioBuffer(buffer);
+      for (const slice of sourceSlices) {
+        writeAudioSlice(timeline, batch.start, slice, source.offsetSeconds, buffer, level);
+      }
     }
   } catch (error) {
     if (error instanceof Error && /Could not read/.test(error.message)) throw error;
@@ -266,77 +441,55 @@ async function buildTimelineAudio(
     await context.close().catch(() => {});
   }
 
-  const totalSamples = clips.reduce(
-    (sum, clip) => sum + Math.round(clipDuration(clip) * TARGET_SAMPLE_RATE),
-    0
-  );
-  const timeline = new Float32Array(totalSamples);
-  let writeOffset = 0;
-  clips.forEach((clip, index) => {
-    const clipSamples = Math.round(clipDuration(clip) * TARGET_SAMPLE_RATE);
-    const source = audioSourceForClip(clip, mediaById);
-    if (source && (!selected || selected.has(clip.id))) {
-      const samples = decoded.get(source.asset.id);
-      if (samples) {
-        const speed = clipSpeed(clip);
-        const sourceStart = clip.sourceStart - source.offsetSeconds;
-        for (let outIndex = 0; outIndex < clipSamples; outIndex++) {
-          const sourceTime = sourceStart + (outIndex / TARGET_SAMPLE_RATE) * speed;
-          const sourceIndex = Math.round(sourceTime * TARGET_SAMPLE_RATE);
-          if (sourceIndex >= 0 && sourceIndex < samples.length) {
-            timeline[writeOffset + outIndex] = samples[sourceIndex];
-          }
-        }
-      }
-    }
-    writeOffset += clipSamples;
-    onProgress?.({
-      stage: "audio",
-      progress: (index + 1) / clips.length,
-      detail: "Building the edited audio timeline",
-    });
-  });
   return timeline;
 }
 
-function resampleToMono(buffer: AudioBuffer): Float32Array {
-  const length = Math.max(1, Math.round(buffer.duration * TARGET_SAMPLE_RATE));
-  const output = new Float32Array(length);
+function measureAudioBuffer(buffer: AudioBuffer): { mean: number; gain: number } {
   const channels = Array.from({ length: buffer.numberOfChannels }, (_, index) =>
     buffer.getChannelData(index)
   );
-  const ratio = buffer.sampleRate / TARGET_SAMPLE_RATE;
-  for (let index = 0; index < length; index++) {
-    const sourcePosition = index * ratio;
-    const left = Math.floor(sourcePosition);
+  let mean = 0;
+  const stride = Math.max(1, Math.floor(buffer.length / 200_000));
+  let measured = 0;
+  for (let index = 0; index < buffer.length; index += stride) {
+    for (const channel of channels) mean += channel[index];
+    measured++;
+  }
+  mean /= Math.max(1, measured * channels.length);
+  let peak = 0;
+  for (let index = 0; index < buffer.length; index += stride) {
+    for (const channel of channels) peak = Math.max(peak, Math.abs(channel[index] - mean));
+  }
+  return { mean, gain: peak > 0.0001 ? Math.min(10, 0.92 / peak) : 1 };
+}
+
+function writeAudioSlice(
+  timeline: Float32Array,
+  batchStart: number,
+  slice: CaptionAudioSlice,
+  sourceOffsetSeconds: number,
+  buffer: AudioBuffer,
+  level: { mean: number; gain: number }
+): void {
+  const channels = Array.from({ length: buffer.numberOfChannels }, (_, index) =>
+    buffer.getChannelData(index)
+  );
+  const speed = clipSpeed(slice.clip);
+  const outputStart = Math.max(0, Math.round((slice.timelineStart - batchStart) * TARGET_SAMPLE_RATE));
+  const outputLength = Math.max(0, Math.round((slice.timelineEnd - slice.timelineStart) * TARGET_SAMPLE_RATE));
+  for (let index = 0; index < outputLength && outputStart + index < timeline.length; index++) {
+    const sourceTime = slice.sourceStart - sourceOffsetSeconds + (index / TARGET_SAMPLE_RATE) * speed;
+    const position = sourceTime * buffer.sampleRate;
+    const left = Math.floor(position);
+    if (left < 0 || left >= buffer.length) continue;
     const right = Math.min(left + 1, buffer.length - 1);
-    const mix = sourcePosition - left;
+    const mix = position - left;
     let sample = 0;
     for (const channel of channels) {
       sample += channel[left] * (1 - mix) + channel[right] * mix;
     }
-    output[index] = sample / channels.length;
+    timeline[outputStart + index] = ((sample / channels.length) - level.mean) * level.gain;
   }
-  // Lift quiet phone recordings without clipping. Whisper is far more stable
-  // when speech arrives at a predictable level, especially in the WASM path.
-  let peak = 0;
-  let mean = 0;
-  const stride = Math.max(1, Math.floor(output.length / 200_000));
-  let measured = 0;
-  for (let index = 0; index < output.length; index += stride) {
-    mean += output[index];
-    measured++;
-  }
-  mean /= Math.max(1, measured);
-  for (let index = 0; index < output.length; index++) {
-    output[index] -= mean;
-    peak = Math.max(peak, Math.abs(output[index]));
-  }
-  if (peak > 0.0001) {
-    const gain = Math.min(10, 0.92 / peak);
-    for (let index = 0; index < output.length; index++) output[index] *= gain;
-  }
-  return output;
 }
 
 function audioSourceForClip(

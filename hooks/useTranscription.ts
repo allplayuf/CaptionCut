@@ -72,6 +72,10 @@ export function useTranscription() {
     options: RunTranscriptionOptions = {}
   ): Promise<Caption[] | null> => {
     const store = useEditorStore.getState();
+    if (store.isTranscribing) {
+      store.addToast("info", "Captions kör redan. Vänta tills den pågående körningen är klar.");
+      return null;
+    }
     const clips = mainClips(store.tracks);
     if (clips.length === 0) {
       store.addToast("info", "Upload a video first.");

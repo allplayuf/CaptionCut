@@ -5,12 +5,48 @@
  * peak values for waveform drawing. Throws when the browser can't decode the
  * container/codec — callers fall back to a placeholder pattern.
  */
-export async function computePeaks(url: string, numPeaks = 1600): Promise<number[]> {
+const MAX_DECODE_BYTES = 120 * 1024 * 1024;
+let waveformTail: Promise<unknown> = Promise.resolve();
+const waveformJobs = new Map<string, Promise<number[]>>();
+
+/**
+ * Queue waveform decoding one file at a time. Importing 30 videos otherwise
+ * starts 30 full-file fetch + WebAudio decodes simultaneously and can exhaust
+ * a browser tab before the editor has even been used.
+ */
+export function queueWaveformPeaks(
+  key: string,
+  url: string,
+  sourceSize?: number,
+  numPeaks = 1600
+): Promise<number[]> {
+  const existing = waveformJobs.get(key);
+  if (existing) return existing;
+  const job = waveformTail
+    .catch(() => undefined)
+    .then(() => computePeaks(url, numPeaks, sourceSize));
+  waveformTail = job;
+  waveformJobs.set(key, job);
+  const release = () => {
+    if (waveformJobs.get(key) === job) waveformJobs.delete(key);
+  };
+  void job.then(release, release);
+  return job;
+}
+
+export async function computePeaks(
+  url: string,
+  numPeaks = 1600,
+  sourceSize?: number
+): Promise<number[]> {
+  if (sourceSize && sourceSize > MAX_DECODE_BYTES) {
+    throw new Error("file too large to decode");
+  }
   const response = await fetch(url);
   if (!response.ok) throw new Error("could not fetch media");
   const buffer = await response.arrayBuffer();
   // Decoding very large files can freeze the tab; placeholder is fine there.
-  if (buffer.byteLength > 120 * 1024 * 1024) throw new Error("file too large to decode");
+  if (buffer.byteLength > MAX_DECODE_BYTES) throw new Error("file too large to decode");
 
   type AudioContextCtor = typeof AudioContext;
   const Ctor: AudioContextCtor =

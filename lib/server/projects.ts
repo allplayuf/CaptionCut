@@ -3,6 +3,7 @@ import path from "path";
 import type { Project, ProjectSummary } from "@/types";
 import { PROJECTS_DIR, ensureDataDirs, safeId } from "./paths";
 import { safeWorkspaceId } from "./workspace";
+import { writeFileAtomic } from "./atomicFile";
 
 function usesBlob(): boolean {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
@@ -88,7 +89,7 @@ export async function saveProject(workspaceId: string, project: Project): Promis
 
   ensureDataDirs();
   const file = path.join(PROJECTS_DIR, `${projectId}.json`);
-  await fs.promises.writeFile(file, JSON.stringify(project, null, 2), "utf8");
+  await writeFileAtomic(file, JSON.stringify(project, null, 2));
 }
 
 export async function deleteProject(workspaceId: string, id: string): Promise<void> {

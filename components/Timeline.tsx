@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Caption, Track, TimelineClip } from "@/types";
+import type { Caption, MediaAsset, Track, TimelineClip } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { filmstripUrl, mediaUrl } from "@/lib/video/client";
-import { computePeaks, placeholderPeaks } from "@/lib/audio/waveform";
+import { placeholderPeaks, queueWaveformPeaks } from "@/lib/audio/waveform";
 import { formatTime } from "@/lib/video/timeline";
 import { mainVideoTrack, snapTargets, snapTime, tracksDuration } from "@/lib/timeline/tracks";
 import { timelineBeatMarkers } from "@/lib/autoEdit/signals";
@@ -103,6 +103,8 @@ export default function Timeline() {
   const updateCaptionTiming = useEditorStore((s) => s.updateCaptionTiming);
   const pushHistory = useEditorStore((s) => s.pushHistory);
   const setWaveform = useEditorStore((s) => s.setWaveform);
+  const mediaById = useMemo(() => new Map(media.map((asset) => [asset.id, asset])), [media]);
+  const selectedClipIdSet = useMemo(() => new Set(selectedClipIds), [selectedClipIds]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -140,7 +142,7 @@ export default function Timeline() {
         waveformStartedRef.current.add(id);
         const asset = media.find((item) => item.id === id);
         if (!asset) continue;
-        computePeaks(mediaUrl(asset))
+        queueWaveformPeaks(asset.id, mediaUrl(asset), asset.size)
           .then((peaks) => setWaveform(id, peaks))
           .catch(() => setWaveform(id, null));
       }
@@ -398,11 +400,11 @@ export default function Timeline() {
               <TrackLane
                 key={track.id}
                 track={track}
-                media={media}
+                mediaById={mediaById}
                 waveforms={waveforms}
                 pxPerSec={pxPerSec}
                 duration={duration}
-                selectedClipIds={selectedClipIds}
+                selectedClipIds={selectedClipIdSet}
                 reorder={track.type === "video" ? reorder : null}
                 onReorderDrag={onReorderDrag}
                 onReorderEnd={onReorderEnd}
@@ -599,11 +601,11 @@ function HeaderIcon({
 
 interface TrackLaneProps {
   track: Track;
-  media: { id: string; originalName: string; duration: number; storageUrl?: string }[];
+  mediaById: Map<string, MediaAsset>;
   waveforms: Record<string, number[] | null>;
   pxPerSec: number;
   duration: number;
-  selectedClipIds: string[];
+  selectedClipIds: Set<string>;
   /** Live main-track drag-reorder state (null while idle / other lanes). */
   reorder: { clipId: string; dx: number; slot: number } | null;
   onReorderDrag: (clipId: string, dx: number, clientX: number) => void;
@@ -621,7 +623,7 @@ interface TrackLaneProps {
 
 function TrackLane({
   track,
-  media,
+  mediaById,
   waveforms,
   pxPerSec,
   selectedClipIds,
@@ -655,17 +657,17 @@ function TrackLane({
           key={clip.id}
           clip={clip}
           track={track}
-          label={clipLabel(clip, media)}
+          label={clipLabel(clip, mediaById)}
           peaks={
             WAVEFORM_TRACKS.includes(track.type) && clip.assetId
               ? waveforms[clip.assetId] ?? placeholderPeaksCached(clip.assetId)
               : null
           }
-          peaksRange={peaksRange(clip, media)}
+          peaksRange={peaksRange(clip, mediaById)}
           pxPerSec={pxPerSec}
           height={height}
-          selected={selectedClipIds.includes(clip.id)}
-          storageUrl={media.find((item) => item.id === clip.assetId)?.storageUrl}
+          selected={selectedClipIds.has(clip.id)}
+          storageUrl={clip.assetId ? mediaById.get(clip.assetId)?.storageUrl : undefined}
           dragDx={reorder?.clipId === clip.id ? reorder.dx : null}
           onSelect={(additive, range) => onSelect(clip.id, additive, range)}
           onDragStart={onDragStart}
@@ -698,7 +700,7 @@ function computeLaneGeometry(
   });
 }
 
-function clipLabel(clip: TimelineClip, media: { id: string; originalName: string }[]): string {
+function clipLabel(clip: TimelineClip, mediaById: Map<string, MediaAsset>): string {
   if (clip.type === "text" || clip.type === "sticker") return clip.text ?? "";
   if (clip.type === "effects") {
     const fx = clip.effect;
@@ -711,13 +713,13 @@ function clipLabel(clip: TimelineClip, media: { id: string; originalName: string
     if (fx?.kind === "flash") return "⚡ flash";
     return "fx";
   }
-  const asset = clip.assetId ? media.find((m) => m.id === clip.assetId) : undefined;
+  const asset = clip.assetId ? mediaById.get(clip.assetId) : undefined;
   const name = asset?.originalName ?? "clip";
   return clip.metadata?.replay ? `↩ ${name}` : name;
 }
 
-function peaksRange(clip: TimelineClip, media: { id: string; duration: number }[]): [number, number] {
-  const asset = clip.assetId ? media.find((m) => m.id === clip.assetId) : undefined;
+function peaksRange(clip: TimelineClip, mediaById: Map<string, MediaAsset>): [number, number] {
+  const asset = clip.assetId ? mediaById.get(clip.assetId) : undefined;
   if (!asset || !asset.duration) return [0, 1];
   return [(clip.sourceStart ?? 0) / asset.duration, (clip.sourceEnd ?? asset.duration) / asset.duration];
 }

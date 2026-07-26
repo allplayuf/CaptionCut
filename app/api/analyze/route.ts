@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
   if (!Array.isArray(body.media) || body.media.length === 0) {
     return NextResponse.json({ error: "No media to analyze." }, { status: 400 });
   }
-  if (body.media.length > 40) {
+  if (body.media.length > 8) {
     return NextResponse.json({ error: "Too many assets in one request." }, { status: 400 });
   }
   if (jsonTooLarge(body, MAX_ANALYZE_BYTES)) {
