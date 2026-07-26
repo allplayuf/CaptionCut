@@ -28,6 +28,16 @@ export type { ExportRequest } from "./request";
 const REF_W = 1080;
 const REF_H = 1920;
 const MAX_ZOOM_SEGMENTS = 80;
+const BUNDLED_EXPORT_FONT = path.join(
+  process.cwd(),
+  "node_modules",
+  "next",
+  "dist",
+  "compiled",
+  "@vercel",
+  "og",
+  "Geist-Regular.ttf"
+);
 
 /**
  * One-pass loudness normalization to the -14 LUFS short-form standard
@@ -495,12 +505,16 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
     if (captions.length > 0 || textOverlays.length > 0) {
       // subs.ass is referenced relative to the job dir (ffmpeg cwd) to dodge
       // Windows drive-letter escaping issues in the subtitles filter.
+      if (!fs.existsSync(BUNDLED_EXPORT_FONT)) throw new Error("FONT_MISSING");
+      const fontsDir = path.join(jobDir, "fonts");
+      fs.mkdirSync(fontsDir, { recursive: true });
+      fs.copyFileSync(BUNDLED_EXPORT_FONT, path.join(fontsDir, "Geist-Regular.ttf"));
       fs.writeFileSync(
         path.join(jobDir, "subs.ass"),
         buildAss(captions, style, textOverlays, { width: CW, height: CH }),
         "utf8"
       );
-      filters.push(`[${videoLabel}]subtitles=filename=subs.ass[vsub]`);
+      filters.push(`[${videoLabel}]subtitles=filename=subs.ass:fontsdir=fonts[vsub]`);
       videoLabel = "vsub";
     }
 
@@ -857,6 +871,8 @@ function friendlyExportError(err: unknown): string {
   if (message.includes("NO_CLIPS")) return "There is nothing on the timeline to export.";
   if (message.includes("MEDIA_MISSING"))
     return "A source media file is missing. Re-upload it and try again.";
+  if (message.includes("FONT_MISSING"))
+    return "The export font is missing. Redeploy the app and try again.";
   if (message.includes("timed out")) return "Export took too long and was stopped. Try a shorter video.";
   return "Export failed while rendering the video. Try again, or try a shorter/smaller video.";
 }

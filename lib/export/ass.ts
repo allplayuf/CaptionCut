@@ -19,6 +19,8 @@ export interface AssCanvas {
 }
 
 const DEFAULT_CANVAS: AssCanvas = { width: 1080, height: 1920 };
+/** Bundled with the export function so serverless renders never depend on OS fonts. */
+const EXPORT_FONT_FAMILY = "Geist";
 
 /**
  * Vertical placement, expressed as bottom margins for bottom-anchored text.
@@ -80,7 +82,7 @@ export function buildAss(
   const bold = style.fontWeight >= 700 ? -1 : 0;
 
   const styleLines = [
-    `Style: Caption,${style.fontFamily},${Math.round(style.fontSize * fontScale)},${primary},${primary},${outlineColor},${backColor},${bold},0,0,0,100,100,0,0,${borderStyle},${outline},${shadow},${alignment},${Math.round(70 * xScale)},${Math.round(70 * xScale)},${marginV},1`,
+    `Style: Caption,${EXPORT_FONT_FAMILY},${Math.round(style.fontSize * fontScale)},${primary},${primary},${outlineColor},${backColor},${bold},0,0,0,100,100,0,0,${borderStyle},${outline},${shadow},${alignment},${Math.round(70 * xScale)},${Math.round(70 * xScale)},${marginV},1`,
   ];
 
   // One style per overlay (they're few and independent).
@@ -88,7 +90,7 @@ export function buildAss(
     const ovHasBox = ov.backgroundColor !== null;
     const ovOutlineColor = ovHasBox ? assColor(ov.backgroundColor as string, 0.05) : assColor(ov.strokeColor);
     const ovBack = ovHasBox ? assColor(ov.backgroundColor as string, 0.05) : assColor("#000000", 0.5);
-    const family = ov.sticker ? "Segoe UI Emoji" : ov.fontFamily;
+    const family = ov.sticker ? "Segoe UI Emoji" : EXPORT_FONT_FAMILY;
     styleLines.push(
       `Style: Ov${i},${family},${Math.round(ov.fontSize * fontScale)},${assColor(ov.color)},${assColor(ov.color)},${ovOutlineColor},${ovBack},${
         ov.fontWeight >= 700 ? -1 : 0
