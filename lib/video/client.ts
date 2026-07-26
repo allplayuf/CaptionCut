@@ -5,11 +5,26 @@ import type { AssetKind } from "@/types";
 import { nanoid } from "nanoid";
 import { MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_LABEL } from "@/lib/video/uploadLimits";
 
+const localMediaUrls = new Map<string, string>();
+
+/** Keep an imported file available to preview/transcribe before cloud sync ends. */
+export function registerLocalMedia(mediaId: string, file: File): string {
+  const previous = localMediaUrls.get(mediaId);
+  if (previous) URL.revokeObjectURL(previous);
+  const url = URL.createObjectURL(file);
+  localMediaUrls.set(mediaId, url);
+  return url;
+}
+
+export function localMediaUrl(mediaId: string): string | undefined {
+  return localMediaUrls.get(mediaId);
+}
+
 /** Direct Blob URL in production; local streaming route in development. */
 export function mediaUrl(media: string | Pick<MediaAsset, "id" | "storageUrl">): string {
-  return typeof media === "string"
-    ? `/api/media/${media}`
-    : media.storageUrl ?? `/api/media/${media.id}`;
+  const id = typeof media === "string" ? media : media.id;
+  return localMediaUrls.get(id) ??
+    (typeof media === "string" ? `/api/media/${media}` : media.storageUrl ?? `/api/media/${media.id}`);
 }
 
 /** Frames per filmstrip sprite (matches app/api/media/[id]/filmstrip). */
@@ -50,7 +65,8 @@ function uploadConfig() {
  */
 export function uploadVideo(
   file: File,
-  onProgress: (fraction: number) => void
+  onProgress: (fraction: number) => void,
+  onPrepared?: (asset: MediaAsset) => void
 ): Promise<MediaAsset> {
   if (file.size > MAX_UPLOAD_SIZE_BYTES) {
     return Promise.reject(
@@ -61,7 +77,7 @@ export function uploadVideo(
   return uploadConfig().then((config) => {
     if (config.storage === "blob") {
       if (!config.uploadPrefix) throw new Error("Cloud uploads are not ready. Reload and try again.");
-      return uploadToBlob(file, onProgress, config.uploadPrefix);
+      return uploadToBlob(file, onProgress, config.uploadPrefix, onPrepared);
     }
     if (config.storage === "unconfigured") {
       throw new Error("Uploads need a Vercel Blob store. Connect one to this project and redeploy.");
@@ -100,7 +116,8 @@ function uploadToLocalServer(
 async function uploadToBlob(
   file: File,
   onProgress: (fraction: number) => void,
-  uploadPrefix: string
+  uploadPrefix: string,
+  onPrepared?: (asset: MediaAsset) => void
 ): Promise<MediaAsset> {
   const kind = assetKindForFile(file);
   if (!kind) throw new Error("Unsupported file type.");
@@ -111,6 +128,23 @@ async function uploadToBlob(
   const id = nanoid(10);
   const ext = extensionFor(file, kind);
   const filename = `${id}${ext}`;
+  registerLocalMedia(id, file);
+  const prepared: MediaAsset = {
+    id,
+    filename,
+    originalName: file.name,
+    mimeType: file.type || fallbackMime(kind, ext),
+    size: file.size,
+    duration: metadata.duration,
+    width: metadata.width,
+    height: metadata.height,
+    fps: metadata.fps,
+    hasAudio: kind === "audio" || kind === "video",
+    kind,
+    uploadState: "uploading",
+    uploadProgress: 0,
+  };
+  onPrepared?.(prepared);
   const { upload } = await import("@vercel/blob/client");
   const blob = await upload(`${uploadPrefix}/${filename}`, file, {
     access: "public",
@@ -122,20 +156,10 @@ async function uploadToBlob(
 
   onProgress(1);
   return {
-    id,
-    filename,
+    ...prepared,
     storageUrl: blob.url,
-    originalName: file.name,
-    mimeType: file.type || fallbackMime(kind, ext),
-    size: file.size,
-    duration: metadata.duration,
-    width: metadata.width,
-    height: metadata.height,
-    fps: metadata.fps,
-    // Browser media APIs do not expose audio-stream presence. Optimistic true
-    // avoids falsely labelling phone videos as muted; FFmpeg verifies it later.
-    hasAudio: kind === "audio" || kind === "video",
-    kind,
+    uploadState: "ready",
+    uploadProgress: 1,
   };
 }
 

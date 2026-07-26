@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { EditorTool } from "@/lib/ui/editorTools";
 import { useEditorStore } from "@/hooks/useEditorStore";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { tracksDuration } from "@/lib/timeline/tracks";
 import { formatTime } from "@/lib/video/timeline";
 import {
@@ -67,12 +68,11 @@ export function CommandPalette({
   const redo = useEditorStore((state) => state.redo);
   const toggleSafeZones = useEditorStore((state) => state.toggleSafeZones);
   const duration = tracksDuration(tracks);
-
-  useEffect(() => {
-    if (!open) return;
-    const frame = requestAnimationFrame(() => inputRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, [open]);
+  const dialogRef = useDialogA11y<HTMLDivElement>({
+    open,
+    onClose,
+    initialFocusRef: inputRef,
+  });
 
   const finish = (action: () => void) => {
     action();
@@ -236,9 +236,11 @@ export function CommandPalette({
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Kommandopalett"
+        tabIndex={-1}
         className="w-full max-w-[620px] overflow-hidden rounded-[22px] bg-[#11171e] shadow-[0_32px_100px_rgba(0,0,0,.62)] ring-1 ring-white/[0.12]"
       >
         <div className="flex items-center gap-3 border-b border-white/[0.075] px-4">
@@ -344,6 +346,12 @@ export function HelpDrawer({
   const duration = tracksDuration(tracks);
   const mainClips = tracks.find((track) => track.type === "video")?.clips.length ?? 0;
   const effects = tracks.find((track) => track.type === "effects")?.clips.length ?? 0;
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useDialogA11y<HTMLElement>({
+    open,
+    onClose,
+    initialFocusRef: closeButtonRef,
+  });
 
   if (!open) return null;
 
@@ -389,9 +397,11 @@ export function HelpDrawer({
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <aside
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="quick-guide-title"
+        tabIndex={-1}
         className="flex h-full w-full max-w-[410px] flex-col border-l border-white/[0.09] bg-[#10161d] shadow-[-28px_0_80px_rgba(0,0,0,.45)]"
       >
         <header className="flex items-start gap-3 border-b border-white/[0.07] px-5 py-5">
@@ -404,7 +414,13 @@ export function HelpDrawer({
               Från råmaterial till färdig video
             </h2>
           </div>
-          <button type="button" onClick={onClose} className="icon-button" aria-label="Stäng snabbguiden">
+          <button
+            ref={closeButtonRef}
+            type="button"
+            onClick={onClose}
+            className="icon-button"
+            aria-label="Stäng snabbguiden"
+          >
             <X size={14} />
           </button>
         </header>

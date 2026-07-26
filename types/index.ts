@@ -75,6 +75,13 @@ export interface MediaAsset {
   folderId?: string;
   /** Separate recorder/microphone audio that follows this video source. */
   linkedAudio?: LinkedAudioSource;
+  /**
+   * Browser-only cloud sync state. These fields are deliberately removed from
+   * saved project snapshots; they only make an import usable immediately.
+   */
+  uploadState?: "uploading" | "ready" | "error";
+  uploadProgress?: number;
+  uploadError?: string;
 }
 
 /**

@@ -282,9 +282,25 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
     window.addEventListener("pointerup", up);
   };
 
+  const onScrubberKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!hasContent) return;
+    const step = event.shiftKey ? 1 / 30 : 0.5;
+    let next: number | null = null;
+    if (event.key === "ArrowLeft" || event.key === "ArrowDown") next = currentTime - step;
+    if (event.key === "ArrowRight" || event.key === "ArrowUp") next = currentTime + step;
+    if (event.key === "PageDown") next = currentTime - 5;
+    if (event.key === "PageUp") next = currentTime + 5;
+    if (event.key === "Home") next = 0;
+    if (event.key === "End") next = duration;
+    if (next === null) return;
+    event.preventDefault();
+    setPlaying(false);
+    setCurrentTime(Math.max(0, Math.min(duration, next)));
+  };
+
   return (
-    <div className="flex h-full min-h-0 flex-col items-center bg-transparent">
-      <div className="flex h-8 w-full shrink-0 items-center justify-between px-1">
+    <div className="video-preview flex h-full min-h-0 flex-col items-center bg-transparent">
+      <div className="preview-meta flex h-8 w-full shrink-0 items-center justify-between px-1">
         <div className="flex items-center gap-2">
           <span className="panel-eyebrow text-[#667482]">Förhandsvisning</span>
           {hasContent && (
@@ -403,7 +419,7 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
                 <button
                   type="button"
                   onClick={onOpenLibrary}
-                  className="rounded-lg bg-[var(--cut)] px-3 py-1.5 text-[8px] font-extrabold text-[#1b140b] transition hover:bg-[#fac688]"
+                  className="whitespace-nowrap rounded-lg bg-[var(--cut)] px-3 py-1.5 text-[8px] font-extrabold text-[#1b140b] transition hover:bg-[#fac688]"
                 >
                   Öppna bibliotek
                 </button>
@@ -418,8 +434,17 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
 
       {/* scrubber */}
       <div
-        className={`group mt-3 w-full max-w-md ${hasContent ? "cursor-pointer" : "opacity-40"}`}
+        className={`preview-scrubber group mt-3 w-full max-w-md ${hasContent ? "cursor-pointer" : "opacity-40"}`}
         onPointerDown={onScrubberDown}
+        onKeyDown={onScrubberKeyDown}
+        role="slider"
+        tabIndex={hasContent ? 0 : -1}
+        aria-label="Sök i videon"
+        aria-disabled={!hasContent}
+        aria-valuemin={0}
+        aria-valuemax={Math.max(0, duration)}
+        aria-valuenow={Math.max(0, Math.min(duration, currentTime))}
+        aria-valuetext={`${formatTime(currentTime)} av ${formatTime(duration)}`}
         title="Sök i videon"
       >
         <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-white/10 transition-all group-hover:h-2.5">
@@ -431,8 +456,9 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
       </div>
 
       {/* transport bar */}
-      <div className="mt-2 flex w-full max-w-md items-center justify-center gap-3">
+      <div className="preview-controls mt-2 flex w-full max-w-md items-center justify-center gap-3">
         <button
+          type="button"
           onClick={() => {
             setPlaying(false);
             setCurrentTime(0);
@@ -440,25 +466,31 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
           disabled={!hasContent}
           className="rounded-full p-2 text-zinc-400 transition hover:bg-white/10 hover:text-white disabled:opacity-30"
           title="Till början"
+          aria-label="Till början"
         >
           <SkipBack size={18} />
         </button>
         <button
+          type="button"
           onClick={togglePlay}
           disabled={!hasContent}
           className="flex h-11 w-11 items-center justify-center rounded-full bg-[#edf1f5] text-[#11151b] shadow-[0_8px_24px_rgba(0,0,0,0.32)] transition hover:scale-105 active:scale-95 disabled:opacity-30 disabled:hover:scale-100"
           title="Spela/pausa (Mellanslag)"
+          aria-label={isPlaying ? "Pausa" : "Spela"}
         >
           {isPlaying ? <Pause size={20} /> : <Play size={20} className="ml-0.5" />}
         </button>
-        <div className="w-28 font-mono text-xs tabular-nums text-zinc-400">
+        <div className="preview-time w-28 font-mono text-xs tabular-nums text-zinc-400">
           {formatTime(currentTime)} / {formatTime(duration)}
         </div>
-        <div className="flex items-center gap-0.5 rounded-full bg-white/[0.04] p-0.5 ring-1 ring-white/[0.08]" title="Videoformat">
+        <div className="preview-format flex items-center gap-0.5 rounded-full bg-white/[0.04] p-0.5 ring-1 ring-white/[0.08]" title="Videoformat">
           {FORMAT_IDS.map((id) => (
             <button
               key={id}
+              type="button"
               onClick={() => setFormat(id)}
+              aria-label={`Videoformat ${id}`}
+              aria-pressed={id === format}
               className={`rounded-full px-2 py-1 text-[10px] font-semibold transition ${
                 id === format
                   ? "bg-[#7db8ff]/18 text-[#afd3ff]"
@@ -471,8 +503,10 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
         </div>
         {format === "9:16" && (
           <button
+            type="button"
             onClick={toggleSafeZones}
-            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+            aria-pressed={showSafeZones}
+            className={`preview-safe-zones flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${
               showSafeZones
                 ? "bg-[#7db8ff]/15 text-[#9bcaff]"
                 : "text-zinc-500 hover:bg-white/10 hover:text-zinc-300"
@@ -484,10 +518,12 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
           </button>
         )}
         <button
+          type="button"
           onClick={toggleFullscreen}
           disabled={!hasContent}
           className="rounded-full p-2 text-zinc-400 transition hover:bg-white/10 hover:text-white disabled:opacity-30"
           title={isFullscreen ? "Stäng helskärm" : "Visa i helskärm"}
+          aria-label={isFullscreen ? "Stäng helskärm" : "Visa i helskärm"}
         >
           {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
         </button>

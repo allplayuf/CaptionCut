@@ -15,6 +15,10 @@ import {
   mergeCaptionCoverage,
   type CaptionCoverageStatus,
 } from "@/lib/transcription/coverage";
+import {
+  transcribeTimelineInBrowser,
+  type LocalCaptionProgress,
+} from "@/lib/transcription/browserWhisper";
 
 export type TranscriptionScope = "timeline" | "selected";
 
@@ -22,24 +26,24 @@ interface TranscriptionPreferences {
   language: TranscriptionLanguage;
   quality: TranscriptionQuality;
   scope: TranscriptionScope;
-  prompt: string;
+  progress: LocalCaptionProgress | null;
   setLanguage: (language: TranscriptionLanguage) => void;
   setQuality: (quality: TranscriptionQuality) => void;
   setScope: (scope: TranscriptionScope) => void;
-  setPrompt: (prompt: string) => void;
+  setProgress: (progress: LocalCaptionProgress | null) => void;
 }
 
-/** Shared between Captions and AI Edit so the chosen language/glossary is
-    respected when Interview mode needs to transcribe its selected A-roll. */
+/** Shared between Captions and AutoEdit so every entry point uses the same
+    local model and language when it needs to transcribe selected footage. */
 const useTranscriptionPreferences = create<TranscriptionPreferences>((set) => ({
   language: "auto",
   quality: "accurate",
   scope: "timeline",
-  prompt: "",
+  progress: null,
   setLanguage: (language) => set({ language }),
   setQuality: (quality) => set({ quality }),
   setScope: (scope) => set({ scope }),
-  setPrompt: (prompt) => set({ prompt }),
+  setProgress: (progress) => set({ progress }),
 }));
 
 interface RunTranscriptionOptions {
@@ -50,19 +54,19 @@ interface RunTranscriptionOptions {
 }
 
 /**
- * Shared transcription flow. A selected-clip run sends the complete edited
- * timeline but asks the server to replace every unselected clip with silence,
- * so returned word timings still land at their real timeline positions.
+ * Shared browser-local transcription flow. Selected clips are placed into a
+ * silent copy of the complete edited timeline, so the returned word timings
+ * still land at their real timeline positions without uploading the audio.
  */
 export function useTranscription() {
   const language = useTranscriptionPreferences((state) => state.language);
   const quality = useTranscriptionPreferences((state) => state.quality);
   const scope = useTranscriptionPreferences((state) => state.scope);
-  const prompt = useTranscriptionPreferences((state) => state.prompt);
+  const progress = useTranscriptionPreferences((state) => state.progress);
   const setLanguage = useTranscriptionPreferences((state) => state.setLanguage);
   const setQuality = useTranscriptionPreferences((state) => state.setQuality);
   const setScope = useTranscriptionPreferences((state) => state.setScope);
-  const setPrompt = useTranscriptionPreferences((state) => state.setPrompt);
+  const setProgress = useTranscriptionPreferences((state) => state.setProgress);
 
   const runTranscription = async (
     options: RunTranscriptionOptions = {}
@@ -94,39 +98,21 @@ export function useTranscription() {
     }));
 
     store.setTranscribing(true);
+    setProgress({
+      stage: "audio",
+      progress: 0,
+      detail: "Preparing audio locally",
+    });
     try {
-      // Best-effort probe lets the UI explain a one-time local model download.
-      try {
-        const status = await (
-          await fetch(`/api/transcribe?quality=${encodeURIComponent(quality)}`)
-        ).json();
-        if (status?.provider === "local-whisper" && status.ready === false) {
-          const model = typeof status.model === "string" ? status.model : quality;
-          store.addToast(
-            "info",
-            `First run: downloading Whisper ${model}${modelDownloadSize(model)}. Captions start when it is ready.`
-          );
-        }
-      } catch {
-        // The status probe is advisory; the POST reports actionable failures.
-      }
-
-      const response = await fetch("/api/transcribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          media: store.media,
-          clips,
-          language,
-          quality,
-          prompt,
-          ...(scoped ? { selectedClipIds } : {}),
-        }),
+      const result = await transcribeTimelineInBrowser({
+        media: store.media,
+        clips,
+        language,
+        quality,
+        ...(scoped ? { selectedClipIds } : {}),
+        onProgress: setProgress,
       });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error ?? "Transcription failed.");
-
-      const captions = body.captions as Caption[];
+      const captions = result.captions;
       const latestStore = useEditorStore.getState();
       if (
         latestStore.projectId !== requestProjectId ||
@@ -152,19 +138,11 @@ export function useTranscription() {
         latestStore.setCaptions(captions, nextCoverage);
       }
 
-      if (body.provider === "mock") {
-        latestStore.addToast(
-          "info",
-          "Demo captions generated (mock mode). Unset TRANSCRIPTION_PROVIDER for real local transcription."
-        );
-      } else {
-        const model = typeof body.model === "string" ? ` with ${body.model}` : "";
-        const target = scoped ? " in selected clips" : "";
-        latestStore.addToast(
-          "success",
-          `Generated ${captions.length} caption${captions.length === 1 ? "" : "s"}${target}${model}.`
-        );
-      }
+      const target = scoped ? " in selected clips" : "";
+      latestStore.addToast(
+        "success",
+        `Generated ${captions.length} caption${captions.length === 1 ? "" : "s"}${target} locally with ${result.model}.`
+      );
       return captions;
     } catch (err) {
       useEditorStore
@@ -173,6 +151,7 @@ export function useTranscription() {
       return null;
     } finally {
       useEditorStore.getState().setTranscribing(false);
+      setProgress(null);
     }
   };
 
@@ -190,21 +169,7 @@ export function useTranscription() {
     setQuality,
     scope,
     setScope,
-    prompt,
-    setPrompt,
+    progress,
     coverageStatus,
   };
-}
-
-function modelDownloadSize(model: string): string {
-  const family = model.replace(/\.en$/, "");
-  const sizes: Record<string, string> = {
-    tiny: " (~75 MB)",
-    base: " (~150 MB)",
-    small: " (~500 MB)",
-    medium: " (~1.5 GB)",
-    "large-v3": " (~3 GB)",
-    "large-v3-turbo": " (~1.6 GB)",
-  };
-  return sizes[family] ?? "";
 }

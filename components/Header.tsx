@@ -35,11 +35,13 @@ export default function Header({
   onCommand,
   onHelp,
   onOpenTool,
+  onRetrySave,
 }: {
   onExport: () => void;
   onCommand: () => void;
   onHelp: () => void;
   onOpenTool: (tool: EditorTool) => void;
+  onRetrySave: () => void;
 }) {
   const projectName = useEditorStore((state) => state.projectName);
   const projectId = useEditorStore((state) => state.projectId);
@@ -70,8 +72,15 @@ export default function Header({
     const close = (event: MouseEvent) => {
       if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
     };
+    const closeWithEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
     window.addEventListener("mousedown", close);
-    return () => window.removeEventListener("mousedown", close);
+    window.addEventListener("keydown", closeWithEscape);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", closeWithEscape);
+    };
   }, [menuOpen]);
 
   const openProject = async (id: string) => {
@@ -98,36 +107,47 @@ export default function Header({
   };
 
   return (
-    <header className="relative z-40 flex h-[60px] shrink-0 items-center gap-2 border-b border-white/[0.075] bg-[#0a0e13]/95 px-3 shadow-[0_8px_35px_rgba(0,0,0,.16)] backdrop-blur">
-      <div className="flex items-center gap-2">
+    <header className="app-header relative z-40 flex h-[60px] shrink-0 items-center gap-2 border-b border-white/[0.075] bg-[#0a0e13]/95 px-3 shadow-[0_8px_35px_rgba(0,0,0,.16)] backdrop-blur">
+      <div className="app-brand flex items-center gap-2">
         <div className="brand-mark">
           <Clapperboard size={16} strokeWidth={2.4} />
           <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-[#7db8ff]" />
         </div>
-        <span className="text-[14px] font-extrabold tracking-[-0.035em] text-[#f1f4f7]">
+        <span className="app-brand-label text-[14px] font-extrabold tracking-[-0.035em] text-[#f1f4f7]">
           CaptionCut
         </span>
       </div>
 
-      <div className="mx-1 h-5 w-px bg-white/[0.09]" />
+      <div className="header-project-divider mx-1 h-5 w-px bg-white/[0.09]" />
 
       <input
         value={projectName}
         onChange={(event) => setProjectName(event.target.value)}
-        className="w-40 rounded-lg border border-transparent bg-transparent px-2 py-1 text-[11px] font-semibold text-[#dce2e8] outline-none transition hover:border-white/10 hover:bg-white/[0.025] focus:border-[var(--cut)]/55"
+        aria-label="Projektnamn"
+        maxLength={80}
+        className="project-name-input w-40 rounded-lg border border-transparent bg-transparent px-2 py-1 text-[11px] font-semibold text-[#dce2e8] outline-none transition hover:border-white/10 hover:bg-white/[0.025] focus:border-[var(--cut)]/55"
         placeholder="Projektnamn"
       />
 
-      <div ref={menuRef} className="relative">
+      <div ref={menuRef} className="header-project-menu relative">
         <button
+          type="button"
           onClick={() => setMenuOpen((value) => !value)}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
           className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium text-[#7d8896] transition hover:bg-white/[0.05] hover:text-[#cbd3dc]"
         >
           Projekt <ChevronDown size={12} />
         </button>
         {menuOpen && (
-          <div className="absolute left-0 top-full z-30 mt-1 w-72 rounded-xl border border-white/10 bg-[#151a22] p-1.5 shadow-2xl shadow-black/60">
+          <div
+            role="menu"
+            aria-label="Projekt"
+            className="absolute left-0 top-full z-30 mt-1 w-72 rounded-xl border border-white/10 bg-[#151a22] p-1.5 shadow-2xl shadow-black/60"
+          >
             <button
+              type="button"
+              role="menuitem"
               onClick={() => {
                 resetToNewProject();
                 setMenuOpen(false);
@@ -143,6 +163,8 @@ export default function Header({
                 className="group flex items-center gap-2 rounded-lg px-2.5 py-1.5 transition hover:bg-white/[0.05]"
               >
                 <button
+                  type="button"
+                  role="menuitem"
                   onClick={() => void openProject(project.id)}
                   className="min-w-0 flex-1 text-left"
                 >
@@ -157,6 +179,8 @@ export default function Header({
                   </p>
                 </button>
                 <button
+                  type="button"
+                  role="menuitem"
                   onClick={() => void removeProject(project.id)}
                   onMouseLeave={() =>
                     confirmDeleteId === project.id && setConfirmDeleteId(null)
@@ -164,8 +188,13 @@ export default function Header({
                   className={`flex items-center gap-1 rounded p-1 text-[#59636f] transition hover:bg-red-500/15 hover:text-red-300 ${
                     confirmDeleteId === project.id
                       ? "bg-red-500/15 px-1.5 text-[9px] font-bold text-red-300 opacity-100"
-                      : "opacity-0 group-hover:opacity-100"
+                      : "opacity-0 group-hover:opacity-100 focus:opacity-100"
                   }`}
+                  aria-label={
+                    confirmDeleteId === project.id
+                      ? `Bekräfta radering av ${project.name}`
+                      : `Radera ${project.name}`
+                  }
                   title={
                     confirmDeleteId === project.id
                       ? "Klicka igen för att radera"
@@ -182,7 +211,7 @@ export default function Header({
       </div>
 
       <VersionsMenu />
-      <div className="mx-1 h-5 w-px bg-white/[0.09]" />
+      <div className="header-history-divider mx-1 h-5 w-px bg-white/[0.09]" />
 
       <button
         onClick={undo}
@@ -209,7 +238,7 @@ export default function Header({
         onExport={onExport}
       />
 
-      <div className="ml-auto flex items-center gap-1.5">
+      <div className="header-actions ml-auto flex items-center gap-1.5">
         <button
           type="button"
           onClick={onCommand}
@@ -231,7 +260,7 @@ export default function Header({
         </button>
         <div className="hidden items-center gap-1.5 min-[1180px]:flex">
           <StorageBadge />
-          <SaveState state={saveState} />
+          <SaveState state={saveState} onRetry={onRetrySave} />
         </div>
         <div className="hidden 2xl:block">
           <FormatBadge />
@@ -239,9 +268,10 @@ export default function Header({
         <button
           onClick={onExport}
           disabled={tracksDuration(tracks) <= 0}
+          aria-label="Exportera video"
           className="flex h-9 items-center gap-1.5 rounded-[11px] bg-[var(--cut)] px-3.5 text-[10px] font-extrabold text-[#191209] shadow-[0_8px_24px_rgba(242,182,109,0.14)] transition hover:bg-[#fac688] active:translate-y-px disabled:opacity-35"
         >
-          <Download size={14} /> Exportera
+          <Download size={14} /> <span className="export-label">Exportera</span>
         </button>
       </div>
     </header>
@@ -340,9 +370,9 @@ function StorageBadge() {
     return (
       <span
         className="flex items-center gap-1 rounded-full bg-[#9ce5c3]/[0.07] px-2 py-1 text-[9px] font-medium text-[#9ce5c3]"
-        title="Projekt och media sparas i molnet för den här webbläsaren"
+        title="Projekt och media synkas i molnet; captions skapas lokalt på enheten"
       >
-        <Cloud size={10} /> Moln
+        <Cloud size={10} /> Media i moln · text lokalt
       </span>
     );
   }
@@ -366,25 +396,39 @@ function StorageBadge() {
   );
 }
 
-function SaveState({ state }: { state: "saved" | "saving" | "error" }) {
+function SaveState({
+  state,
+  onRetry,
+}: {
+  state: "saved" | "saving" | "error";
+  onRetry: () => void;
+}) {
+  if (state === "error") {
+    return (
+      <span role="status" aria-live="polite">
+        <button
+          type="button"
+          onClick={onRetry}
+          className="flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-1 text-[9px] font-medium text-red-300 transition hover:bg-red-500/20"
+          title="Autosparningen misslyckades. Klicka för att försöka igen."
+        >
+          <AlertTriangle size={11} /> Försök spara igen
+        </button>
+      </span>
+    );
+  }
   return (
     <span
+      role="status"
+      aria-live="polite"
       className={`flex items-center gap-1 rounded-full px-2 py-1 text-[9px] font-medium ${
-        state === "error"
-          ? "bg-red-500/10 text-red-300"
-          : state === "saving"
-            ? "text-[#7d8896]"
-            : "text-[#65717f]"
+        state === "saving" ? "text-[#7d8896]" : "text-[#65717f]"
       }`}
-      title={state === "error" ? "Autosparningen misslyckades" : "Allt sparas automatiskt"}
+      title="Allt sparas automatiskt"
     >
       {state === "saving" ? (
         <>
           <CloudUpload size={11} className="animate-pulse" /> Sparar…
-        </>
-      ) : state === "error" ? (
-        <>
-          <AlertTriangle size={11} /> Kunde inte spara
         </>
       ) : (
         <>
@@ -422,22 +466,38 @@ function VersionsMenu() {
     const close = (event: MouseEvent) => {
       if (!ref.current?.contains(event.target as Node)) setOpen(false);
     };
+    const closeWithEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
     window.addEventListener("mousedown", close);
-    return () => window.removeEventListener("mousedown", close);
+    window.addEventListener("keydown", closeWithEscape);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", closeWithEscape);
+    };
   }, [open]);
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="header-versions relative">
       <button
+        type="button"
         onClick={() => setOpen((value) => !value)}
+        aria-haspopup="menu"
+        aria-expanded={open}
         className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium text-[#7d8896] transition hover:bg-white/[0.05] hover:text-[#cbd3dc]"
         title="Sparade versioner"
       >
         <History size={12} /> Versioner <ChevronDown size={12} />
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-80 rounded-xl border border-white/10 bg-[#151a22] p-1.5 shadow-2xl shadow-black/60">
+        <div
+          role="menu"
+          aria-label="Sparade versioner"
+          className="absolute left-0 top-full z-30 mt-1 w-80 rounded-xl border border-white/10 bg-[#151a22] p-1.5 shadow-2xl shadow-black/60"
+        >
           <button
+            type="button"
+            role="menuitem"
             onClick={() => {
               if (!hasContent) {
                 addToast("info", "Det finns inget på tidslinjen att spara ännu.");
@@ -452,6 +512,8 @@ function VersionsMenu() {
             <Save size={14} /> Spara nuvarande version
           </button>
           <button
+            type="button"
+            role="menuitem"
             onClick={() => {
               resetToAutoEdit();
               setOpen(false);
@@ -473,6 +535,8 @@ function VersionsMenu() {
               className="group flex items-center gap-2 rounded-lg px-2.5 py-1.5 transition hover:bg-white/[0.05]"
             >
               <button
+                type="button"
+                role="menuitem"
                 onClick={() => {
                   restoreVersion(version.id);
                   setOpen(false);
@@ -490,9 +554,12 @@ function VersionsMenu() {
                 </p>
               </button>
               <button
+                type="button"
+                role="menuitem"
                 onClick={() => deleteVersion(version.id)}
-                className="rounded p-1 text-[#59636f] opacity-0 transition hover:bg-red-500/15 hover:text-red-300 group-hover:opacity-100"
+                className="rounded p-1 text-[#59636f] opacity-0 transition hover:bg-red-500/15 hover:text-red-300 group-hover:opacity-100 focus:opacity-100"
                 title="Radera version"
+                aria-label={`Radera ${version.name}`}
               >
                 <Trash2 size={12} />
               </button>

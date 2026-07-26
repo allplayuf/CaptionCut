@@ -2,15 +2,15 @@
 
 :root {
   color-scheme: dark;
-  --ink: #070a0e;
-  --panel: #0f141a;
-  --panel-raised: #151b22;
-  --panel-deep: #090d12;
-  --text: #edf2f5;
-  --muted: #788592;
-  --cut: #f2b66d;
-  --timeline: #78b8ed;
-  --caption: #78d9c5;
+  --ink: #06090d;
+  --panel: #0d1319;
+  --panel-raised: #131b23;
+  --panel-deep: #080c11;
+  --text: #f0f3f5;
+  --muted: #788693;
+  --cut: #ffb45b;
+  --timeline: #73b9ef;
+  --caption: #83dec9;
   --border: rgba(255, 255, 255, 0.075);
 }
 
@@ -72,8 +72,21 @@ kbd {
 .captioncut-shell {
   isolation: isolate;
   background:
-    radial-gradient(circle at 68% 24%, rgba(78, 127, 165, 0.07), transparent 34%),
+    radial-gradient(circle at 68% 24%, rgba(66, 129, 176, 0.075), transparent 34%),
     var(--ink);
+}
+
+.captioncut-shell::before {
+  position: fixed;
+  z-index: 100;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent 4%, rgba(255, 180, 91, 0.7) 32%, rgba(131, 222, 201, 0.45) 70%, transparent 96%);
+  opacity: 0.65;
 }
 
 .preview-stage {
@@ -84,6 +97,12 @@ kbd {
     radial-gradient(circle at 50% 40%, rgba(120, 184, 237, 0.045), transparent 48%),
     #080c11;
   background-size: 36px 36px, 36px 36px, auto, auto;
+}
+
+.app-header {
+  background: color-mix(in srgb, #0b1016 94%, transparent);
+  box-shadow: 0 1px rgba(255, 255, 255, 0.045), 0 10px 34px rgba(0, 0, 0, 0.16);
+  backdrop-filter: blur(18px);
 }
 
 .panel-eyebrow {
@@ -233,6 +252,17 @@ kbd {
     0 8px 22px rgba(0, 0, 0, 0.14);
 }
 
+.library-folders > button {
+  min-width: max-content;
+  width: auto;
+  margin-bottom: 0;
+  padding-inline: 10px;
+}
+
+.library-folders form {
+  min-width: 96px;
+}
+
 .asset-action {
   display: inline-flex;
   height: 21px;
@@ -293,6 +323,84 @@ kbd {
 .effect-card:disabled {
   cursor: not-allowed;
   opacity: 0.42;
+}
+
+/* Render room: a small finishing suite whose visual hierarchy confirms
+   exactly what becomes permanent in the delivered file. */
+.render-backdrop {
+  background:
+    radial-gradient(circle at 50% 28%, rgba(35, 58, 75, 0.32), transparent 42%),
+    rgba(2, 4, 7, 0.78);
+  backdrop-filter: blur(18px) saturate(0.85);
+}
+
+.render-room {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.012) 1px, transparent 1px),
+    #0c1117;
+  background-size: 100% 34px, auto;
+}
+
+.render-room-glow {
+  background:
+    radial-gradient(ellipse at 22% -20%, rgba(255, 180, 91, 0.13), transparent 52%),
+    radial-gradient(ellipse at 82% -40%, rgba(115, 185, 239, 0.1), transparent 46%);
+}
+
+.render-icon {
+  color: var(--cut);
+  background: rgba(255, 180, 91, 0.08);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 180, 91, 0.14),
+    0 12px 30px rgba(0, 0, 0, 0.22);
+}
+
+.render-preset {
+  background: rgba(255, 255, 255, 0.022);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.065);
+}
+
+.render-preset-selected {
+  background: rgba(255, 180, 91, 0.075);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 180, 91, 0.42),
+    inset 3px 0 0 rgba(255, 180, 91, 0.9),
+    0 12px 30px rgba(0, 0, 0, 0.14);
+}
+
+.render-receipt {
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+}
+
+.render-primary {
+  color: #1c1308;
+  background: var(--cut);
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.3),
+    0 14px 38px rgba(255, 180, 91, 0.13);
+}
+
+.render-primary:hover {
+  background: #ffc274;
+}
+
+.render-progress {
+  position: relative;
+  overflow: hidden;
+  background: var(--cut);
+  box-shadow: 0 0 20px rgba(255, 180, 91, 0.3);
+}
+
+.render-progress::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: repeating-linear-gradient(90deg, transparent 0 13px, rgba(255, 255, 255, 0.28) 13px 14px);
+  animation: render-film 900ms linear infinite;
+}
+
+@keyframes render-film {
+  to { transform: translateX(14px); }
 }
 
 .workspace-resizer {
@@ -363,6 +471,267 @@ kbd {
     linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
   background-size: 48px 48px;
   mask-image: linear-gradient(to bottom, black, transparent 80%);
+}
+
+/* Phone workspace: preview first, a compact touch timeline, and the editor
+   tools as a bottom sheet with a persistent dock. Desktop keeps the resizable
+   three-part workspace above. */
+@media (max-width: 767px) {
+  html,
+  body {
+    height: 100dvh;
+    overscroll-behavior: none;
+  }
+
+  .captioncut-shell {
+    height: 100dvh;
+  }
+
+  .app-header {
+    height: 52px;
+    gap: 4px;
+    padding-inline: 8px;
+  }
+
+  .brand-mark {
+    height: 30px;
+    width: 30px;
+    border-radius: 9px;
+  }
+
+  .header-project-menu,
+  .header-versions,
+  .header-project-divider,
+  .header-history-divider,
+  .header-actions .command-trigger,
+  .header-actions .header-icon {
+    display: none;
+  }
+
+  .project-name-input {
+    min-width: 72px;
+    width: min(32vw, 132px);
+    padding-inline: 6px;
+  }
+
+  .header-actions {
+    gap: 4px;
+  }
+
+  .header-actions > button:last-child {
+    height: 34px;
+    padding-inline: 10px;
+  }
+
+  .workspace-body {
+    flex-direction: column;
+  }
+
+  .preview-stage {
+    order: 1;
+    min-height: 0;
+    padding: 3px 8px 5px;
+  }
+
+  .workspace-sidebar {
+    order: 2;
+    width: 100% !important;
+    flex-direction: column-reverse;
+    border-right: 0;
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -18px 44px rgba(0, 0, 0, 0.28);
+    transition: height 170ms ease;
+  }
+
+  .workspace-sidebar[data-collapsed="true"] {
+    height: 58px;
+  }
+
+  .workspace-sidebar[data-collapsed="false"] {
+    position: fixed;
+    z-index: 45;
+    right: 0;
+    bottom: 166px;
+    left: 0;
+    height: min(66dvh, 520px);
+    overflow: hidden;
+    border-radius: 20px 20px 0 0;
+    background: #0a0e13;
+    box-shadow:
+      0 -28px 80px rgba(0, 0, 0, 0.62),
+      inset 0 1px rgba(255, 255, 255, 0.08);
+  }
+
+  .workspace-tool-rail {
+    width: 100%;
+    height: 58px;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-top: 1px solid var(--border);
+    border-right: 0;
+    padding: 3px 4px max(3px, env(safe-area-inset-bottom));
+    scrollbar-width: none;
+  }
+
+  .workspace-tool-rail::-webkit-scrollbar {
+    display: none;
+  }
+
+  .workspace-tool-rail > div {
+    display: contents;
+  }
+
+  .workspace-tool-rail button {
+    min-width: 52px;
+    flex: 1 0 52px;
+    padding-block: 4px;
+    touch-action: manipulation;
+  }
+
+  .workspace-tool-panel {
+    width: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .workspace-sidebar[data-collapsed="false"] .workspace-tool-panel {
+    background: #0f151c;
+  }
+
+  .workspace-tool-panel button,
+  .workspace-tool-panel input,
+  .workspace-tool-panel select,
+  .workspace-tool-panel textarea {
+    touch-action: manipulation;
+  }
+
+  .workspace-resizer-vertical,
+  .workspace-resizer-horizontal {
+    display: none;
+  }
+
+  .timeline-region {
+    height: 166px !important;
+  }
+
+  .preview-meta {
+    height: 24px;
+  }
+
+  .preview-meta > div:last-child {
+    display: none;
+  }
+
+  .preview-scrubber {
+    margin-top: 4px;
+  }
+
+  .preview-controls {
+    margin-top: 4px;
+    gap: 5px;
+  }
+
+  .preview-controls button {
+    min-height: 40px;
+    min-width: 40px;
+  }
+
+  .preview-format,
+  .preview-safe-zones {
+    display: none;
+  }
+
+  .preview-time {
+    width: 92px;
+    font-size: 10px;
+  }
+
+  .timeline-toolbar {
+    height: 36px;
+    min-height: 36px;
+    padding-inline: 6px;
+    scrollbar-width: none;
+  }
+
+  .timeline-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .timeline-toolbar button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .timeline-title,
+  .timeline-zoom-controls > :nth-child(-n + 3) {
+    display: none;
+  }
+
+  .timeline-zoom-controls {
+    margin-left: auto;
+  }
+
+  .timeline-zoom-controls > span {
+    margin-left: 4px;
+    white-space: nowrap;
+    font-size: 9px;
+  }
+
+  .timeline-track-headers {
+    width: 74px !important;
+  }
+
+  .start-layout {
+    display: flex;
+    min-height: 100%;
+    flex-direction: column;
+    gap: 20px;
+    padding: 14px;
+  }
+
+  .start-import {
+    order: 1;
+    width: 100%;
+    border-radius: 22px;
+  }
+
+  .start-intro {
+    order: 2;
+    width: 100%;
+    padding: 4px 3px 24px;
+  }
+
+  .start-intro h1 {
+    font-size: clamp(2.25rem, 13vw, 3.45rem);
+  }
+}
+
+@media (max-width: 520px) {
+  .render-preset-description {
+    display: none;
+  }
+
+  .render-room .render-preset {
+    min-height: 78px;
+  }
+}
+
+@media (max-width: 420px) {
+  .app-brand-label,
+  .export-label {
+    display: none;
+  }
+
+  .project-name-input {
+    width: min(39vw, 138px);
+  }
+
+  .workspace-tool-rail button {
+    min-width: 49px;
+    flex-basis: 49px;
+    font-size: 8px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

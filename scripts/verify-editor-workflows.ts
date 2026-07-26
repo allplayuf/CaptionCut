@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { Caption, MediaAsset, TimelineSignals } from "@/types";
 import { analyzeTranscript } from "@/lib/autoEdit/analyzeTranscript";
 import { applyEditRecipeToTimeline } from "@/lib/autoEdit/applyEditRecipeToTimeline";
+import { detectSilence } from "@/lib/autoEdit/detectSilence";
 import { generateMontageRecipe } from "@/lib/autoEdit/montage";
 import { reviseEditRecipe } from "@/lib/autoEdit/reviseEditRecipe";
 import { replaceCaptionsInsideRanges } from "@/lib/captions/ranges";
@@ -215,8 +216,31 @@ assert.equal(
   "selected transcript coverage must not masquerade as whole-timeline coverage"
 );
 
+const pauseTranscript = analyzeTranscript([
+  { id: "first-word", text: "Hej", startTime: 0.5, endTime: 1 },
+  { id: "second-word", text: "igen", startTime: 2, endTime: 2.5 },
+]);
+const silenceWithoutPeaks = detectSilence(
+  { transcript: pauseTranscript, duration: 3 },
+  "medium"
+);
+const silenceWithPeaks = detectSilence(
+  { transcript: pauseTranscript, duration: 3, peaks: Array(30).fill(0) },
+  "medium"
+);
+assert.deepEqual(
+  silenceWithPeaks,
+  silenceWithoutPeaks,
+  "quiet waveform confirmation must not apply speech padding twice"
+);
+assert.deepEqual(
+  silenceWithPeaks,
+  [{ start: 1.12, end: 1.88 }],
+  "silence cuts should retain one 120ms breathing margin around speech"
+);
+
 console.log(
-  "Editor workflow checks passed: source scope, interview audio/B-roll, draft revision, caption boundaries, and transcript coverage."
+  "Editor workflow checks passed: source scope, interview audio/B-roll, draft revision, caption boundaries, transcript coverage, and silence padding."
 );
 
 function makeAsset(id: string): MediaAsset {

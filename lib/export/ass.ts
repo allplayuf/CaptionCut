@@ -44,6 +44,10 @@ export interface AssOverlayEvent {
   strokeColor: string;
   strokeWidth: number;
   backgroundColor: string | null;
+  /** Clockwise rotation in degrees. */
+  rotation?: number;
+  /** 0..1, applied to text, outline and background. */
+  opacity?: number;
   sticker?: boolean;
 }
 
@@ -162,9 +166,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   overlays.forEach((ov, i) => {
     const px = Math.round(canvas.width / 2 + ov.x * xScale);
     const py = Math.round(canvas.height / 2 + ov.y * yScale);
+    const rotation = Number.isFinite(ov.rotation) ? Math.max(-360, Math.min(360, ov.rotation ?? 0)) : 0;
+    const opacity = Number.isFinite(ov.opacity) ? Math.max(0, Math.min(1, ov.opacity ?? 1)) : 1;
+    const alpha = toHex(Math.round((1 - opacity) * 255));
+    // CSS positive rotation is clockwise; ASS's \frz uses the opposite sign.
+    const transformTags = `\\pos(${px},${py})\\frz${round1(-rotation)}\\alpha&H${alpha}&`;
     // Layer 1 keeps overlays above simultaneous captions.
     events.push(
-      `Dialogue: 1,${assTime(ov.start)},${assTime(ov.end)},Ov${i},,0,0,0,,{\\pos(${px},${py})}${escapeAss(ov.text)}`
+      `Dialogue: 1,${assTime(ov.start)},${assTime(ov.end)},Ov${i},,0,0,0,,{${transformTags}}${escapeAss(ov.text)}`
     );
   });
 
@@ -221,5 +230,9 @@ function toHex(n: number): string {
 
 /** Braces open ASS override blocks; newlines break the event line. */
 function escapeAss(text: string): string {
-  return text.replace(/\{/g, "(").replace(/\}/g, ")").replace(/[\r\n]+/g, " \\N ");
+  return text
+    .replace(/\{/g, "(")
+    .replace(/\}/g, ")")
+    .replace(/\\/g, "⧵")
+    .replace(/[\r\n]+/g, " \\N ");
 }

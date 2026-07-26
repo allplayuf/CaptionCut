@@ -288,10 +288,10 @@ export default function Timeline() {
   };
 
   return (
-    <div className="flex h-full flex-col border-t border-white/[0.07] bg-[#0a0e13] shadow-[0_-12px_40px_rgba(0,0,0,.2)]">
+    <div className="timeline-shell flex h-full flex-col border-t border-white/[0.07] bg-[#0a0e13] shadow-[0_-12px_40px_rgba(0,0,0,.2)]">
       {/* toolbar */}
-      <div className="flex h-10 items-center gap-1 border-b border-white/[0.06] bg-[linear-gradient(90deg,rgba(120,184,237,.025),transparent_42%)] px-3">
-        <span className="mr-2 font-mono text-[9px] font-bold uppercase tracking-[0.18em] text-[#6d7986]">
+      <div className="timeline-toolbar flex h-10 items-center gap-1 overflow-x-auto border-b border-white/[0.06] bg-[linear-gradient(90deg,rgba(120,184,237,.025),transparent_42%)] px-3">
+        <span className="timeline-title mr-2 font-mono text-[9px] font-bold uppercase tracking-[0.18em] text-[#6d7986]">
           Tidslinje
         </span>
         <ToolButton onClick={splitAtPlayhead} disabled={duration <= 0.001} title="Dela vid spelhuvudet (S)">
@@ -323,7 +323,7 @@ export default function Timeline() {
           <Layers3 size={13} className={showAllTracks ? "text-[var(--caption)]" : ""} />
           {showAllTracks ? "Aktiva spår" : "Alla spår"}
         </ToolButton>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="timeline-zoom-controls ml-auto flex items-center gap-1">
           <ToolButton onClick={() => zoomBy(1 / 1.4)} title="Zooma ut tidslinjen">
             <ZoomOut size={13} />
           </ToolButton>
@@ -348,7 +348,7 @@ export default function Timeline() {
         {/* headers */}
         <div
           ref={headerScrollRef}
-          className="shrink-0 overflow-hidden border-r border-white/[0.07]"
+          className="timeline-track-headers shrink-0 overflow-hidden border-r border-white/[0.07]"
           style={{ width: HEADER_W }}
         >
           <div className="h-5" />

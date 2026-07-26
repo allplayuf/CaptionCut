@@ -410,8 +410,20 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
         );
       } else {
         const w = Math.max(2, Math.round((CW * ov.widthFrac) / 2) * 2);
+        const rotation = Number.isFinite(ov.rotation)
+          ? Math.max(-360, Math.min(360, ov.rotation))
+          : 0;
+        const alpha = Math.max(0, Math.min(1, ov.opacity));
+        const visualTransform =
+          Math.abs(rotation) > 0.01 || alpha < 0.999
+            ? `,format=rgba${
+                Math.abs(rotation) > 0.01
+                  ? `,rotate=${(rotation * Math.PI / 180).toFixed(8)}:ow=rotw(iw):oh=roth(ih):c=none`
+                  : ""
+              }${alpha < 0.999 ? `,colorchannelmixer=aa=${alpha.toFixed(3)}` : ""}`
+            : "";
         filters.push(
-          `[${idx}:v]scale=${w}:-2,setsar=1${alpha},setpts=PTS-STARTPTS+${ov.start.toFixed(3)}/TB[ov${i}]`
+          `[${idx}:v]scale=${w}:-2,setsar=1${visualTransform},setpts=PTS-STARTPTS+${ov.start.toFixed(3)}/TB[ov${i}]`
         );
         // Editor overlay offsets are in 1080x1920 reference coordinates.
         x = `(W-w)/2+(${Math.round((ov.x * CW) / REF_W)})`;

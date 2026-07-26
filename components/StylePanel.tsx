@@ -31,7 +31,7 @@ export default function StylePanel() {
             <button
               key={preset.id}
               onClick={() => applyPreset(preset.style)}
-              className="rounded-lg bg-white/5 px-2 py-2.5 ring-1 ring-white/10 transition hover:bg-white/10 hover:ring-violet-400/50"
+              className="rounded-xl bg-white/[0.035] px-2 py-2.5 ring-1 ring-white/[0.075] transition hover:bg-white/[0.065] hover:ring-[var(--caption)]/40"
             >
               <span
                 className="block truncate text-center text-sm"
@@ -64,7 +64,7 @@ export default function StylePanel() {
           <select
             value={style.fontFamily}
             onChange={(e) => setStyle({ fontFamily: e.target.value })}
-            className="w-36 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-violet-400"
+            className="w-36 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-[var(--caption)]"
           >
             {FONT_OPTIONS.map((f) => (
               <option key={f} value={f} style={{ fontFamily: f }}>
@@ -80,7 +80,7 @@ export default function StylePanel() {
             max={130}
             value={style.fontSize}
             onChange={(e) => setStyle({ fontSize: parseInt(e.target.value, 10) })}
-            className="w-36 accent-fuchsia-500"
+            className="w-36 accent-[var(--caption)]"
           />
         </Row>
         <Row label="Weight">
@@ -111,7 +111,7 @@ export default function StylePanel() {
               max={16}
               value={style.strokeWidth}
               onChange={(e) => setStyle({ strokeWidth: parseInt(e.target.value, 10) })}
-              className="w-24 accent-fuchsia-500"
+              className="w-24 accent-[var(--caption)]"
               disabled={style.backgroundColor !== null}
             />
             <ColorInput value={style.strokeColor} onChange={(v) => setStyle({ strokeColor: v })} />
@@ -146,7 +146,7 @@ export default function StylePanel() {
               max={100}
               value={Math.round(style.backgroundOpacity * 100)}
               onChange={(e) => setStyle({ backgroundOpacity: parseInt(e.target.value, 10) / 100 })}
-              className="w-36 accent-fuchsia-500"
+              className="w-36 accent-[var(--caption)]"
             />
           </Row>
         )}
@@ -235,7 +235,7 @@ function Chip({
       onClick={onClick}
       className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
         active
-          ? "bg-violet-500/30 text-violet-200 ring-1 ring-violet-400/60"
+          ? "bg-[var(--caption)]/15 text-[var(--caption)] ring-1 ring-[var(--caption)]/45"
           : "bg-white/5 text-zinc-400 ring-1 ring-white/10 hover:bg-white/10"
       }`}
     >
@@ -258,7 +258,7 @@ function Toggle({
       onClick={() => onChange(!checked)}
       disabled={disabled}
       className={`relative h-5 w-9 rounded-full transition disabled:opacity-30 ${
-        checked ? "bg-gradient-to-r from-violet-500 to-fuchsia-500" : "bg-white/10"
+        checked ? "bg-[var(--caption)]" : "bg-white/10"
       }`}
     >
       <span

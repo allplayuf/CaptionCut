@@ -96,13 +96,13 @@ export default function AIPanel() {
   const projectId = useEditorStore((s) => s.projectId);
   const revision = useEditorStore((s) => s.revision);
 
-  const { runTranscription, coverageStatus } = useTranscription();
+  const { runTranscription, coverageStatus, progress: captionProgress } = useTranscription();
   const { uploading: musicUploading, handleFiles: uploadFiles } = useMediaUpload();
   const musicInputRef = useRef<HTMLInputElement>(null);
   const [workflow, setWorkflow] = useState<Workflow>("montage");
   /** Explicit per-source intent. Missing values use the visible smart default. */
   const [sourceRoles, setSourceRoles] = useState<Record<string, SourceRole>>({});
-  const [style, setStyle] = useState<EditStyle>("viral");
+  const [style, setStyle] = useState<EditStyle>("clean");
   const [montageStyle, setMontageStyle] = useState<MontageStyle>("hype");
   const [montageLength, setMontageLength] = useState(20);
   const [customLength, setCustomLength] = useState<string>("");
@@ -128,6 +128,8 @@ export default function AIPanel() {
   const selectedMainIds = new Set(
     selectedClipIds.filter((id) => mainTrack.clips.some((clip) => clip.id === id))
   );
+  const captionsReady =
+    hasContent && captions.length > 0 && coverageStatus() === "complete";
 
   const defaultRole = (clip: TimelineClip, index: number): SourceRole => {
     if (selectedMainIds.size > 0 && !selectedMainIds.has(clip.id)) return "exclude";
@@ -204,9 +206,25 @@ export default function AIPanel() {
       pre-retrimmed music clip (correct beat phase for the chosen section). */
   const getSignals = async (tracksOverride?: typeof tracks): Promise<TimelineSignals | null> => {
     const s = useEditorStore.getState();
-    const missing = s.media.filter((m) => !(m.id in s.analyses));
+    const signalTracks = tracksOverride ?? s.tracks;
+    const relevantAssetIds = new Set(
+      signalTracks
+        .filter((track) => track.type === "video" || track.type === "music")
+        .flatMap((track) => track.clips.map((clip) => clip.assetId).filter(Boolean))
+    );
+    for (const asset of s.media) {
+      if (relevantAssetIds.has(asset.id) && asset.linkedAudio?.audioAssetId) {
+        relevantAssetIds.add(asset.linkedAudio.audioAssetId);
+      }
+    }
+    const missing = s.media.filter(
+      (asset) =>
+        relevantAssetIds.has(asset.id) &&
+        assetKind(asset) !== "image" &&
+        !(asset.id in s.analyses)
+    );
     if (missing.length > 0) {
-      setStage(`Watching your footage — motion, energy & beats (${missing.length} clip${missing.length > 1 ? "s" : ""})…`);
+      setStage(`Analyserar rörelse, ljud och klipptempo (${missing.length} ${missing.length === 1 ? "fil" : "filer"})…`);
       try {
         const fresh = await fetchAnalyses(missing);
         s.mergeAnalyses(fresh);
@@ -218,7 +236,7 @@ export default function AIPanel() {
     }
     try {
       const latest = useEditorStore.getState();
-      return buildTimelineSignals(tracksOverride ?? latest.tracks, latest.media, latest.analyses, latest.beat);
+      return buildTimelineSignals(signalTracks, latest.media, latest.analyses, latest.beat);
     } catch {
       return null;
     }
@@ -439,35 +457,72 @@ export default function AIPanel() {
       publishDraft(recipe, nextSeed, "montage", request);
     });
 
+  const buildAutoEditRecipe = async (
+    nextSeed: number,
+    mode: "quick" | "draft" = "draft"
+  ): Promise<EditRecipe | null> => {
+    const signals = await getSignals();
+    const caps = await getCaptions("try");
+    if (caps.length === 0 && !signals) {
+      useEditorStore
+        .getState()
+        .addToast("error", "AutoEdit behöver hörbart tal eller material som går att analysera.");
+      return null;
+    }
+    if (caps.length === 0 && signals) {
+      useEditorStore
+        .getState()
+        .addToast("info", "Inget tal hittades — AutoEdit använder rörelse, ljudenergi och scener.");
+    }
+    setStage("Tar bort pauser och bygger ett jämnare flow…");
+    const s = useEditorStore.getState();
+    const recipe = generateEditRecipe({
+      projectId: s.projectId,
+      transcript: analyzeTranscript(caps),
+      captions: caps,
+      peaks: signals?.energy ?? timelinePeaks(),
+      signals,
+      duration: tracksDuration(s.tracks),
+      style,
+      seed: nextSeed,
+    });
+    // One-tap cleanup should improve the supplied edit, never inject a generic
+    // social CTA the creator did not ask for. Draft mode keeps the full style.
+    return mode === "quick"
+      ? { ...recipe, overlays: recipe.overlays.filter((overlay) => overlay.role !== "cta") }
+      : recipe;
+  };
+
+  /** One tap performs the complete cleanup and applies it immediately. The
+      store creates both an undo entry and named before/after restore points. */
+  const runQuickAutoEdit = (nextSeed = 0) =>
+    withBusy("quick-auto", async () => {
+      const request = beginGeneration();
+      const recipe = await buildAutoEditRecipe(nextSeed, "quick");
+      if (!recipe) return;
+      if (
+        generationTokenRef.current !== request.token ||
+        generationSignatureRef.current !== request.uiSignature ||
+        storeGenerationSignature() !== request.storeSignature
+      ) {
+        useEditorStore
+          .getState()
+          .addToast("info", "Tidslinjen ändrades medan AutoEdit arbetade. Kör igen på den nya versionen.");
+        return;
+      }
+      useEditorStore.getState().applyEditRecipe(recipe);
+      setSeed(nextSeed);
+      setLastEngine("auto");
+      setDraftRecipe(null);
+      setDraftOrder([]);
+      setDraftContext(null);
+    });
+
   const runAutoEdit = (nextSeed = 0) =>
     withBusy("auto", async () => {
       const request = beginGeneration();
-      const signals = await getSignals();
-      const caps = await getCaptions("try");
-      if (caps.length === 0 && !signals) {
-        useEditorStore
-          .getState()
-          .addToast("error", "Nothing to work with — no transcript and footage analysis failed.");
-        return;
-      }
-      if (caps.length === 0 && signals) {
-        useEditorStore
-          .getState()
-          .addToast("info", "No speech found — editing from motion, energy & scene analysis.");
-      }
-      setStage("Building the edit — cuts, hook, zooms…");
-      const s = useEditorStore.getState();
-      const recipe = generateEditRecipe({
-        projectId: s.projectId,
-        transcript: analyzeTranscript(caps),
-        captions: caps,
-        peaks: signals ? null : timelinePeaks(),
-        signals,
-        duration: tracksDuration(s.tracks),
-        style,
-        seed: nextSeed,
-      });
-      publishDraft(recipe, nextSeed, "auto", request);
+      const recipe = await buildAutoEditRecipe(nextSeed);
+      if (recipe) publishDraft(recipe, nextSeed, "auto", request);
     });
 
   /** Re-run the active engine without mutating the timeline. */
@@ -507,7 +562,7 @@ export default function AIPanel() {
       const s = useEditorStore.getState();
       const dur = tracksDuration(s.tracks);
       const window = findBestWindow(
-        { transcript: analyzeTranscript(caps), peaks: signals ? null : timelinePeaks(), signals, duration: dur },
+        { transcript: analyzeTranscript(caps), peaks: signals?.energy ?? timelinePeaks(), signals, duration: dur },
         target
       );
       if (!window) {
@@ -519,12 +574,17 @@ export default function AIPanel() {
 
   const runRemoveSilence = (level: SilenceAggressiveness) =>
     withBusy(`silence-${level}`, async () => {
+      const signals = await getSignals();
       const caps = await getCaptions("require");
       if (caps.length === 0) return;
       const s = useEditorStore.getState();
       const dur = tracksDuration(s.tracks);
       const silences = detectSilence(
-        { transcript: analyzeTranscript(caps), peaks: timelinePeaks(), duration: dur },
+        {
+          transcript: analyzeTranscript(caps),
+          peaks: signals?.energy ?? timelinePeaks(),
+          duration: dur,
+        },
         level
       );
       if (silences.length === 0) {
@@ -664,7 +724,110 @@ export default function AIPanel() {
   };
 
   return (
-    <div className="flex h-full flex-col gap-4 overflow-y-auto p-3">
+    <div className="flex h-full flex-col gap-4 overflow-y-auto p-3 [&>details]:shrink-0 [&>section]:shrink-0">
+      <section className="autoedit-hero overflow-hidden rounded-2xl bg-[linear-gradient(145deg,rgba(120,217,197,.13),rgba(120,184,237,.055)_55%,rgba(7,10,14,.2))] p-3.5 ring-1 ring-[var(--caption)]/25">
+        <div className="flex items-center justify-between gap-3">
+          <p className="panel-eyebrow text-[var(--caption)]">AutoEdit</p>
+          <span className="rounded-full bg-black/20 px-2 py-1 font-mono text-[8px] uppercase tracking-[0.1em] text-[#91a59f] ring-1 ring-white/[0.07]">
+            lokalt + ångra
+          </span>
+        </div>
+        <h2 className="mt-2 text-[21px] font-semibold leading-tight tracking-[-0.04em] text-[#f1f6f4]">
+          Bättre flow, ett tryck.
+        </h2>
+        <p className="mt-1.5 text-[10px] leading-relaxed text-[#91a09f]">
+          AutoEdit textar tal när det behövs, klipper pauser, utfyllnadsord och upprepningar
+          och kortar partier där inget händer.
+        </p>
+
+        <div className="mt-3 grid grid-cols-3 overflow-hidden rounded-xl bg-black/20 ring-1 ring-white/[0.07]">
+          {["Texta", "Rensa", "Skapa flow"].map((step, index) => (
+            <div
+              key={step}
+              className="flex min-w-0 items-center justify-center gap-1 border-r border-white/[0.06] px-1.5 py-2 text-[8px] font-semibold text-[#a8b7b3] last:border-r-0"
+            >
+              <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[var(--caption)]/10 font-mono text-[8px] text-[var(--caption)] ring-1 ring-[var(--caption)]/20">
+                {index === 0 && captionsReady ? <Check size={9} strokeWidth={3} /> : index + 1}
+              </span>
+              <span className="truncate">{step}</span>
+            </div>
+          ))}
+        </div>
+        <p className="mt-1.5 text-center font-mono text-[8px] text-[#6f817c]">
+          {!hasContent
+            ? "Lägg ett klipp på tidslinjen för att börja"
+            : captionsReady
+              ? `${captions.length} textblock redo`
+              : "Textning skapas lokalt när AutoEdit startar"}
+        </p>
+
+        <div className="mt-2.5 grid grid-cols-3 gap-1 rounded-xl bg-black/20 p-1 ring-1 ring-white/[0.07]">
+          {([
+            ["podcast", "Lugn"],
+            ["clean", "Balans"],
+            ["viral", "Tajt"],
+          ] as Array<[EditStyle, string]>).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => {
+                invalidateGeneration();
+                setStyle(id);
+              }}
+              aria-pressed={style === id}
+              className={`rounded-lg px-1.5 py-1.5 text-[9px] font-bold transition ${
+                style === id
+                  ? "bg-[var(--caption)] text-[#0b1714]"
+                  : "text-[#788783] hover:bg-white/[0.06] hover:text-[#c8d4d0]"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => void runQuickAutoEdit(0)}
+          disabled={disabled}
+          data-testid="run-auto-edit"
+          className="mt-2.5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[var(--caption)] px-4 text-[13px] font-extrabold text-[#0b1714] shadow-[0_12px_30px_rgba(120,217,197,.13)] transition hover:bg-[#a1eadb] active:translate-y-px disabled:opacity-35"
+        >
+          {busy === "quick-auto" || isTranscribing ? (
+            <>
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#0b1714]/20 border-t-[#0b1714]/80" />
+              <span className="max-w-[240px] truncate">
+                {captionProgress?.detail ?? stage ?? "Analyserar materialet…"}
+              </span>
+            </>
+          ) : (
+            <>
+              <Wand2 size={17} /> Kör AutoEdit
+            </>
+          )}
+        </button>
+        <p className="mt-2 text-center text-[9px] leading-snug text-[#697975]">
+          En återställningspunkt sparas före ändringen. Ctrl+Z fungerar direkt efteråt.
+        </p>
+      </section>
+
+      <div className="h-px shrink-0 bg-white/[0.07]" />
+
+      <details className="group shrink-0 rounded-2xl bg-white/[0.02] ring-1 ring-white/[0.08]">
+        <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3 py-3 text-[11px] font-semibold text-zinc-300 marker:hidden">
+          <span className="grid h-7 w-7 place-items-center rounded-lg bg-sky-500/10 text-sky-300 ring-1 ring-sky-400/15">
+            <Clapperboard size={14} />
+          </span>
+          <span>
+            Avancerad klippning
+            <span className="mt-0.5 block text-[9px] font-normal text-zinc-600">
+              Montage, intervju och musikstyrda klipp
+            </span>
+          </span>
+          <span className="ml-auto font-mono text-[9px] text-zinc-600 group-open:hidden">Öppna</span>
+          <span className="ml-auto hidden font-mono text-[9px] text-zinc-600 group-open:inline">Stäng</span>
+        </summary>
+        <div className="space-y-4 border-t border-white/[0.07] p-3">
       <section>
         <SectionLabel>
           <Clapperboard size={11} /> Build an edit draft
@@ -900,6 +1063,8 @@ export default function AIPanel() {
           <p className="mt-1.5 text-center text-[10px] leading-snug text-sky-300/90">{stage}</p>
         )}
       </section>
+        </div>
+      </details>
 
       {draftRecipe && (
         <DraftReview

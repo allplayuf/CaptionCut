@@ -13,6 +13,7 @@ import {
   Plus,
   Replace,
   Scissors,
+  ShieldCheck,
   Sparkles,
   Trash2,
   Wand2,
@@ -41,8 +42,7 @@ export default function CaptionsPanel() {
     setQuality,
     scope,
     setScope,
-    prompt,
-    setPrompt,
+    progress,
   } = useTranscription();
   const duration = tracksDuration(tracks);
   const hasClips = duration > 0;
@@ -72,71 +72,67 @@ export default function CaptionsPanel() {
   return (
     <div className="flex h-full flex-col bg-[#10141b]">
       <div className="border-b border-white/[0.07] p-4">
-        <div className="mb-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#9ce5c3]">
-            Captions
-          </p>
-          <h2 className="mt-1 text-[19px] font-semibold tracking-[-0.025em] text-[#f0f3f6]">
-            Text som sitter i tiden.
+        <div className="mb-3">
+          <div className="flex items-center justify-between">
+            <p className="panel-eyebrow text-[var(--caption)]">Lokala captions</p>
+            <span className="inline-flex items-center gap-1 rounded-full bg-[var(--caption)]/10 px-2 py-1 text-[8px] font-bold uppercase tracking-[0.12em] text-[var(--caption)] ring-1 ring-[var(--caption)]/15">
+              <ShieldCheck size={10} /> Privat
+            </span>
+          </div>
+          <h2 className="mt-2 text-[19px] font-semibold tracking-[-0.03em] text-[#f0f3f6]">
+            Din video lämnar aldrig enheten.
           </h2>
-          <p className="mt-1 text-[11px] leading-relaxed text-[#778391]">
-            Caption-systemet är kvar — nu med mer plats och mindre brus runtomkring.
+          <p className="mt-1 text-[10px] leading-relaxed text-[#778391]">
+            Whisper laddas ner automatiskt första gången och sparas i webbläsaren.
+            Ingen API-nyckel, kostnad eller caption-uppladdning krävs.
           </p>
         </div>
-        <div className="mb-2 grid grid-cols-2 gap-2">
+        <div className="mb-2 grid grid-cols-2 gap-1.5 rounded-xl bg-black/20 p-1.5 ring-1 ring-white/[0.07]">
           <select
             value={language}
             onChange={(e) => setLanguage(e.target.value as typeof language)}
-            className="flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-zinc-200 outline-none focus:border-violet-400"
+            className="h-8 min-w-0 rounded-lg border-0 bg-white/[0.05] px-2 text-[10px] font-semibold text-zinc-200 outline-none ring-1 ring-white/[0.07] focus:ring-[var(--caption)]/40"
             title="Spoken language"
           >
-            <option value="auto">Detect language</option>
+            <option value="auto">Upptäck språk</option>
             <option value="en">English</option>
             <option value="sv">Svenska</option>
           </select>
           <select
             value={quality}
             onChange={(e) => setQuality(e.target.value as typeof quality)}
-            className="min-w-0 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-zinc-200 outline-none focus:border-violet-400"
-            title="Speech model quality. WHISPER_MODEL can override this local model mapping."
+            className="h-8 min-w-0 rounded-lg border-0 bg-white/[0.05] px-2 text-[10px] font-semibold text-zinc-200 outline-none ring-1 ring-white/[0.07] focus:ring-[var(--caption)]/40"
+            title="Välj en snabb eller noggrann lokal Whisper-modell"
           >
-            <option value="accurate">Accurate · base</option>
-            <option value="fast">Fast · tiny</option>
+            <option value="fast">Snabb · ~75 MB</option>
+            <option value="accurate">Noggrann · ~150 MB</option>
           </select>
         </div>
         <select
           value={scope}
           onChange={(e) => setScope(e.target.value as typeof scope)}
-          className="mb-2 w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-zinc-200 outline-none focus:border-violet-400"
+          className="mb-2 h-9 w-full rounded-xl border-0 bg-white/[0.045] px-3 text-[10px] font-semibold text-zinc-200 outline-none ring-1 ring-white/[0.07] focus:ring-[var(--caption)]/40"
           title="Caption the whole timeline or only selected clips on the main video track"
         >
-          <option value="timeline">Entire timeline</option>
+          <option value="timeline">Hela tidslinjen</option>
           <option value="selected" disabled={selectedMainClipCount === 0}>
-            Selected main clips ({selectedMainClipCount})
+            Valda huvudklipp ({selectedMainClipCount})
           </option>
         </select>
-        <input
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          maxLength={500}
-          placeholder="Names & jargon, e.g. CaptionCut, Matij…"
-          title="Optional glossary or context to help Whisper spell unusual words correctly"
-          className="mb-2 w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-violet-400"
-        />
         <button
           onClick={() => void runTranscription()}
           disabled={isTranscribing || !canTranscribe}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#9ce5c3] px-4 py-2.5 text-sm font-bold text-[#0e1a15] shadow-[0_8px_24px_rgba(156,229,195,0.12)] transition hover:bg-[#b9f0d7] active:scale-[0.98] disabled:opacity-40"
+          className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#9ce5c3] px-4 text-[12px] font-extrabold text-[#0e1a15] shadow-[0_10px_28px_rgba(156,229,195,0.13)] transition hover:bg-[#b9f0d7] active:translate-y-px disabled:opacity-40"
         >
           {isTranscribing ? (
             <>
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-              Transcribing…
+              {progress?.stage === "model" ? "Laddar lokal modell…" : "Skapar captions…"}
             </>
           ) : (
             <>
               <Sparkles size={16} />
-              {scope === "selected" ? "Texta valda klipp" : "Skapa captions"}
+              {scope === "selected" ? "Texta valda klipp lokalt" : "Skapa captions lokalt"}
             </>
           )}
         </button>
@@ -146,11 +142,37 @@ export default function CaptionsPanel() {
           </p>
         )}
         {isTranscribing && (
-          <p className="mt-2 text-center text-[11px] text-zinc-500">
-            {duration > 180
-              ? "Long video — local transcription can take a few minutes."
-              : "Running locally on your machine — free & private."}
-          </p>
+          <div className="mt-2.5 rounded-xl bg-black/20 p-2.5 ring-1 ring-white/[0.07]">
+            <div className="flex items-center justify-between gap-2 text-[9px]">
+              <span className="truncate text-[#9aa6b2]">
+                {progress?.detail ?? "Arbetar på den här enheten"}
+              </span>
+              <span className="shrink-0 font-mono text-[var(--caption)]">
+                {progress?.stage === "model" && progress.progress > 0
+                  ? `${Math.round(progress.progress * 100)}%`
+                  : progress?.device === "webgpu"
+                    ? "GPU"
+                    : "LOKALT"}
+              </span>
+            </div>
+            <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.07]">
+              <div
+                className={`h-full rounded-full bg-[var(--caption)] transition-[width] ${
+                  progress?.stage === "transcribing" ? "w-2/3 animate-pulse" : ""
+                }`}
+                style={
+                  progress?.stage === "transcribing"
+                    ? undefined
+                    : { width: `${Math.max(4, (progress?.progress ?? 0) * 100)}%` }
+                }
+              />
+            </div>
+            {duration > 180 && (
+              <p className="mt-2 text-[9px] leading-relaxed text-[#687480]">
+                Långa videor kan ta några minuter. Du kan fortsätta arbeta under tiden.
+              </p>
+            )}
+          </div>
         )}
       </div>
 
@@ -202,18 +224,18 @@ export default function CaptionsPanel() {
                 value={findText}
                 onChange={(e) => setFindText(e.target.value)}
                 placeholder="Find"
-                className="w-0 flex-1 rounded border border-white/10 bg-black/30 px-1.5 py-1 text-[11px] text-zinc-200 outline-none focus:border-violet-400"
+                className="w-0 flex-1 rounded border border-white/10 bg-black/30 px-1.5 py-1 text-[11px] text-zinc-200 outline-none focus:border-[var(--caption)]"
               />
               <input
                 value={replaceText}
                 onChange={(e) => setReplaceText(e.target.value)}
                 placeholder="Replace"
                 onKeyDown={(e) => e.key === "Enter" && runReplace()}
-                className="w-0 flex-1 rounded border border-white/10 bg-black/30 px-1.5 py-1 text-[11px] text-zinc-200 outline-none focus:border-violet-400"
+                className="w-0 flex-1 rounded border border-white/10 bg-black/30 px-1.5 py-1 text-[11px] text-zinc-200 outline-none focus:border-[var(--caption)]"
               />
               <button
                 onClick={runReplace}
-                className="rounded bg-violet-500/25 px-2 py-1 text-[11px] font-semibold text-violet-200 transition hover:bg-violet-500/40"
+                className="rounded bg-[var(--caption)]/15 px-2 py-1 text-[11px] font-semibold text-[var(--caption)] transition hover:bg-[var(--caption)]/25"
               >
                 Go
               </button>
@@ -225,10 +247,10 @@ export default function CaptionsPanel() {
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {captions.length === 0 ? (
           <div className="px-4 py-8 text-center text-xs leading-relaxed text-zinc-600">
-            No captions yet.
+            Inga captions ännu.
             <br />
-            Hit <span className="font-semibold text-zinc-400">Auto Captions</span> to transcribe
-            your video into punchy TikTok-style lines.
+            Tryck <span className="font-semibold text-zinc-400">Skapa captions lokalt</span> så
+            textas videon privat på den här enheten.
           </div>
         ) : visibleCaptions.length === 0 ? (
           <div className="px-4 py-8 text-center text-xs leading-relaxed text-zinc-600">
@@ -249,7 +271,7 @@ export default function CaptionsPanel() {
         )}
         <button
           onClick={addCaptionAtPlayhead}
-          className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-white/15 py-2 text-xs font-medium text-zinc-400 transition hover:border-violet-400/50 hover:text-violet-300"
+          className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-white/15 py-2 text-xs font-medium text-zinc-400 transition hover:border-[var(--caption)]/50 hover:text-[var(--caption)]"
         >
           <Plus size={13} /> Add caption at playhead
         </button>
@@ -276,7 +298,7 @@ function ToolIcon({
       onClick={onClick}
       title={title}
       className={`rounded-md p-1.5 transition ${
-        active ? "bg-violet-500/25 text-violet-200" : "text-zinc-400 hover:bg-white/10 hover:text-white"
+        active ? "bg-[var(--caption)]/15 text-[var(--caption)]" : "text-zinc-400 hover:bg-white/10 hover:text-white"
       }`}
     >
       {children}
@@ -321,7 +343,7 @@ function CaptionRow({
       ref={rowRef}
       className={`group rounded-lg p-2 ring-1 transition ${
         active
-          ? "bg-violet-500/15 ring-violet-400/50"
+          ? "bg-[var(--caption)]/10 ring-[var(--caption)]/40"
           : selected
             ? "bg-white/8 ring-white/20"
             : "bg-white/3 ring-white/5 hover:bg-white/6"
@@ -451,7 +473,7 @@ function TimeInput({ value, onCommit }: { value: number; onCommit: (v: number) =
       onBlur={commit}
       onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
       onClick={(e) => e.stopPropagation()}
-      className="w-14 rounded border border-white/10 bg-black/30 px-1 py-0.5 text-center font-mono text-[10px] text-zinc-400 outline-none focus:border-violet-400"
+      className="w-14 rounded border border-white/10 bg-black/30 px-1 py-0.5 text-center font-mono text-[10px] text-zinc-400 outline-none focus:border-[var(--caption)]"
     />
   );
 }

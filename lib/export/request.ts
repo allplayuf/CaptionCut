@@ -28,6 +28,8 @@ export interface OverlayPayload {
   x: number;
   y: number;
   widthFrac: number;
+  /** Clockwise rotation in degrees, matching the preview transform. */
+  rotation: number;
   opacity: number;
 }
 
@@ -131,6 +133,7 @@ export function buildExportRequest(input: {
         x: t.x ?? 0,
         y: t.y ?? 0,
         widthFrac: type === "image" ? (t.scale ?? 0.8) : 1,
+        rotation: t.rotation ?? 0,
         opacity: t.opacity ?? 1,
       });
     }
@@ -200,6 +203,8 @@ export function buildExportRequest(input: {
         strokeColor: s.strokeColor ?? "#000000",
         strokeWidth: s.strokeWidth ?? (type === "sticker" ? 0 : 5),
         backgroundColor: s.backgroundColor ?? null,
+        rotation: t.rotation ?? 0,
+        opacity: t.opacity ?? 1,
         sticker: type === "sticker",
       });
     }

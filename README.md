@@ -3,6 +3,11 @@
 A transcript-first video editor for removing pauses, cutting unwanted parts,
 creating captions and exporting social video without fighting a crowded UI.
 
+Captions run entirely inside each visitor's browser with multilingual Whisper.
+The small model downloads automatically after the first media import, is cached
+by the browser, and uses WebGPU when available with a WASM fallback. Video audio
+is never sent to an AI transcription API.
+
 The main workflow is intentionally short:
 
 1. Import video.
@@ -34,23 +39,17 @@ copy .env.example .env.local
 npm run dev
 ```
 
-Open <http://localhost:3000>. FFmpeg and FFprobe are bundled. Local captions use
-whisper.cpp by default and download the selected model on first use. To prepare
-it ahead of time:
-
-```bash
-npm run setup-whisper
-```
+Open <http://localhost:3000>. FFmpeg and FFprobe are bundled. Captions use the
+same browser-local Whisper worker in development and production, so there is no
+separate desktop setup or transcription key.
 
 ## Production deployment on Vercel
 
 1. Import this repository into Vercel or run `npx vercel`.
 2. Create and connect a Vercel Blob store. Confirm that
    `BLOB_READ_WRITE_TOKEN` is available to Production.
-3. Deployed captions use Vercel AI Gateway with the Function's short-lived OIDC
-   identity. No transcription secret needs to be added. Vercel requires a
-   payment method on the team before it unlocks the included AI Gateway credit;
-   configure a spend limit before sharing the app broadly.
+3. No AI service or transcription secret is required. Each browser downloads
+   and caches its own free Whisper model on first use.
 4. Optionally configure Google Drive with the variables below.
 5. Deploy, then open `/api/health`. A launch-ready deployment returns HTTP 200
    with Blob storage and both media tools ready.
@@ -79,21 +78,12 @@ browser/IP.
 # Required in production
 BLOB_READ_WRITE_TOKEN=
 
-# Optional Vercel AI Gateway override
-# AI_GATEWAY_TRANSCRIPTION_MODEL=openai/whisper-1
-# TRANSCRIPTION_PROVIDER=gateway
-
-# Optional direct OpenAI provider for non-Vercel hosting
-# OPENAI_API_KEY=
-# OPENAI_WHISPER_MODEL=whisper-1
-# TRANSCRIPTION_PROVIDER=openai
-
 # Optional Google Drive Picker
 GOOGLE_DRIVE_CLIENT_ID=...apps.googleusercontent.com
 GOOGLE_DRIVE_API_KEY=...
 GOOGLE_DRIVE_APP_ID=...
 
-# Optional local whisper.cpp tuning
+# Optional legacy CLI-only whisper.cpp tuning
 # TRANSCRIPTION_PROVIDER=local-whisper
 # WHISPER_MODEL=small
 # WHISPER_CPP_PATH=
@@ -118,8 +108,7 @@ npx tsx scripts/verify-formats.ts
 npx tsx scripts/verify-effects.ts
 npx tsx scripts/verify-fast-interview.ts
 npx tsx scripts/verify-drive-pairing.ts
-# With a linked Vercel project and a short test audio file:
-npx tsx scripts/verify-gateway.ts path/to/test.wav
+npm run verify-boundaries
 ```
 
 ## Architecture
@@ -128,7 +117,7 @@ npx tsx scripts/verify-gateway.ts path/to/test.wav
 - `components/` — focused workspace, preview, timeline and advanced panels
 - `hooks/` — Zustand editor state, autosave and history
 - `lib/video/` — client uploads and timeline math
-- `lib/transcription/` — local, OpenAI and mock providers
+- `lib/transcription/` — browser-local Whisper worker, caption coverage and legacy CLI provider
 - `lib/export/` — FFmpeg render pipeline and persisted job manager
 - `lib/server/` — Blob/local project storage, media materialization and binaries
 - `lib/autoEdit/` — silence, filler, highlight and sequence analysis

@@ -48,7 +48,6 @@ export async function POST(request: Request) {
           allowOverwrite: false,
         };
       },
-      onUploadCompleted: async () => {},
     });
     return NextResponse.json(response);
   } catch (error) {

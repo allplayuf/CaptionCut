@@ -26,12 +26,12 @@ export interface UploadProgress {
  * device upload (timeline placement, analysis warmup and useful notices). */
 export function registerImportedMedia(
   asset: MediaAsset,
-  opts?: { silentAudioTip?: boolean }
+  opts?: { silentAudioTip?: boolean; deferAnalysis?: boolean }
 ): void {
   const store = useEditorStore.getState();
   store.addMedia(asset);
   const kind = assetKind(asset);
-  if (kind !== "image") {
+  if (kind !== "image" && !opts?.deferAnalysis) {
     void fetchAnalyses([asset])
       .then((fresh) => useEditorStore.getState().mergeAnalyses(fresh))
       .catch(() => {});
@@ -83,14 +83,62 @@ export function useMediaUpload() {
         continue;
       }
       setUploading({ name: file.name, progress: 0, index: i + 1, total: list.length });
+      const provisional: { asset?: MediaAsset } = {};
       try {
-        const asset = await uploadVideo(file, (p) =>
-          setUploading({ name: file.name, progress: p, index: i + 1, total: list.length })
+        const asset = await uploadVideo(
+          file,
+          (p) => {
+            setUploading({ name: file.name, progress: p, index: i + 1, total: list.length });
+            if (provisional.asset) {
+              useEditorStore
+                .getState()
+                .updateMediaAsset(provisional.asset.id, { uploadProgress: p }, { persist: false });
+            }
+          },
+          (localAsset) => {
+            provisional.asset = localAsset;
+            registerImportedMedia(localAsset, { ...opts, deferAnalysis: true });
+          }
         );
-        registerImportedMedia(asset, opts);
+        if (provisional.asset) {
+          useEditorStore.getState().updateMediaAsset(
+            asset.id,
+            {
+              storageUrl: asset.storageUrl,
+              uploadState: "ready",
+              uploadProgress: 1,
+              uploadError: undefined,
+            },
+            { persist: true }
+          );
+          if (assetKind(asset) !== "image") {
+            void fetchAnalyses([asset])
+              .then((fresh) => useEditorStore.getState().mergeAnalyses(fresh))
+              .catch(() => {});
+          }
+        } else {
+          registerImportedMedia(asset, opts);
+        }
         uploaded.push(asset);
       } catch (err) {
-        addToast("error", err instanceof Error ? err.message : "Upload failed.");
+        const message = err instanceof Error ? err.message : "Upload failed.";
+        if (provisional.asset) {
+          useEditorStore.getState().updateMediaAsset(
+            provisional.asset.id,
+            {
+              uploadState: "error",
+              uploadError: message,
+            },
+            { persist: false }
+          );
+          uploaded.push(provisional.asset);
+          addToast(
+            "error",
+            `"${file.name}" works in this tab, but cloud sync failed. Retry the import before reloading.`
+          );
+        } else {
+          addToast("error", message);
+        }
       } finally {
         setUploading(null);
       }

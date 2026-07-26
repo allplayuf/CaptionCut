@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import type { EditorTool } from "@/lib/ui/editorTools";
 import {
   Captions,
@@ -15,14 +16,17 @@ import {
   SwatchBook,
   WandSparkles,
 } from "lucide-react";
-import AIPanel from "./AIPanel";
-import CaptionsPanel from "./CaptionsPanel";
 import CutPanel from "./CutPanel";
-import EffectsPanel from "./EffectsPanel";
-import InspectorPanel from "./InspectorPanel";
-import LibraryPanel from "./LibraryPanel";
-import SequenceBuilderPanel from "./SequenceBuilderPanel";
-import StylePanel from "./StylePanel";
+
+const AIPanel = dynamic(() => import("./AIPanel"), { loading: PanelLoading });
+const CaptionsPanel = dynamic(() => import("./CaptionsPanel"), { loading: PanelLoading });
+const EffectsPanel = dynamic(() => import("./EffectsPanel"), { loading: PanelLoading });
+const InspectorPanel = dynamic(() => import("./InspectorPanel"), { loading: PanelLoading });
+const LibraryPanel = dynamic(() => import("./LibraryPanel"), { loading: PanelLoading });
+const SequenceBuilderPanel = dynamic(() => import("./SequenceBuilderPanel"), {
+  loading: PanelLoading,
+});
+const StylePanel = dynamic(() => import("./StylePanel"), { loading: PanelLoading });
 
 const PRIMARY_TOOLS: Array<{
   id: EditorTool;
@@ -30,10 +34,10 @@ const PRIMARY_TOOLS: Array<{
   icon: typeof Scissors;
 }> = [
   { id: "cut", label: "Klipp", icon: Scissors },
+  { id: "smart", label: "Auto", icon: Sparkles },
   { id: "captions", label: "Text", icon: Captions },
   { id: "media", label: "Bibliotek", icon: FolderOpen },
   { id: "effects", label: "Effekter", icon: WandSparkles },
-  { id: "adjust", label: "Justera", icon: SlidersHorizontal },
 ];
 
 export default function WorkspaceSidebar({
@@ -52,14 +56,19 @@ export default function WorkspaceSidebar({
   const [localTool, setLocalTool] = useState<EditorTool>("cut");
   const tool = activeTool ?? localTool;
   const setTool = onToolChange ?? setLocalTool;
+  const pickTool = (nextTool: EditorTool) => {
+    setTool(nextTool);
+    if (collapsed) onToggleCollapsed?.();
+  };
 
   return (
     <aside
-      className="flex min-h-0 shrink-0 border-r border-white/[0.07] bg-[#0a0e13] shadow-[12px_0_35px_rgba(0,0,0,.08)] transition-[width] duration-150"
-      style={{ width: collapsed ? 68 : width }}
+      className="workspace-sidebar flex min-h-0 shrink-0 border-r border-white/[0.07] bg-[#0a0e13] shadow-[12px_0_35px_rgba(0,0,0,.08)] transition-[width] duration-150"
+      data-collapsed={collapsed}
+      style={{ width: collapsed ? 62 : width }}
     >
       <nav
-        className="flex w-[68px] shrink-0 flex-col overflow-y-auto border-r border-white/[0.07] px-2 py-1.5"
+        className="workspace-tool-rail flex w-[62px] shrink-0 flex-col overflow-y-auto border-r border-white/[0.07] px-1.5 py-2"
         aria-label="Redigeringsverktyg"
       >
         <div className="space-y-1">
@@ -69,16 +78,16 @@ export default function WorkspaceSidebar({
               active={tool === id}
               icon={<Icon size={17} />}
               label={label}
-              onClick={() => setTool(id)}
+              onClick={() => pickTool(id)}
             />
           ))}
         </div>
         <div className="mt-auto space-y-1">
           <RailButton
-            active={["more", "smart", "sequence", "style"].includes(tool)}
+            active={["more", "adjust", "sequence", "style"].includes(tool)}
             icon={<MoreHorizontal size={18} />}
             label="Mer"
-            onClick={() => setTool("more")}
+            onClick={() => pickTool("more")}
           />
           {onToggleCollapsed && (
             <RailButton
@@ -91,41 +100,30 @@ export default function WorkspaceSidebar({
         </div>
       </nav>
 
-      {!collapsed && <div className="min-w-0 flex-1">
-        <Panel active={tool === "cut"}>
-          <CutPanel />
-        </Panel>
-        <Panel active={tool === "captions"}>
-          <CaptionsPanel />
-        </Panel>
-        <Panel active={tool === "media"}>
-          <LibraryPanel onOpenSmart={() => setTool("smart")} />
-        </Panel>
-        <Panel active={tool === "effects"}>
-          <EffectsPanel />
-        </Panel>
-        <Panel active={tool === "adjust"}>
-          <InspectorPanel />
-        </Panel>
-        <Panel active={tool === "smart"}>
-          <AIPanel />
-        </Panel>
-        <Panel active={tool === "sequence"}>
-          <SequenceBuilderPanel />
-        </Panel>
-        <Panel active={tool === "style"}>
-          <StylePanel />
-        </Panel>
-        <Panel active={tool === "more"}>
-          <MoreTools onPick={setTool} />
-        </Panel>
+      {!collapsed && <div className="workspace-tool-panel min-w-0 flex-1">
+        {tool === "cut" && <CutPanel />}
+        {tool === "captions" && <CaptionsPanel />}
+        {tool === "media" && <LibraryPanel onOpenSmart={() => setTool("smart")} />}
+        {tool === "effects" && <EffectsPanel />}
+        {tool === "adjust" && <InspectorPanel />}
+        {tool === "smart" && <AIPanel />}
+        {tool === "sequence" && <SequenceBuilderPanel />}
+        {tool === "style" && <StylePanel />}
+        {tool === "more" && <MoreTools onPick={setTool} />}
       </div>}
     </aside>
   );
 }
 
-function Panel({ active, children }: { active: boolean; children: React.ReactNode }) {
-  return <div className={active ? "h-full" : "hidden"}>{children}</div>;
+function PanelLoading() {
+  return (
+    <div className="flex h-full items-center justify-center bg-[#10141b]" role="status">
+      <span className="flex items-center gap-2 text-[10px] font-semibold text-[#71808d]">
+        <span className="h-3 w-3 animate-spin rounded-full border border-white/15 border-t-[var(--cut)]" />
+        Öppnar verktyget…
+      </span>
+    </div>
+  );
 }
 
 function RailButton({
@@ -142,6 +140,8 @@ function RailButton({
   return (
     <button
       onClick={onClick}
+      type="button"
+      aria-pressed={active}
       className={`relative flex w-full flex-col items-center gap-1 rounded-xl py-1.5 text-[9px] font-semibold transition ${
         active
           ? "bg-[var(--cut)]/10 text-[#f6c98f]"
@@ -159,6 +159,13 @@ function RailButton({
 
 function MoreTools({ onPick }: { onPick: (tool: EditorTool) => void }) {
   const tools = [
+    {
+      id: "adjust" as const,
+      icon: SlidersHorizontal,
+      title: "Justera",
+      text: "Storlek, ljud, position och inställningar för det valda klippet.",
+      tone: "text-[#c49af6] bg-[#c49af6]/10",
+    },
     {
       id: "smart" as const,
       icon: Sparkles,

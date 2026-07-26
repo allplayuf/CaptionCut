@@ -141,6 +141,12 @@ interface EditorState {
 
   // media / clips
   addMedia: (asset: MediaAsset) => void;
+  /** Patch import/sync metadata without creating an undo entry. */
+  updateMediaAsset: (
+    mediaId: string,
+    patch: Partial<MediaAsset>,
+    options?: { persist?: boolean }
+  ) => void;
   createMediaFolder: (name: string) => string;
   renameMediaFolder: (folderId: string, name: string) => void;
   deleteMediaFolder: (folderId: string) => void;
@@ -516,6 +522,17 @@ export const useEditorStore = create<EditorState>((set, get) => {
           media,
           tracks: replaceTrack(s.tracks, vi, rippleMainTrack({ ...video, clips: [...video.clips, clip] })),
           ...sel(clip.id),
+        };
+      }),
+
+    updateMediaAsset: (mediaId, patch, options) =>
+      set((s) => {
+        if (!s.media.some((asset) => asset.id === mediaId)) return s;
+        return {
+          media: s.media.map((asset) =>
+            asset.id === mediaId ? { ...asset, ...patch } : asset
+          ),
+          revision: options?.persist ? s.revision + 1 : s.revision,
         };
       }),
 
@@ -1807,12 +1824,19 @@ export function buildProjectSnapshot(state: {
   beat: BeatSettings;
   editRecipe: EditRecipe | null;
 }): Project {
+  const durableMedia = state.media.map((asset) => {
+    const durableAsset = { ...asset };
+    delete durableAsset.uploadState;
+    delete durableAsset.uploadProgress;
+    delete durableAsset.uploadError;
+    return durableAsset;
+  });
   return {
     id: state.projectId,
     name: state.projectName,
     createdAt: state.createdAt,
     updatedAt: Date.now(),
-    media: state.media,
+    media: durableMedia,
     mediaFolders: state.mediaFolders,
     // Legacy mirror of the main track so older tooling keeps working.
     clips: mainClips(state.tracks),

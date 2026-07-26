@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import type { Project } from "@/types";
 import { listProjects, saveProject } from "@/lib/server/projects";
 import { workspaceId } from "@/lib/server/workspace";
+import {
+  jsonTooLarge,
+  MAX_PROJECT_BYTES,
+  requestTooLarge,
+  validateProjectPayload,
+} from "@/lib/server/requestValidation";
 
 export const runtime = "nodejs";
 
@@ -29,8 +35,7 @@ export async function POST(request: NextRequest) {
       { status: 503 }
     );
   }
-  const contentLength = Number(request.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > 5 * 1024 * 1024) {
+  if (requestTooLarge(request, MAX_PROJECT_BYTES)) {
     return NextResponse.json({ error: "Project is too large." }, { status: 413 });
   }
   let project: Project;
@@ -39,12 +44,18 @@ export async function POST(request: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
-  if (!project?.id || typeof project.name !== "string") {
-    return NextResponse.json({ error: "Invalid project payload." }, { status: 400 });
+  if (jsonTooLarge(project, MAX_PROJECT_BYTES)) {
+    return NextResponse.json({ error: "Project is too large." }, { status: 413 });
   }
+  const validationError = validateProjectPayload(project);
+  if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
 
   try {
-    await saveProject(await workspaceId(), { ...project, updatedAt: Date.now() });
+    await saveProject(await workspaceId(), {
+      ...project,
+      name: project.name.trim() || "Namnlöst projekt",
+      updatedAt: Date.now(),
+    });
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: "Could not save the project." }, { status: 500 });

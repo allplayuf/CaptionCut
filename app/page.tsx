@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import type { Project, ProjectSummary } from "@/types";
-import { buildProjectSnapshot, stepFrame, useEditorStore } from "@/hooks/useEditorStore";
+import { stepFrame, useEditorStore } from "@/hooks/useEditorStore";
 import { tracksDuration } from "@/lib/timeline/tracks";
+import { preloadLocalCaptionModel } from "@/lib/transcription/browserWhisper";
+import { useProjectAutosave } from "@/hooks/useProjectAutosave";
 import Header from "@/components/Header";
 import WorkspaceSidebar from "@/components/WorkspaceSidebar";
 import VideoPreview from "@/components/VideoPreview";
@@ -15,8 +17,8 @@ import { CommandPalette, HelpDrawer } from "@/components/WorkspaceOverlays";
 import type { EditorTool } from "@/lib/ui/editorTools";
 import { GripHorizontal, GripVertical } from "lucide-react";
 
-const DEFAULT_SIDEBAR_WIDTH = 408;
-const DEFAULT_TIMELINE_HEIGHT = 286;
+const DEFAULT_SIDEBAR_WIDTH = 368;
+const DEFAULT_TIMELINE_HEIGHT = 238;
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -38,6 +40,12 @@ export default function EditorPage() {
   const [timelineHeight, setTimelineHeight] = useState(DEFAULT_TIMELINE_HEIGHT);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
+  const retryAutosave = useProjectAutosave({ projectId, revision, enabled: booted });
+
+  const openTool = (tool: EditorTool) => {
+    setActiveTool(tool);
+    setSidebarCollapsed(false);
+  };
 
   // Personal workspace sizing persists on this device.
   useEffect(() => {
@@ -51,10 +59,26 @@ export default function EditorPage() {
       if (Number.isFinite(savedTimeline) && savedTimeline > 0) {
         setTimelineHeight(clamp(savedTimeline, 220, window.innerHeight - 180));
       }
-      setSidebarCollapsed(savedCollapsed === "true");
+      setSidebarCollapsed(
+        window.innerWidth < 768 ||
+          savedCollapsed === "true" ||
+          (savedCollapsed === null && window.innerWidth < 980)
+      );
       setLayoutReady(true);
     });
     return () => cancelAnimationFrame(frame);
+  }, []);
+
+  // A tools panel that was open on desktop must never crush the phone preview
+  // after a resize or orientation change.
+  useEffect(() => {
+    const phone = window.matchMedia("(max-width: 767px)");
+    const collapseOnPhone = (event: MediaQueryListEvent | MediaQueryList) => {
+      if (event.matches) setSidebarCollapsed(true);
+    };
+    collapseOnPhone(phone);
+    phone.addEventListener("change", collapseOnPhone);
+    return () => phone.removeEventListener("change", collapseOnPhone);
   }, []);
 
   useEffect(() => {
@@ -69,8 +93,21 @@ export default function EditorPage() {
 
   useEffect(() => {
     if (!layoutReady) return;
+    if (window.matchMedia("(max-width: 767px)").matches) return;
     localStorage.setItem("captioncut.sidebarCollapsed", String(sidebarCollapsed));
   }, [layoutReady, sidebarCollapsed]);
+
+  // Once a user imports media, quietly cache the free local caption model.
+  useEffect(() => {
+    if (mediaCount === 0) return;
+    const start = () => void preloadLocalCaptionModel("fast").catch(() => {});
+    const idle = window.requestIdleCallback?.(start, { timeout: 2500 });
+    const timer = idle === undefined ? window.setTimeout(start, 1200) : undefined;
+    return () => {
+      if (idle !== undefined) window.cancelIdleCallback?.(idle);
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [mediaCount]);
 
   const beginSidebarResize = (event: React.PointerEvent) => {
     if (sidebarCollapsed) return;
@@ -128,23 +165,6 @@ export default function EditorPage() {
     })();
   }, []);
 
-  // Debounced autosave whenever project content changes.
-  useEffect(() => {
-    if (revision === 0) return;
-    useEditorStore.getState().setSaveState("saving");
-    const timer = setTimeout(() => {
-      const snapshot = buildProjectSnapshot(useEditorStore.getState());
-      fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(snapshot),
-      })
-        .then((r) => useEditorStore.getState().setSaveState(r.ok ? "saved" : "error"))
-        .catch(() => useEditorStore.getState().setSaveState("error"));
-    }, 1200);
-    return () => clearTimeout(timer);
-  }, [revision]);
-
   // Keyboard shortcuts (ignored while typing in a field).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -164,7 +184,8 @@ export default function EditorPage() {
         target.tagName === "INPUT" ||
         target.tagName === "TEXTAREA" ||
         target.tagName === "SELECT" ||
-        target.isContentEditable
+        target.isContentEditable ||
+        Boolean(target.closest("button, a, [role='slider'], [role='menuitem']"))
       ) {
         return;
       }
@@ -238,10 +259,11 @@ export default function EditorPage() {
         onExport={() => setExportOpen(true)}
         onCommand={() => setCommandOpen(true)}
         onHelp={() => setHelpOpen(true)}
-        onOpenTool={setActiveTool}
+        onOpenTool={openTool}
+        onRetrySave={retryAutosave}
       />
 
-      <div className="flex min-h-0 flex-1">
+      <div className="workspace-body flex min-h-0 flex-1">
         <WorkspaceSidebar
           width={sidebarWidth}
           collapsed={sidebarCollapsed}
@@ -270,7 +292,7 @@ export default function EditorPage() {
         )}
 
         <main className="preview-stage min-w-0 flex-1 px-4 pb-3 pt-2">
-          <VideoPreview onOpenLibrary={() => setActiveTool("media")} />
+          <VideoPreview onOpenLibrary={() => openTool("media")} />
         </main>
       </div>
 
@@ -294,7 +316,7 @@ export default function EditorPage() {
       >
         <GripHorizontal size={14} />
       </button>
-      <div className="shrink-0" style={{ height: timelineHeight }}>
+      <div className="timeline-region shrink-0" style={{ height: timelineHeight }}>
         <Timeline />
       </div>
 
@@ -306,7 +328,7 @@ export default function EditorPage() {
       <CommandPalette
         open={commandOpen}
         onClose={() => setCommandOpen(false)}
-        onOpenTool={setActiveTool}
+        onOpenTool={openTool}
         onExport={() => setExportOpen(true)}
         onHelp={() => {
           setCommandOpen(false);
@@ -316,7 +338,7 @@ export default function EditorPage() {
       <HelpDrawer
         open={helpOpen}
         onClose={() => setHelpOpen(false)}
-        onOpenTool={setActiveTool}
+        onOpenTool={openTool}
         onExport={() => setExportOpen(true)}
       />
       <Toasts />

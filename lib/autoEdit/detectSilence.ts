@@ -41,43 +41,48 @@ export function detectSilence(
   level: SilenceAggressiveness = "medium"
 ): TimeRange[] {
   const opts = SILENCE_LEVELS[level];
-  const gaps = transcriptGaps(input.transcript, input.duration, opts);
+  const gaps = transcriptGaps(input.transcript, input.duration);
   if (!input.peaks || input.peaks.length < 16) {
-    return gaps;
+    return padSilenceRanges(gaps, input.duration, opts);
   }
   const quiet = quietRanges(input.peaks, input.duration, opts);
-  const both = intersectRanges(gaps, quiet);
-  return both
+  return padSilenceRanges(intersectRanges(gaps, quiet), input.duration, opts);
+}
+
+/** Apply breathing room exactly once, while still allowing clean head/tail trims. */
+function padSilenceRanges(
+  ranges: TimeRange[],
+  duration: number,
+  opts: SilenceOptions
+): TimeRange[] {
+  return mergeRanges(ranges)
     .filter((r) => r.end - r.start >= opts.minDuration)
     .map((r) => ({
-      start: round3(Math.max(0, r.start + opts.padding)),
-      end: round3(r.end - opts.padding),
+      start: round3(r.start <= 0.001 ? 0 : r.start + opts.padding),
+      end: round3(r.end >= duration - 0.001 ? duration : r.end - opts.padding),
     }))
     .filter((r) => r.end - r.start > 0.1);
 }
 
 /** Speech-free stretches from word timestamps (incl. lead-in and tail). */
-function transcriptGaps(transcript: Transcript, duration: number, opts: SilenceOptions): TimeRange[] {
+function transcriptGaps(transcript: Transcript, duration: number): TimeRange[] {
   const { words } = transcript;
   if (words.length === 0) return [];
   const ranges: TimeRange[] = [];
 
-  if (words[0].startTime > opts.minDuration + opts.padding) {
-    ranges.push({ start: 0, end: round3(words[0].startTime - opts.padding) });
+  if (words[0].startTime > 0) {
+    ranges.push({ start: 0, end: round3(words[0].startTime) });
   }
   for (let i = 0; i < words.length - 1; i++) {
     const gapStart = words[i].endTime;
     const gapEnd = words[i + 1].startTime;
-    if (gapEnd - gapStart >= opts.minDuration + 2 * opts.padding) {
-      ranges.push({
-        start: round3(gapStart + opts.padding),
-        end: round3(gapEnd - opts.padding),
-      });
+    if (gapEnd > gapStart) {
+      ranges.push({ start: round3(gapStart), end: round3(gapEnd) });
     }
   }
   const last = words[words.length - 1];
-  if (duration - last.endTime > opts.minDuration + opts.padding) {
-    ranges.push({ start: round3(last.endTime + opts.padding), end: round3(duration) });
+  if (duration > last.endTime) {
+    ranges.push({ start: round3(last.endTime), end: round3(duration) });
   }
   return mergeRanges(ranges);
 }

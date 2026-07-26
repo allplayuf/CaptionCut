@@ -5,14 +5,16 @@ import type { AssetKind, MediaAsset, MediaFolder } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { UPLOAD_ACCEPT, useMediaUpload } from "@/hooks/useMediaUpload";
 import { assetKind } from "@/lib/timeline/tracks";
-import { filmstripUrl, mediaUrl } from "@/lib/video/client";
+import { filmstripUrl, localMediaUrl, mediaUrl } from "@/lib/video/client";
 import { formatTime } from "@/lib/video/timeline";
 import GoogleDriveButton from "./GoogleDriveButton";
 import { PairAudioModal } from "./MediaPanel";
 import {
+  AlertCircle,
   Check,
   ChevronDown,
   Cloud,
+  CloudUpload,
   Film,
   Folder,
   FolderInput,
@@ -53,7 +55,7 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
   const [folderFilter, setFolderFilter] = useState<FolderFilter>("all");
   const [kindFilter, setKindFilter] = useState<KindFilter>("all");
   const [query, setQuery] = useState("");
-  const [view, setView] = useState<ViewMode>("grid");
+  const [view, setView] = useState<ViewMode>("list");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [newFolderName, setNewFolderName] = useState("");
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -144,7 +146,7 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
               Allt ditt material
             </h2>
             <p className="mt-1 text-[10px] leading-relaxed text-[var(--muted)]">
-              Organisera källor här. Mappar ändrar aldrig originalfilerna.
+              Filer öppnas direkt från enheten och synkas tryggt i bakgrunden.
             </p>
           </div>
           <span className="rounded-full bg-white/[0.045] px-2 py-1 font-mono text-[9px] text-[#7d8997] ring-1 ring-white/[0.07]">
@@ -169,7 +171,7 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
           <div className="mt-2 rounded-xl bg-[#080c11] p-2.5 ring-1 ring-white/[0.08]">
             <div className="flex items-center justify-between gap-2 text-[9px]">
               <span className="truncate text-[#aab5c1]">
-                {uploading.index}/{uploading.total} · {uploading.name}
+                Redan användbar · synkar {uploading.index}/{uploading.total} · {uploading.name}
               </span>
               <span className="font-mono text-[var(--cut)]">
                 {Math.round(uploading.progress * 100)}%
@@ -219,8 +221,8 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[94px_minmax(0,1fr)]">
-        <aside className="overflow-y-auto border-r border-white/[0.07] bg-[#0b0f14] p-1.5">
+      <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)]">
+        <aside className="library-folders flex gap-1 overflow-x-auto border-b border-white/[0.07] bg-[#0b0f14] px-2 py-2">
           <FolderButton
             active={folderFilter === "all"}
             label="Alla filer"
@@ -237,7 +239,6 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
             onClick={() => setFolderFilter("unfiled")}
             onDrop={(event) => dropIntoFolder(event, null)}
           />
-          <div className="my-1.5 h-px bg-white/[0.06]" />
           {folders.map((folder) => (
             <FolderButton
               key={folder.id}
@@ -271,7 +272,7 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
             <button
               type="button"
               onClick={() => setCreatingFolder(true)}
-              className="mt-1 flex w-full items-center gap-1.5 rounded-lg px-2 py-2 text-left text-[9px] font-semibold text-[#667380] transition hover:bg-white/[0.04] hover:text-[#aab6c2]"
+              className="flex min-w-max items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-[9px] font-semibold text-[#667380] transition hover:bg-white/[0.04] hover:text-[#aab6c2]"
             >
               <Plus size={11} /> Ny mapp
             </button>
@@ -347,7 +348,7 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
           )}
 
           {visible.length > 0 ? (
-            <div className={view === "grid" ? "grid grid-cols-2 gap-2" : "space-y-1.5"}>
+            <div className={view === "grid" ? "grid grid-cols-1 gap-2" : "space-y-1.5"}>
               {visible.map((asset) => (
                 <AssetCard
                   key={asset.id}
@@ -468,7 +469,8 @@ function AssetCard({
 }) {
   const kind = assetKind(asset);
   const analysis = useEditorStore((state) => state.analyses[asset.id]);
-  const analyzing = kind !== "image" && analysis === undefined;
+  const analyzing =
+    kind !== "image" && analysis === undefined && asset.uploadState !== "uploading";
 
   return (
     <article
@@ -509,6 +511,23 @@ function AssetCard({
           <KindIcon kind={kind} />
           <span>{kind === "video" ? "Video" : kind === "audio" ? "Ljud" : "Bild"}</span>
           {kind !== "image" && <><span>·</span><span className="font-mono">{formatTime(asset.duration)}</span></>}
+          {asset.uploadState === "uploading" && (
+            <span
+              className="ml-auto inline-flex items-center gap-1 text-[var(--cut)]"
+              title="Filen fungerar redan i den här fliken och synkas till molnet i bakgrunden"
+            >
+              <CloudUpload size={9} className="animate-pulse" />
+              {Math.round((asset.uploadProgress ?? 0) * 100)}%
+            </span>
+          )}
+          {asset.uploadState === "error" && (
+            <span
+              className="ml-auto inline-flex items-center gap-1 text-rose-300"
+              title={asset.uploadError ?? "Molnsynk misslyckades"}
+            >
+              <AlertCircle size={9} /> endast lokalt
+            </span>
+          )}
           {analyzing && <span className="ml-auto animate-pulse text-[var(--timeline)]">analyserar</span>}
         </div>
         <div className="mt-1.5 flex items-center gap-1 opacity-70 transition group-hover:opacity-100 group-focus-within:opacity-100">
@@ -539,6 +558,18 @@ function AssetThumb({ asset }: { asset: MediaAsset }) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img src={mediaUrl(asset)} alt="" className="h-full w-full object-cover" draggable={false} />
+    );
+  }
+  const local = localMediaUrl(asset.id);
+  if (local) {
+    return (
+      <video
+        src={local}
+        muted
+        playsInline
+        preload="metadata"
+        className="h-full w-full object-cover"
+      />
     );
   }
   return (

@@ -74,12 +74,13 @@ async function main() {
   // image overlay 6–9s, off-center
   findTrack(tracks, "image")!.clips.push({
     id: "vimg", type: "image", assetId: testImage.id,
-    startTime: 6, endTime: 9, transform: { x: 200, y: -300, scale: 0.4, opacity: 0.8 },
+    startTime: 6, endTime: 9,
+    transform: { x: 200, y: -300, scale: 0.4, rotation: 22, opacity: 0.55 },
   });
   // text + sticker
   findTrack(tracks, "text")!.clips.push({
     id: "vtext", type: "text", text: "LAYER TEST", startTime: 1, endTime: 4,
-    transform: { x: 0, y: -500 },
+    transform: { x: 0, y: -500, scale: 1.1, rotation: -8, opacity: 0.65 },
     style: { fontFamily: "Arial", fontSize: 70, fontWeight: 900, color: "#FFFFFF", strokeColor: "#000000", strokeWidth: 6, backgroundColor: null },
   });
   findTrack(tracks, "sticker")!.clips.push({
@@ -103,6 +104,14 @@ async function main() {
   const request = buildExportRequest({
     media, tracks, captions: project.captions, style: project.style, presetId: "draft",
   });
+  const imageOverlay = request.overlays?.find((overlay) => overlay.assetId === testImage.id);
+  if (imageOverlay?.rotation !== 22 || imageOverlay.opacity !== 0.55) {
+    throw new Error("image transform was lost while building the export request");
+  }
+  const textOverlay = request.textOverlays?.find((overlay) => overlay.text === "LAYER TEST");
+  if (textOverlay?.rotation !== -8 || textOverlay.opacity !== 0.65) {
+    throw new Error("text transform was lost while building the export request");
+  }
   console.log(
     `Request: ${request.overlays?.length} overlays, ${request.audioClips?.length} audio clips, ` +
       `${request.textOverlays?.length} text/sticker, ${request.zooms?.length} zooms, mainMuted=${request.mainAudioMuted}`

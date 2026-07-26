@@ -1,11 +1,20 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { startExportJob, type ExportRequest } from "@/lib/export/exporter";
+import {
+  jsonTooLarge,
+  MAX_EXPORT_BYTES,
+  requestTooLarge,
+  validateExportPayload,
+} from "@/lib/server/requestValidation";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 /** Starts an export job and returns its id; the client polls for progress. */
 export async function POST(request: NextRequest) {
+  if (requestTooLarge(request, MAX_EXPORT_BYTES)) {
+    return NextResponse.json({ error: "Export request is too large." }, { status: 413 });
+  }
   let body: ExportRequest;
   try {
     body = (await request.json()) as ExportRequest;
@@ -13,15 +22,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
 
-  if (!body.clips?.length) {
-    return NextResponse.json(
-      { error: "There is nothing on the timeline to export." },
-      { status: 400 }
-    );
+  if (jsonTooLarge(body, MAX_EXPORT_BYTES)) {
+    return NextResponse.json({ error: "Export request is too large." }, { status: 413 });
   }
-  if (!body.style) {
-    return NextResponse.json({ error: "Missing caption style." }, { status: 400 });
-  }
+  const validationError = validateExportPayload(body);
+  if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
 
   const { state, task } = await startExportJob({
     media: body.media ?? [],

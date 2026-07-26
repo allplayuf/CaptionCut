@@ -1,7 +1,6 @@
 import fs from "fs";
 import { NextResponse } from "next/server";
 import { FFMPEG, FFPROBE } from "@/lib/server/ffmpeg";
-import { transcriptionStatus } from "@/lib/transcription";
 
 export const runtime = "nodejs";
 
@@ -15,17 +14,7 @@ export async function GET() {
       : "local";
   const ffmpegReady = Boolean(FFMPEG && fs.existsSync(FFMPEG));
   const ffprobeReady = Boolean(FFPROBE && fs.existsSync(FFPROBE));
-  const transcription = await transcriptionStatus("fast").catch(() => ({
-    provider: "unknown",
-    ready: false,
-    quality: "fast" as const,
-    model: "unknown",
-  }));
-  const healthy =
-    storage !== "unconfigured" &&
-    ffmpegReady &&
-    ffprobeReady &&
-    (!deployed || transcription.ready);
+  const healthy = storage !== "unconfigured" && ffmpegReady && ffprobeReady;
 
   return NextResponse.json(
     {
@@ -33,9 +22,10 @@ export async function GET() {
       environment: deployed ? "production" : "local",
       storage,
       transcription: {
-        provider: transcription.provider,
-        ready: transcription.ready,
-        model: transcription.model,
+        provider: "browser-whisper",
+        ready: true,
+        model: "downloaded and cached per device",
+        localOnly: true,
       },
       mediaTools: {
         ffmpeg: ffmpegReady,

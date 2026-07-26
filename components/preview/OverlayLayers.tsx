@@ -248,13 +248,13 @@ function DragGuides({
       />
       {drag.snapX !== null && (
         <div
-          className="absolute inset-y-0 w-px bg-fuchsia-400"
+          className="absolute inset-y-0 w-px bg-[var(--cut)]"
           style={{ left: `calc(50% + ${drag.snapX * xScalePx}px)` }}
         />
       )}
       {drag.snapY !== null && (
         <div
-          className="absolute inset-x-0 h-px bg-fuchsia-400"
+          className="absolute inset-x-0 h-px bg-[var(--cut)]"
           style={{ top: `calc(50% + ${drag.snapY * yScalePx}px)` }}
         />
       )}

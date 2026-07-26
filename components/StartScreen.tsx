@@ -11,27 +11,29 @@ import {
   Cloud,
   FileVideo2,
   FolderOpen,
-  Pause,
+  Gauge,
   Scissors,
+  ShieldCheck,
   Sparkles,
   Upload,
+  Zap,
 } from "lucide-react";
 
 const STEPS = [
   {
     icon: Upload,
     title: "Importera",
-    text: "Dra in den råa videon. Formatet spelar ingen roll.",
+    text: "Videon öppnas direkt medan en säker kopia synkas.",
   },
   {
-    icon: Pause,
-    title: "Rensa",
-    text: "Granska pauser och utfyllnadsord innan de tas bort.",
+    icon: ShieldCheck,
+    title: "Texta lokalt",
+    text: "Whisper körs på din enhet. Videon skickas aldrig till en AI-tjänst.",
   },
   {
     icon: Scissors,
-    title: "Finjustera",
-    text: "Klipp i transcriptet eller direkt på tidslinjen.",
+    title: "Klipp klart",
+    text: "Rensa pauser, redigera i texten och exportera.",
   },
 ];
 
@@ -65,15 +67,15 @@ export default function StartScreen({ onSkip }: { onSkip: () => void }) {
   };
 
   return (
-    <div className="absolute inset-0 z-40 overflow-y-auto bg-[#080b10]">
+    <div className="start-screen absolute inset-0 z-40 overflow-y-auto bg-[#080b10]">
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute left-[-8rem] top-[-11rem] h-[26rem] w-[26rem] rounded-full bg-[#7db8ff]/[0.07] blur-3xl" />
         <div className="absolute bottom-[-13rem] right-[-8rem] h-[30rem] w-[30rem] rounded-full bg-[#ffb45b]/[0.08] blur-3xl" />
         <div className="start-grid absolute inset-0 opacity-30" />
       </div>
 
-      <div className="relative mx-auto grid min-h-full w-full max-w-[1160px] grid-cols-1 items-center gap-12 px-7 py-10 lg:grid-cols-[1fr_460px] lg:px-12">
-        <section>
+      <div className="start-layout relative mx-auto grid min-h-full w-full max-w-[1160px] grid-cols-1 items-center gap-12 px-7 py-10 lg:grid-cols-[1fr_460px] lg:px-12">
+        <section className="start-intro">
           <div className="mb-8 flex items-center gap-2.5">
             <div className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl bg-[#ffb45b] text-[#181108]">
               <FileVideo2 size={17} strokeWidth={2.4} />
@@ -88,14 +90,14 @@ export default function StartScreen({ onSkip }: { onSkip: () => void }) {
           </div>
 
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#ffb45b]">
-            Klipp mindre. Säg mer.
+            Snabbt in. Lokalt textat. Klart.
           </p>
           <h1 className="mt-3 max-w-[650px] text-[clamp(2.8rem,5.8vw,5.4rem)] font-semibold leading-[0.92] tracking-[-0.065em] text-[#f3f5f7]">
-            Redigera videon som om den vore text.
+            Klipp videon i orden du säger.
           </h1>
           <p className="mt-6 max-w-xl text-[15px] leading-7 text-[#8a95a3]">
-            CaptionCut hittar tystnad, utfyllnadsord och det du inte vill ha med. Du granskar
-            varje klipp innan något försvinner.
+            CaptionCut gör råvideo till en tydlig tidslinje och privata captions — utan
+            konto, API-nyckel eller väntan på en AI-server.
           </p>
 
           <div className="mt-9 grid max-w-2xl grid-cols-1 gap-3 sm:grid-cols-3">
@@ -105,7 +107,16 @@ export default function StartScreen({ onSkip }: { onSkip: () => void }) {
                 className="rounded-2xl bg-white/[0.025] p-4 ring-1 ring-white/[0.07]"
               >
                 <div className="flex items-center justify-between">
-                  <Icon size={15} className={index === 1 ? "text-[#ffb45b]" : "text-[#7db8ff]"} />
+                  <Icon
+                    size={15}
+                    className={
+                      index === 0
+                        ? "text-[#7db8ff]"
+                        : index === 1
+                          ? "text-[#9ce5c3]"
+                          : "text-[#ffb45b]"
+                    }
+                  />
                   <span className="font-mono text-[9px] text-[#4f5a67]">0{index + 1}</span>
                 </div>
                 <p className="mt-4 text-xs font-semibold text-[#dce2e8]">{title}</p>
@@ -115,7 +126,7 @@ export default function StartScreen({ onSkip }: { onSkip: () => void }) {
           </div>
         </section>
 
-        <section className="rounded-[28px] bg-[#10151c]/95 p-3 shadow-2xl shadow-black/40 ring-1 ring-white/[0.09] backdrop-blur">
+        <section className="start-import rounded-[28px] bg-[#10151c]/95 p-3 shadow-2xl shadow-black/40 ring-1 ring-white/[0.09] backdrop-blur">
           <input
             ref={inputRef}
             type="file"
@@ -174,7 +185,7 @@ export default function StartScreen({ onSkip }: { onSkip: () => void }) {
                   Släpp en video här
                 </p>
                 <p className="mt-1.5 text-xs text-[#74808e]">
-                  eller klicka för att välja från datorn
+                  eller klicka för att öppna direkt från datorn
                 </p>
                 <div className="mt-5 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 font-mono text-[9px] uppercase tracking-[0.1em] text-[#56616e]">
                   <span className="flex items-center gap-1"><Check size={9} /> video</span>
@@ -184,6 +195,23 @@ export default function StartScreen({ onSkip }: { onSkip: () => void }) {
               </>
             )}
           </button>
+
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className="flex items-center gap-2 rounded-xl bg-[#7db8ff]/[0.055] px-3 py-2.5 ring-1 ring-[#7db8ff]/10">
+              <Zap size={13} className="shrink-0 text-[#7db8ff]" />
+              <div>
+                <p className="text-[9px] font-bold text-[#c8d9ea]">Öppnas direkt</p>
+                <p className="text-[8px] text-[#687788]">synk i bakgrunden</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 rounded-xl bg-[#9ce5c3]/[0.055] px-3 py-2.5 ring-1 ring-[#9ce5c3]/10">
+              <Gauge size={13} className="shrink-0 text-[#9ce5c3]" />
+              <div>
+                <p className="text-[9px] font-bold text-[#cce9dd]">Whisper lokalt</p>
+                <p className="text-[8px] text-[#687b74]">laddas ner automatiskt</p>
+              </div>
+            </div>
+          </div>
 
           <div className="my-3 flex items-center gap-3 px-2">
             <span className="h-px flex-1 bg-white/[0.07]" />
@@ -201,7 +229,7 @@ export default function StartScreen({ onSkip }: { onSkip: () => void }) {
           </GoogleDriveButton>
 
           <div className="mt-3 flex items-center justify-center gap-3 font-mono text-[8px] uppercase tracking-[0.1em] text-[#5f6a77]">
-            <span className="flex items-center gap-1"><Check size={9} /> egen arbetsyta</span>
+            <span className="flex items-center gap-1"><Check size={9} /> privat textning</span>
             <span className="flex items-center gap-1"><Check size={9} /> autosparning</span>
             <span className="flex items-center gap-1"><Check size={9} /> inget konto</span>
           </div>

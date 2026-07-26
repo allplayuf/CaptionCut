@@ -14,17 +14,25 @@ export default function Toasts() {
   const dismissToast = useEditorStore((s) => s.dismissToast);
 
   return (
-    <div className="pointer-events-none fixed bottom-4 left-4 z-[60] flex w-80 flex-col gap-2">
+    <div
+      className="pointer-events-none fixed bottom-4 left-4 z-[80] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2"
+      aria-live="polite"
+      aria-relevant="additions"
+    >
       {toasts.map((toast) => (
         <div
           key={toast.id}
+          role={toast.kind === "error" ? "alert" : "status"}
+          aria-atomic="true"
           className="pointer-events-auto flex items-start gap-2 rounded-xl border border-white/10 bg-[#1a1a24]/95 px-3 py-2.5 shadow-xl shadow-black/40 backdrop-blur"
         >
           <span className="mt-0.5 shrink-0">{ICONS[toast.kind]}</span>
           <p className="flex-1 text-xs leading-snug text-zinc-200">{toast.message}</p>
           <button
+            type="button"
             onClick={() => dismissToast(toast.id)}
             className="shrink-0 rounded p-0.5 text-zinc-500 transition hover:text-zinc-300"
+            aria-label="Stäng meddelandet"
           >
             <X size={13} />
           </button>

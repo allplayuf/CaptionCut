@@ -11,10 +11,18 @@ import type { Caption, WordTiming } from "@/types";
  *  - break after a comma once the chunk has a few words
  *  - hard cap on word count and character length
  */
+const TARGET_WORDS = 4;
 const MAX_WORDS = 6;
-const MAX_CHARS = 32;
-const GAP_BREAK = 0.6;
-const MIN_WORDS_FOR_COMMA_BREAK = 3;
+const MAX_CHARS = 30;
+const MAX_DURATION = 2.7;
+const GAP_BREAK = 0.48;
+const SOFT_GAP_BREAK = 0.22;
+const MIN_WORDS_FOR_SOFT_BREAK = 3;
+
+const SOFT_BREAK_WORDS = new Set([
+  "and", "but", "because", "so", "then", "or",
+  "och", "men", "för", "så", "sedan", "eller",
+]);
 
 export function chunkWordsToCaptions(words: WordTiming[]): Caption[] {
   const cleaned = words
@@ -46,14 +54,21 @@ export function chunkWordsToCaptions(words: WordTiming[]): Caption[] {
     const gapToNext = next ? next.startTime - word.endTime : 0;
 
     const endsSentence = /[.!?]["')\]]?$/.test(word.word);
-    const endsComma = /[,;:]["')\]]?$/.test(word.word);
+    const endsClause = /[,;:]["')\]]?$/.test(word.word);
+    const nextStartsClause = Boolean(
+      next && SOFT_BREAK_WORDS.has(next.word.toLocaleLowerCase().replace(/[^\p{L}]/gu, ""))
+    );
+    const chunkDuration = word.endTime - current[0].startTime;
 
     if (
       endsSentence ||
       current.length >= MAX_WORDS ||
       charCount >= MAX_CHARS ||
+      chunkDuration >= MAX_DURATION ||
       gapToNext > GAP_BREAK ||
-      (endsComma && current.length >= MIN_WORDS_FOR_COMMA_BREAK)
+      (current.length >= MIN_WORDS_FOR_SOFT_BREAK &&
+        (endsClause || nextStartsClause ||
+          (current.length >= TARGET_WORDS && gapToNext > SOFT_GAP_BREAK)))
     ) {
       flush();
     }
@@ -75,7 +90,10 @@ function mergeOrphans(captions: Caption[]): Caption[] {
     const words = cap.words ?? [];
     const isOrphan = words.length === 1 && cap.text.length <= 12;
     const contiguous = prev && cap.startTime - prev.endTime < 0.35;
-    const fits = prev && prev.text.length + cap.text.length + 1 <= MAX_CHARS + 6;
+    const fits =
+      prev &&
+      (prev.words?.length ?? 0) + words.length <= MAX_WORDS &&
+      prev.text.length + cap.text.length + 1 <= MAX_CHARS + 4;
     const prevEndsSentence = prev && /[.!?]["')\]]?$/.test(prev.text);
     if (isOrphan && contiguous && fits && !prevEndsSentence) {
       prev.endTime = cap.endTime;
@@ -129,8 +147,8 @@ export function chunkSegmentsToCaptions(
 
 /** Enforce minimum durations and close tiny gaps so captions don't flicker. */
 function postProcess(captions: Caption[]): Caption[] {
-  const MIN_DURATION = 0.3;
-  const MAX_GAP_TO_BRIDGE = 0.25;
+  const MIN_DURATION = 0.42;
+  const MAX_GAP_TO_BRIDGE = 0.18;
 
   const sorted = [...captions].sort((a, b) => a.startTime - b.startTime);
   for (let i = 0; i < sorted.length; i++) {
