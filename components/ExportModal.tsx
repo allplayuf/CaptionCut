@@ -6,7 +6,7 @@ import { useEditorStore } from "@/hooks/useEditorStore";
 import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { formatTime } from "@/lib/video/timeline";
 import { mainVideoTrack, tracksDuration } from "@/lib/timeline/tracks";
-import { buildExportRequest } from "@/lib/export/request";
+import { buildExportRequest, exportRequestSignature } from "@/lib/export/request";
 import { EXPORT_PRESETS } from "@/lib/export/presets";
 import { FORMATS } from "@/lib/video/formats";
 import { mapWithConcurrency } from "@/lib/shared/concurrency";
@@ -72,27 +72,32 @@ type Phase =
   | { name: "done"; jobId: string }
   | { name: "error"; message: string };
 
-const ACTIVE_EXPORT_KEY = "captioncut-active-export-v1";
+const ACTIVE_EXPORT_KEY = "captioncut-active-export-v2";
 
-function rememberActiveExport(jobId: string, startedAt: number): void {
+function rememberActiveExport(jobId: string, startedAt: number, projectSignature: string): void {
   try {
-    window.localStorage.setItem(ACTIVE_EXPORT_KEY, JSON.stringify({ jobId, startedAt }));
+    window.localStorage.setItem(
+      ACTIVE_EXPORT_KEY,
+      JSON.stringify({ jobId, startedAt, projectSignature })
+    );
   } catch {
     // Durable server-side job state still works when browser storage is unavailable.
   }
 }
 
-function recallActiveExport(): { jobId: string; startedAt: number } | null {
+function recallActiveExport(projectSignature: string): { jobId: string; startedAt: number } | null {
   try {
     const value = JSON.parse(window.localStorage.getItem(ACTIVE_EXPORT_KEY) ?? "null") as {
       jobId?: unknown;
       startedAt?: unknown;
+      projectSignature?: unknown;
     } | null;
     if (
       value &&
       typeof value.jobId === "string" &&
       /^[a-zA-Z0-9_-]{6,32}$/.test(value.jobId) &&
       typeof value.startedAt === "number" &&
+      value.projectSignature === projectSignature &&
       Date.now() - value.startedAt < 24 * 60 * 60 * 1000
     ) {
       return { jobId: value.jobId, startedAt: value.startedAt };
@@ -149,6 +154,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
         }
         const status = (await statusResponse.json()) as ExportJobState & { error?: string };
         if (status.status === "done") {
+          forgetActiveExport();
           setPhase({ name: "done", jobId });
           return;
         }
@@ -209,12 +215,23 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
   }, []);
 
   useEffect(() => {
-    const active = recallActiveExport();
+    const state = useEditorStore.getState();
+    const active = recallActiveExport(
+      exportRequestSignature(
+        buildExportRequest({
+          media: state.media,
+          tracks: state.tracks,
+          captions: state.captions,
+          style: state.style,
+          presetId,
+        })
+      )
+    );
     if (!active) return;
     setStartedAt(active.startedAt);
     setPhase({ name: "running", jobId: active.jobId, progress: 0, phase: "queued" });
     void pollExport(active.jobId, active.startedAt);
-  }, [pollExport]);
+  }, [pollExport, presetId]);
 
   useEffect(() => {
     return () => {
@@ -245,7 +262,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
       const jobId = body.id;
       const jobStartedAt = Date.now();
       setStartedAt(jobStartedAt);
-      rememberActiveExport(jobId, jobStartedAt);
+      rememberActiveExport(jobId, jobStartedAt, exportRequestSignature(payload));
       setPhase({ name: "running", jobId, progress: 0, phase: body.phase, detail: body.detail });
       pollRef.current = setTimeout(() => void pollExport(jobId, jobStartedAt), 500);
     } catch (error) {
