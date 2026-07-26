@@ -19,8 +19,12 @@ export interface AssCanvas {
 }
 
 const DEFAULT_CANVAS: AssCanvas = { width: 1080, height: 1920 };
-/** Bundled with the export function so serverless renders never depend on OS fonts. */
-const EXPORT_FONT_FAMILY = "Geist";
+
+/** Maps editor-safe font names to the open fonts bundled with the exporter. */
+function exportFontFamily(fontFamily: string): "Anton" | "Geist" {
+  const normalized = fontFamily.trim().toLowerCase();
+  return normalized === "arial black" || normalized === "impact" ? "Anton" : "Geist";
+}
 
 /**
  * Vertical placement, expressed as bottom margins for bottom-anchored text.
@@ -80,9 +84,10 @@ export function buildAss(
   const outline = round1((hasBox ? 18 : style.strokeWidth) * fontScale);
   const shadow = hasBox ? 0 : style.shadow ? round1(3 * fontScale) : 0;
   const bold = style.fontWeight >= 700 ? -1 : 0;
+  const captionFontFamily = exportFontFamily(style.fontFamily);
 
   const styleLines = [
-    `Style: Caption,${EXPORT_FONT_FAMILY},${Math.round(style.fontSize * fontScale)},${primary},${primary},${outlineColor},${backColor},${bold},0,0,0,100,100,0,0,${borderStyle},${outline},${shadow},${alignment},${Math.round(70 * xScale)},${Math.round(70 * xScale)},${marginV},1`,
+    `Style: Caption,${captionFontFamily},${Math.round(style.fontSize * fontScale)},${primary},${primary},${outlineColor},${backColor},${bold},0,0,0,100,100,0,0,${borderStyle},${outline},${shadow},${alignment},${Math.round(70 * xScale)},${Math.round(70 * xScale)},${marginV},1`,
   ];
 
   // One style per overlay (they're few and independent).
@@ -90,7 +95,7 @@ export function buildAss(
     const ovHasBox = ov.backgroundColor !== null;
     const ovOutlineColor = ovHasBox ? assColor(ov.backgroundColor as string, 0.05) : assColor(ov.strokeColor);
     const ovBack = ovHasBox ? assColor(ov.backgroundColor as string, 0.05) : assColor("#000000", 0.5);
-    const family = ov.sticker ? "Segoe UI Emoji" : EXPORT_FONT_FAMILY;
+    const family = ov.sticker ? "Segoe UI Emoji" : exportFontFamily(ov.fontFamily);
     styleLines.push(
       `Style: Ov${i},${family},${Math.round(ov.fontSize * fontScale)},${assColor(ov.color)},${assColor(ov.color)},${ovOutlineColor},${ovBack},${
         ov.fontWeight >= 700 ? -1 : 0

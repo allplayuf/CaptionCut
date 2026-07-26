@@ -13,7 +13,10 @@ const nextConfig: NextConfig = {
   // Vercel's Linux functions do not provide system fonts. libass needs a real
   // font file to burn captions into exported video, so ship one explicitly.
   outputFileTracingIncludes: {
-    "/api/export": ["./node_modules/next/dist/compiled/@vercel/og/Geist-Regular.ttf"],
+    "/api/export": [
+      "./node_modules/next/dist/compiled/@vercel/og/Geist-Regular.ttf",
+      "./node_modules/@expo-google-fonts/anton/400Regular/Anton_400Regular.ttf",
+    ],
   },
   async headers() {
     return [

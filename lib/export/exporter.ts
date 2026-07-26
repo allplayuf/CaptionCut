@@ -28,16 +28,32 @@ export type { ExportRequest } from "./request";
 const REF_W = 1080;
 const REF_H = 1920;
 const MAX_ZOOM_SEGMENTS = 80;
-const BUNDLED_EXPORT_FONT = path.join(
-  process.cwd(),
-  "node_modules",
-  "next",
-  "dist",
-  "compiled",
-  "@vercel",
-  "og",
-  "Geist-Regular.ttf"
-);
+const BUNDLED_EXPORT_FONTS = [
+  {
+    filename: "Geist-Regular.ttf",
+    source: path.join(
+      process.cwd(),
+      "node_modules",
+      "next",
+      "dist",
+      "compiled",
+      "@vercel",
+      "og",
+      "Geist-Regular.ttf"
+    ),
+  },
+  {
+    filename: "Anton-Regular.ttf",
+    source: path.join(
+      process.cwd(),
+      "node_modules",
+      "@expo-google-fonts",
+      "anton",
+      "400Regular",
+      "Anton_400Regular.ttf"
+    ),
+  },
+] as const;
 
 /**
  * One-pass loudness normalization to the -14 LUFS short-form standard
@@ -505,10 +521,12 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
     if (captions.length > 0 || textOverlays.length > 0) {
       // subs.ass is referenced relative to the job dir (ffmpeg cwd) to dodge
       // Windows drive-letter escaping issues in the subtitles filter.
-      if (!fs.existsSync(BUNDLED_EXPORT_FONT)) throw new Error("FONT_MISSING");
       const fontsDir = path.join(jobDir, "fonts");
       fs.mkdirSync(fontsDir, { recursive: true });
-      fs.copyFileSync(BUNDLED_EXPORT_FONT, path.join(fontsDir, "Geist-Regular.ttf"));
+      for (const font of BUNDLED_EXPORT_FONTS) {
+        if (!fs.existsSync(font.source)) throw new Error("FONT_MISSING");
+        fs.copyFileSync(font.source, path.join(fontsDir, font.filename));
+      }
       fs.writeFileSync(
         path.join(jobDir, "subs.ass"),
         buildAss(captions, style, textOverlays, { width: CW, height: CH }),
