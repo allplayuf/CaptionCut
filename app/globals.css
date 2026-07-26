@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "CaptionCut Archivo Black";
+  src: url("/api/fonts/archivo-black") format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400 900;
+}
+
+@font-face {
+  font-family: "CaptionCut Anton";
+  src: url("/api/fonts/anton") format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400 900;
+}
+
 :root {
   color-scheme: dark;
   --ink: #06090d;

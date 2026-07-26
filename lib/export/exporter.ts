@@ -53,6 +53,17 @@ const BUNDLED_EXPORT_FONTS = [
       "Anton_400Regular.ttf"
     ),
   },
+  {
+    filename: "ArchivoBlack-Regular.ttf",
+    source: path.join(
+      process.cwd(),
+      "node_modules",
+      "@expo-google-fonts",
+      "archivo-black",
+      "400Regular",
+      "ArchivoBlack_400Regular.ttf"
+    ),
+  },
 ] as const;
 
 /**

@@ -3,6 +3,7 @@
 import type { CaptionPosition } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { CAPTION_PRESETS } from "@/lib/captions/presets";
+import { captionPreviewFontFamily } from "@/lib/captions/fonts";
 
 const FONT_OPTIONS = [
   "Arial",
@@ -36,7 +37,7 @@ export default function StylePanel() {
               <span
                 className="block truncate text-center text-sm"
                 style={{
-                  fontFamily: `'${preset.style.fontFamily}', sans-serif`,
+                  fontFamily: captionPreviewFontFamily(preset.style.fontFamily),
                   fontWeight: preset.style.fontWeight,
                   color: preset.style.textColor,
                   textTransform: preset.style.allCaps ? "uppercase" : "none",

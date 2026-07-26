@@ -21,9 +21,11 @@ export interface AssCanvas {
 const DEFAULT_CANVAS: AssCanvas = { width: 1080, height: 1920 };
 
 /** Maps editor-safe font names to the open fonts bundled with the exporter. */
-function exportFontFamily(fontFamily: string): "Anton" | "Geist" {
+function exportFontFamily(fontFamily: string): "Anton" | "Archivo Black" | "Geist" {
   const normalized = fontFamily.trim().toLowerCase();
-  return normalized === "arial black" || normalized === "impact" ? "Anton" : "Geist";
+  if (normalized === "arial black") return "Archivo Black";
+  if (normalized === "impact") return "Anton";
+  return "Geist";
 }
 
 /**

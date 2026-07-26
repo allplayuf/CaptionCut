@@ -5,6 +5,7 @@ import type { CSSProperties } from "react";
 import type { Caption, CaptionStyle } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { FORMATS } from "@/lib/video/formats";
+import { captionPreviewFontFamily } from "@/lib/captions/fonts";
 
 /**
  * Renders the active caption over the preview using the same geometry as the
@@ -85,7 +86,7 @@ export default function CaptionOverlay({ scale }: { scale: number }) {
   const hasBox = style.backgroundColor !== null;
 
   const textStyle: CSSProperties = {
-    fontFamily: `'${style.fontFamily}', sans-serif`,
+    fontFamily: captionPreviewFontFamily(style.fontFamily),
     fontSize: style.fontSize * yScale,
     fontWeight: style.fontWeight,
     color: style.textColor,

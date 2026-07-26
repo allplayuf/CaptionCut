@@ -16,6 +16,11 @@ const nextConfig: NextConfig = {
     "/api/export": [
       "./node_modules/next/dist/compiled/@vercel/og/Geist-Regular.ttf",
       "./node_modules/@expo-google-fonts/anton/400Regular/Anton_400Regular.ttf",
+      "./node_modules/@expo-google-fonts/archivo-black/400Regular/ArchivoBlack_400Regular.ttf",
+    ],
+    "/api/fonts/*": [
+      "./node_modules/@expo-google-fonts/anton/400Regular/Anton_400Regular.ttf",
+      "./node_modules/@expo-google-fonts/archivo-black/400Regular/ArchivoBlack_400Regular.ttf",
     ],
   },
   async headers() {
