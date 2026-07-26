@@ -92,6 +92,8 @@ export function applyEditRecipeToTimeline(
           zoomScale: zoom.scale,
           anchorX: zoom.anchorX ?? 0.5,
           anchorY: zoom.anchorY ?? 0.45,
+          // Auto zooms should read as camera movement, not a hard digital crop.
+          easing: "smooth",
         },
         metadata: { reason: zoom.reason, recipeId: recipe.id },
       };

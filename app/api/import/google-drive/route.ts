@@ -7,6 +7,11 @@ import { NextResponse } from "next/server";
 import { probeMedia } from "@/lib/server/ffmpeg";
 import { ensureDataDirs, MEDIA_DIR } from "@/lib/server/paths";
 import { workspaceId } from "@/lib/server/workspace";
+import {
+  filenameFromDisposition,
+  parseSharedDriveFile,
+  sharedDriveDownloadUrl,
+} from "@/lib/googleDrive/shared";
 import type { AssetKind, MediaAsset } from "@/types";
 
 export const runtime = "nodejs";
@@ -53,6 +58,10 @@ interface DriveFileMetadata {
   };
 }
 
+type DriveImportRequest =
+  | { mode: "oauth"; fileId: string; resourceKey?: string }
+  | { mode: "shared"; shareUrl: string; expectedKind?: "audio" | "video" };
+
 class ImportError extends Error {
   constructor(
     readonly status: number,
@@ -90,33 +99,72 @@ export async function POST(request: Request) {
 
   let filePath: string | null = null;
   let partialPath: string | null = null;
+  let sharedResponse: Response | null = null;
 
   try {
-    const token = readBearerToken(request.headers.get("authorization"));
-    const { fileId, resourceKey } = await readImportRequest(request);
-    const metadata = await fetchMetadata(fileId, resourceKey, token, request.signal);
+    const importRequest = await readImportRequest(request);
+    let originalName: string;
+    let mimeType: string;
+    let fileId: string;
+    let resourceKey: string | undefined;
+    let token: string | null = null;
 
-    const originalName = readMetadataString(metadata.name, "The Drive file has no name.");
-    const mimeType = readMetadataString(metadata.mimeType, "The Drive file has no media type.").toLowerCase();
-    if (mimeType.startsWith("application/vnd.google-apps.")) {
-      throw new ImportError(
-        415,
-        "Google Docs, Sheets, Slides, and other Google-native files cannot be imported as media."
+    if (importRequest.mode === "oauth") {
+      token = readBearerToken(request.headers.get("authorization"));
+      fileId = importRequest.fileId;
+      resourceKey = importRequest.resourceKey;
+      const metadata = await fetchMetadata(fileId, resourceKey, token, request.signal);
+
+      originalName = readMetadataString(metadata.name, "The Drive file has no name.");
+      mimeType = readMetadataString(
+        metadata.mimeType,
+        "The Drive file has no media type."
+      ).toLowerCase();
+      if (mimeType.startsWith("application/vnd.google-apps.")) {
+        throw new ImportError(
+          415,
+          "Google Docs, Sheets, Slides, and other Google-native files cannot be imported as media."
+        );
+      }
+      if (metadata.capabilities?.canDownload === false) {
+        throw new ImportError(403, "The owner of that Drive file has disabled downloads.");
+      }
+      if (readDeclaredSize(metadata.size) > MAX_SIZE) throw fileTooLarge();
+    } else {
+      const sharedFile = parseSharedDriveFile(importRequest.shareUrl);
+      if (!sharedFile) {
+        throw new ImportError(
+          400,
+          "Paste a Google Drive file link, not a folder link."
+        );
+      }
+      fileId = sharedFile.fileId;
+      resourceKey = sharedFile.resourceKey;
+      sharedResponse = await fetchSharedFile(sharedFile, request.signal);
+      mimeType = readResponseMimeType(sharedResponse);
+      originalName =
+        filenameFromDisposition(sharedResponse.headers.get("content-disposition")) ??
+        `google-drive-${fileId}${MIME_EXTENSIONS[mimeType] ?? ""}`;
+      const declaredSize = readOptionalDeclaredSize(
+        sharedResponse.headers.get("content-length")
       );
-    }
-    if (metadata.capabilities?.canDownload === false) {
-      throw new ImportError(403, "The owner of that Drive file has disabled downloads.");
-    }
-
-    const declaredSize = readDeclaredSize(metadata.size);
-    if (declaredSize > MAX_SIZE) {
-      throw fileTooLarge();
+      if (declaredSize !== null && declaredSize > MAX_SIZE) throw fileTooLarge();
     }
 
     const originalExtension = path.extname(originalName).toLowerCase();
     const kind = expectedKind(mimeType, originalExtension);
     if (!kind) {
       throw new ImportError(415, "Choose a video or audio file from Google Drive.");
+    }
+    if (
+      importRequest.mode === "shared" &&
+      importRequest.expectedKind &&
+      kind !== importRequest.expectedKind
+    ) {
+      throw new ImportError(
+        415,
+        `Choose ${importRequest.expectedKind === "audio" ? "an audio" : "a video"} file from Google Drive.`
+      );
     }
 
     const extension = safeExtension(kind, mimeType, originalExtension);
@@ -126,13 +174,16 @@ export async function POST(request: Request) {
     filePath = path.join(MEDIA_DIR, filename);
     partialPath = `${filePath}.partial`;
 
-    const downloadedSize = await downloadFile(
-      fileId,
-      resourceKey,
-      token,
-      partialPath,
-      request.signal
-    );
+    const downloadedSize = sharedResponse
+      ? await streamDownload(sharedResponse, partialPath, request.signal)
+      : await downloadFile(
+          fileId,
+          resourceKey,
+          token as string,
+          partialPath,
+          request.signal
+        );
+    sharedResponse = null;
     await fs.promises.rename(partialPath, filePath);
     partialPath = null;
 
@@ -192,6 +243,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(asset, { status: 201 });
   } catch (error) {
+    await sharedResponse?.body?.cancel().catch(() => {});
     if (partialPath) await fs.promises.rm(partialPath, { force: true }).catch(() => {});
     if (filePath) await fs.promises.rm(filePath, { force: true }).catch(() => {});
 
@@ -213,12 +265,37 @@ function readBearerToken(header: string | null): string {
 
 async function readImportRequest(
   request: Request
-): Promise<{ fileId: string; resourceKey?: string }> {
+): Promise<DriveImportRequest> {
   let body: unknown;
   try {
     body = await request.json();
   } catch {
     throw new ImportError(400, "Invalid Google Drive import request.");
+  }
+
+  const shareUrl =
+    body && typeof body === "object" && "url" in body
+      ? (body as { url?: unknown }).url
+      : null;
+  if (typeof shareUrl === "string") {
+    if (!shareUrl.trim() || shareUrl.length > 2_048) {
+      throw new ImportError(400, "Paste a valid Google Drive file link.");
+    }
+    const expectedKind =
+      body && typeof body === "object" && "kind" in body
+        ? (body as { kind?: unknown }).kind
+        : undefined;
+    if (
+      expectedKind !== undefined &&
+      expectedKind !== "all" &&
+      expectedKind !== "audio" &&
+      expectedKind !== "video"
+    ) {
+      throw new ImportError(400, "Invalid Google Drive media type.");
+    }
+    return expectedKind === "audio" || expectedKind === "video"
+      ? { mode: "shared", shareUrl, expectedKind }
+      : { mode: "shared", shareUrl };
   }
 
   const fileId =
@@ -239,7 +316,49 @@ async function readImportRequest(
   ) {
     throw new ImportError(400, "The Google Drive resource key is invalid.");
   }
-  return resourceKey ? { fileId, resourceKey } : { fileId };
+  return resourceKey
+    ? { mode: "oauth", fileId, resourceKey }
+    : { mode: "oauth", fileId };
+}
+
+async function fetchSharedFile(
+  file: { fileId: string; resourceKey?: string },
+  signal: AbortSignal
+): Promise<Response> {
+  let response: Response;
+  try {
+    response = await fetch(sharedDriveDownloadUrl(file), {
+      cache: "no-store",
+      redirect: "follow",
+      signal,
+    });
+  } catch {
+    throw new ImportError(502, "Could not reach Google Drive. Try again.");
+  }
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new ImportError(404, "That Google Drive file was not found.");
+    }
+    if (response.status === 429) {
+      throw new ImportError(429, "Google Drive is busy. Wait a moment and try again.");
+    }
+    throw new ImportError(
+      403,
+      'Google Drive blocked the download. Set General access to "Anyone with the link" and allow downloads.'
+    );
+  }
+  if (!response.body) {
+    throw new ImportError(502, "Google Drive returned an empty download.");
+  }
+  const mimeType = readResponseMimeType(response);
+  if (mimeType === "text/html" || mimeType === "application/xhtml+xml") {
+    await response.body.cancel().catch(() => {});
+    throw new ImportError(
+      403,
+      'That file is private. In Google Drive, open Share and set General access to "Anyone with the link".'
+    );
+  }
+  return response;
 }
 
 async function fetchMetadata(
@@ -300,6 +419,17 @@ async function downloadFile(
     throw new ImportError(502, "Google Drive returned an empty download.");
   }
 
+  return streamDownload(response, partialPath, signal);
+}
+
+async function streamDownload(
+  response: Response,
+  partialPath: string,
+  signal: AbortSignal
+): Promise<number> {
+  if (!response.body) {
+    throw new ImportError(502, "Google Drive returned an empty download.");
+  }
   const contentLength = response.headers.get("content-length");
   if (contentLength && /^\d+$/.test(contentLength) && Number(contentLength) > MAX_SIZE) {
     throw fileTooLarge();
@@ -372,6 +502,23 @@ function readDeclaredSize(value: unknown): number {
   const size = Number(value);
   if (!Number.isFinite(size)) throw fileTooLarge();
   return size;
+}
+
+function readOptionalDeclaredSize(value: string | null): number | null {
+  if (value === null) return null;
+  if (!/^\d+$/.test(value)) {
+    throw new ImportError(502, "Google Drive returned an invalid file size.");
+  }
+  const size = Number(value);
+  if (!Number.isFinite(size)) throw fileTooLarge();
+  return size;
+}
+
+function readResponseMimeType(response: Response): string {
+  return (
+    response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ??
+    "application/octet-stream"
+  );
 }
 
 function fileTooLarge(): ImportError {

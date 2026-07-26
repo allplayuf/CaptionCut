@@ -41,11 +41,16 @@ const ctx: DedicatedWorkerGlobalScope = self as unknown as DedicatedWorkerGlobal
 
 env.allowLocalModels = false;
 env.useBrowserCache = true;
+// ORT deliberately leaves small shape operations on the CPU even when the
+// main graph runs on WebGPU. That is expected and does not affect correctness,
+// so keep the browser console focused on actionable runtime failures.
+env.backends.onnx.logLevel = "error";
 
 const MODELS: Record<CaptionQuality, string> = {
   fast: "onnx-community/whisper-tiny",
   accurate: "onnx-community/whisper-base",
 };
+const MODEL_PROXY_HOST = `${ctx.location.origin}/api/models/`;
 
 let activePipeline: AsrPipeline | null = null;
 let activeQuality: CaptionQuality | null = null;
@@ -80,7 +85,7 @@ async function preload(request: WorkerRequest) {
 
 async function transcribe(request: WorkerRequest & { audio: ArrayBuffer }) {
   try {
-    const transcriber = await getPipeline(request);
+    let transcriber = await getPipeline(request);
     ctx.postMessage({
       id: request.id,
       type: "progress",
@@ -96,17 +101,52 @@ async function transcribe(request: WorkerRequest & { audio: ArrayBuffer }) {
         : request.language === "en"
           ? "english"
           : undefined;
-    const output = await transcriber(new Float32Array(request.audio), {
-      // Native word timestamps keep karaoke highlighting and cut remapping
-      // locked to the voice. Segment timestamps forced us to guess timing by
-      // character length, which visibly drifted on short and Swedish words.
-      return_timestamps: "word",
-      chunk_length_s: 30,
-      stride_length_s: 5,
-      force_full_sequences: false,
-      task: "transcribe",
-      ...(language ? { language } : {}),
-    });
+    const run = (pipelineInstance: AsrPipeline) =>
+      pipelineInstance(new Float32Array(request.audio), {
+        // The ONNX Community browser models do not export decoder
+        // cross-attention outputs. Segment timestamps work on every export;
+        // the main thread distributes words inside each returned segment.
+        return_timestamps: true,
+        chunk_length_s: 30,
+        stride_length_s: 5,
+        force_full_sequences: false,
+        task: "transcribe",
+        ...(language ? { language } : {}),
+      });
+
+    let output: WhisperResult | WhisperResult[];
+    try {
+      output = await run(transcriber);
+    } catch (gpuError) {
+      // Some browsers expose navigator.gpu and can load the model, but their
+      // adapter fails on a real inference. Retry once with universal WASM so a
+      // flaky GPU driver does not make captions unavailable on that device.
+      if (activeDevice !== "webgpu") throw gpuError;
+      ctx.postMessage({
+        id: request.id,
+        type: "progress",
+        stage: "model",
+        progress: 0,
+        detail: "GPU failed — retrying in compatibility mode",
+        device: "wasm",
+      });
+      await Promise.resolve(activePipeline?.dispose?.()).catch(() => undefined);
+      activePipeline = null;
+      activeQuality = null;
+      activeDevice = "wasm";
+      transcriber = await loadPipeline(request, "wasm");
+      activePipeline = transcriber;
+      activeQuality = request.quality;
+      ctx.postMessage({
+        id: request.id,
+        type: "progress",
+        stage: "transcribing",
+        progress: 0,
+        detail: "Using compatibility mode",
+        device: "wasm",
+      });
+      output = await run(transcriber);
+    }
     const result = Array.isArray(output) ? output[0] : output;
     ctx.postMessage({
       id: request.id,
@@ -178,44 +218,67 @@ async function loadPipeline(
   device: "webgpu" | "wasm"
 ): Promise<AsrPipeline> {
   const model = MODELS[request.quality];
-  const loaded = await pipeline("automatic-speech-recognition", model, {
-    device,
-    dtype:
-      device === "webgpu"
-        ? {
-            encoder_model: "fp32",
-            decoder_model_merged: "q4",
-          }
-        : "q8",
-    progress_callback: (event: {
-      status?: string;
-      file?: string;
-      progress?: number;
-      loaded?: number;
-      total?: number;
-    }) => {
-      const normalized =
-        typeof event.progress === "number"
-          ? Math.max(0, Math.min(1, event.progress > 1 ? event.progress / 100 : event.progress))
-          : event.total && event.loaded
-            ? Math.max(0, Math.min(1, event.loaded / event.total))
-            : 0;
-      ctx.postMessage({
-        id: request.id,
-        type: "progress",
-        stage: "model",
-        progress: normalized,
-        detail:
-          event.status === "ready"
-            ? "Caption engine ready"
-            : event.file
-              ? `Downloading ${shortFileName(event.file)}`
-              : "Preparing local caption engine",
-        device,
-      });
-    },
-  });
-  return loaded as unknown as AsrPipeline;
+  const load = async (): Promise<AsrPipeline> =>
+    (await pipeline("automatic-speech-recognition", model, {
+      device,
+      dtype:
+        device === "webgpu"
+          ? {
+              encoder_model: "fp32",
+              decoder_model_merged: "q4",
+            }
+          : "q8",
+      progress_callback: (event: {
+        status?: string;
+        file?: string;
+        progress?: number;
+        loaded?: number;
+        total?: number;
+      }) => {
+        const normalized =
+          typeof event.progress === "number"
+            ? Math.max(0, Math.min(1, event.progress > 1 ? event.progress / 100 : event.progress))
+            : event.total && event.loaded
+              ? Math.max(0, Math.min(1, event.loaded / event.total))
+              : 0;
+        ctx.postMessage({
+          id: request.id,
+          type: "progress",
+          stage: "model",
+          progress: normalized,
+          detail:
+            event.status === "ready"
+              ? "Caption engine ready"
+              : event.file
+                ? `Downloading ${shortFileName(event.file)}`
+                : "Preparing local caption engine",
+          device,
+        });
+      },
+    })) as unknown as AsrPipeline;
+
+  let loaded: AsrPipeline;
+  try {
+    loaded = await load();
+  } catch (error) {
+    if (env.remoteHost === MODEL_PROXY_HOST || !isModelDownloadError(error)) throw error;
+    ctx.postMessage({
+      id: request.id,
+      type: "progress",
+      stage: "model",
+      progress: 0,
+      detail: "Direct model download blocked — using secure fallback",
+      device,
+    });
+    env.remoteHost = MODEL_PROXY_HOST;
+    loaded = await load();
+  }
+  return loaded;
+}
+
+function isModelDownloadError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /fetch|network|download|http|could not locate|failed to load|load failed/i.test(message);
 }
 
 function shortFileName(file: string): string {

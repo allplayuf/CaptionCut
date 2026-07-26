@@ -7,6 +7,8 @@ import {
   Captions,
   FolderOpen,
   LayoutTemplate,
+  Maximize2,
+  Minimize2,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
@@ -40,18 +42,30 @@ const PRIMARY_TOOLS: Array<{
   { id: "effects", label: "Effekter", icon: WandSparkles },
 ];
 
+const PANEL_WIDTH_PRESETS = [
+  { label: "Smal", value: 368 },
+  { label: "Bekväm", value: 520 },
+  { label: "Stor", value: 680 },
+] as const;
+
 export default function WorkspaceSidebar({
   width = 408,
   collapsed = false,
   onToggleCollapsed,
   activeTool,
   onToolChange,
+  onWidthChange,
+  timelineCompact = false,
+  onToggleTimelineCompact,
 }: {
   width?: number;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   activeTool?: EditorTool;
   onToolChange?: (tool: EditorTool) => void;
+  onWidthChange?: (width: number) => void;
+  timelineCompact?: boolean;
+  onToggleTimelineCompact?: () => void;
 }) {
   const [localTool, setLocalTool] = useState<EditorTool>("cut");
   const tool = activeTool ?? localTool;
@@ -100,17 +114,78 @@ export default function WorkspaceSidebar({
         </div>
       </nav>
 
-      {!collapsed && <div className="workspace-tool-panel min-w-0 flex-1">
-        {tool === "cut" && <CutPanel />}
-        {tool === "captions" && <CaptionsPanel />}
-        {tool === "media" && <LibraryPanel onOpenSmart={() => setTool("smart")} />}
-        {tool === "effects" && <EffectsPanel />}
-        {tool === "adjust" && <InspectorPanel />}
-        {tool === "smart" && <AIPanel />}
-        {tool === "sequence" && <SequenceBuilderPanel />}
-        {tool === "style" && <StylePanel />}
-        {tool === "more" && <MoreTools onPick={setTool} />}
-      </div>}
+      {!collapsed && (
+        <div className="workspace-panel-shell flex min-h-0 min-w-0 flex-1 flex-col">
+          {onWidthChange && (
+            <div className="workspace-panel-sizebar flex h-10 shrink-0 items-center gap-2 border-b border-white/[0.07] bg-[#0c1117] px-2.5">
+              <div className="min-w-0 flex-1">
+                <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-[#697583]">
+                  Panelbredd
+                </span>
+                <span className="block font-mono text-[8px] text-[#4f5b68]">
+                  {Math.round(width)} px · dra kanten
+                </span>
+              </div>
+              <div
+                className="flex shrink-0 items-center rounded-lg bg-black/25 p-0.5 ring-1 ring-white/[0.07]"
+                aria-label="Välj verktygspanelens bredd"
+              >
+                {PANEL_WIDTH_PRESETS.map((preset) => {
+                  const active = Math.abs(width - preset.value) < 18;
+                  return (
+                    <button
+                      key={preset.value}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => onWidthChange(preset.value)}
+                      className={`h-7 rounded-md px-2 text-[9px] font-semibold transition ${
+                        active
+                          ? "bg-[var(--timeline)]/16 text-[var(--timeline)] ring-1 ring-[var(--timeline)]/20"
+                          : "text-[#7c8793] hover:bg-white/[0.05] hover:text-[#d4dbe2]"
+                      }`}
+                      title={`Gör verktygspanelen ${preset.label.toLocaleLowerCase("sv-SE")}`}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {onToggleTimelineCompact && (
+                <button
+                  type="button"
+                  aria-pressed={timelineCompact}
+                  onClick={onToggleTimelineCompact}
+                  className={`flex h-7 shrink-0 items-center gap-1 rounded-lg px-2 text-[9px] font-semibold ring-1 transition ${
+                    timelineCompact
+                      ? "bg-[var(--caption)]/12 text-[var(--caption)] ring-[var(--caption)]/20"
+                      : "bg-white/[0.035] text-[#7c8793] ring-white/[0.07] hover:bg-white/[0.06] hover:text-[#d4dbe2]"
+                  }`}
+                  title={
+                    timelineCompact
+                      ? "Återställ tidslinjens höjd"
+                      : "Ge verktygspanelen mer höjd"
+                  }
+                >
+                  {timelineCompact ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
+                  Fokus
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="workspace-tool-panel min-h-0 min-w-0 flex-1">
+            {tool === "cut" && <CutPanel />}
+            {tool === "captions" && <CaptionsPanel />}
+            {tool === "media" && <LibraryPanel onOpenSmart={() => setTool("smart")} />}
+            {tool === "effects" && <EffectsPanel />}
+            {tool === "adjust" && <InspectorPanel />}
+            {tool === "smart" && <AIPanel />}
+            {tool === "sequence" && <SequenceBuilderPanel />}
+            {tool === "style" && <StylePanel />}
+            {tool === "more" && <MoreTools onPick={setTool} />}
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

@@ -188,7 +188,7 @@ export function snapTime(time: number, targets: number[], threshold: number): nu
   let bestDist = threshold;
   for (const t of targets) {
     const d = Math.abs(t - time);
-    if (d < bestDist) {
+    if (d <= bestDist) {
       bestDist = d;
       best = t;
     }
@@ -196,13 +196,87 @@ export function snapTime(time: number, targets: number[], threshold: number): nu
   return best;
 }
 
+export interface ClipSnapResult {
+  startTime: number;
+  /** Exact timeline edge the moving clip attached to, or null when unsnapped. */
+  targetTime: number | null;
+  edge: "start" | "end" | null;
+}
+
+/**
+ * Snap whichever edge of a moving clip is closest to another timeline edge.
+ * Comparing both edges before moving avoids the old start-edge bias and makes
+ * adjoining clips land on the exact same timestamp.
+ */
+export function snapClipStart(
+  startTime: number,
+  duration: number,
+  targets: number[],
+  threshold: number
+): ClipSnapResult {
+  let bestDelta = 0;
+  let bestDist = threshold;
+  let targetTime: number | null = null;
+  let edge: ClipSnapResult["edge"] = null;
+
+  for (const target of targets) {
+    for (const candidate of [
+      { time: startTime, edge: "start" as const },
+      { time: startTime + duration, edge: "end" as const },
+    ]) {
+      const delta = target - candidate.time;
+      const distance = Math.abs(delta);
+      if (distance <= bestDist) {
+        bestDist = distance;
+        bestDelta = delta;
+        targetTime = target;
+        edge = candidate.edge;
+      }
+    }
+  }
+
+  return {
+    startTime: round3(Math.max(0, startTime + bestDelta)),
+    targetTime,
+    edge,
+  };
+}
+
+export interface SnapTargetOptions {
+  clipId?: string;
+  captionId?: string;
+  /** Edge(s) of the actively dragged item to leave out of the target list. */
+  excludeEdge?: "start" | "end" | "both";
+}
+
 /** All snap targets: playhead + clip edges on every track + captions. */
-export function snapTargets(tracks: Track[], captions: Caption[], playhead: number): number[] {
+export function snapTargets(
+  tracks: Track[],
+  captions: Caption[],
+  playhead: number,
+  options?: SnapTargetOptions
+): number[] {
   const targets = [0, playhead];
   for (const track of tracks) {
-    for (const c of track.clips) targets.push(c.startTime, c.endTime);
+    for (const c of track.clips) {
+      const active = c.id === options?.clipId;
+      if (!active || (options.excludeEdge !== "start" && options.excludeEdge !== "both")) {
+        targets.push(c.startTime);
+      }
+      if (!active || (options.excludeEdge !== "end" && options.excludeEdge !== "both")) {
+        targets.push(c.endTime);
+      }
+    }
   }
-  for (const c of captions) targets.push(c.startTime, c.endTime);
+  for (const c of captions) {
+    const active = c.id === options?.captionId;
+    if (!active || (options.excludeEdge !== "start" && options.excludeEdge !== "both")) {
+      targets.push(c.startTime);
+    }
+    if (!active || (options.excludeEdge !== "end" && options.excludeEdge !== "both")) {
+      targets.push(c.endTime);
+    }
+  }
   return targets;
 }
 
@@ -436,7 +510,13 @@ export function effectStateAt(tracks: Track[], time: number): EffectState {
     if (state === NO_EFFECT) state = { ...NO_EFFECT };
 
     if (fx.kind === "zoom") {
-      state.scale = Math.max(state.scale, fx.zoomScale ?? 1.15);
+      const peak = fx.zoomScale ?? 1.15;
+      // Legacy zooms without an easing remain constant. New punch-ins use the
+      // easing as a short attack/release envelope, avoiding digital jump cuts.
+      const envelope = fx.easing
+        ? zoomEnvelope(localT, dur, fx.easing)
+        : 1;
+      state.scale = Math.max(state.scale, 1 + (peak - 1) * envelope);
       state.anchorX = fx.anchorX ?? 0.5;
       state.anchorY = fx.anchorY ?? 0.45;
     } else if (fx.kind === "impact") {
@@ -465,6 +545,20 @@ export function effectStateAt(tracks: Track[], time: number): EffectState {
     }
   }
   return state;
+}
+
+/** Short, symmetric in/out envelope shared by preview and export punch-ins. */
+function zoomEnvelope(
+  localTime: number,
+  duration: number,
+  easing: "smooth" | "linear" | "snappy"
+): number {
+  const transition = Math.min(0.24, Math.max(0.08, duration * 0.2));
+  if (localTime < transition) return effectEase(localTime / transition, easing);
+  if (localTime > duration - transition) {
+    return effectEase((duration - localTime) / transition, easing);
+  }
+  return 1;
 }
 
 /** Active punch-in zoom factor at a timeline time (1 = none). */

@@ -185,7 +185,7 @@ export async function transcribeTimelineInBrowser(
     model = result.model;
     device = result.device;
     allWords.push(
-      ...wordsFromResult(result.result).map((word) => ({
+      ...wordsFromWhisperResult(result.result).map((word) => ({
         ...word,
         startTime: word.startTime + batch.start,
         endTime: word.endTime + batch.start,
@@ -284,11 +284,7 @@ function getCaptionWorker(): Worker {
     }
     pending.delete(event.data.id);
     if (event.data.type === "error") {
-      request.reject(
-        new Error(
-          `${event.data.error} Try Chrome or Edge for the fastest local caption support.`
-        )
-      );
+      request.reject(new Error(friendlyCaptionError(event.data.error)));
     } else {
       request.resolve(event.data);
     }
@@ -420,16 +416,18 @@ async function buildCaptionBatchAudio(
       onProgress?.({
         stage: "audio",
         progress: (batchIndex + index / Math.max(1, sources.length)) / Math.max(1, batchCount),
-        detail: `Reading ${asset.originalName} (${batchIndex + 1}/${batchCount})`,
+        detail: `Preparing ${asset.originalName} (${batchIndex + 1}/${batchCount})`,
       });
-      const response = await fetch(mediaUrl(asset));
-      if (!response.ok) {
-        throw new Error(`Could not read "${asset.originalName}" for local captions.`);
-      }
-      const buffer = await context.decodeAudioData(await response.arrayBuffer());
+      const decoded = await decodeCaptionAudio(
+        context,
+        asset,
+        sourceSlices,
+        source.offsetSeconds
+      );
+      const buffer = decoded.buffer;
       const level = measureAudioBuffer(buffer);
       for (const slice of sourceSlices) {
-        writeAudioSlice(timeline, batch.start, slice, source.offsetSeconds, buffer, level);
+        writeAudioSlice(timeline, batch.start, slice, decoded.offsetSeconds, buffer, level);
       }
     }
   } catch (error) {
@@ -442,6 +440,53 @@ async function buildCaptionBatchAudio(
   }
 
   return timeline;
+}
+
+/**
+ * Prefer a small, normalized WAV slice from our own FFmpeg route. This avoids
+ * relying on each browser's different MP4/MOV/WebM audio decoder. A local blob
+ * fallback keeps captions available while a fresh upload is still syncing.
+ */
+async function decodeCaptionAudio(
+  context: AudioContext,
+  asset: MediaAsset,
+  slices: CaptionAudioSlice[],
+  sourceOffsetSeconds: number
+): Promise<{ buffer: AudioBuffer; offsetSeconds: number }> {
+  const sourceStarts = slices.map((slice) => slice.sourceStart - sourceOffsetSeconds);
+  const sourceEnds = slices.map(
+    (slice) =>
+      slice.sourceStart -
+      sourceOffsetSeconds +
+      (slice.timelineEnd - slice.timelineStart) * clipSpeed(slice.clip)
+  );
+  const rangeStart = Math.max(0, Math.min(...sourceStarts) - 0.15);
+  const rangeEnd = Math.max(rangeStart + 0.05, Math.max(...sourceEnds) + 0.15);
+  const params = new URLSearchParams({
+    start: rangeStart.toFixed(3),
+    duration: (rangeEnd - rangeStart).toFixed(3),
+  });
+  if (asset.storageUrl) params.set("src", asset.storageUrl);
+
+  try {
+    const response = await fetch(
+      `/api/media/${encodeURIComponent(asset.id)}/audio?${params.toString()}`
+    );
+    if (!response.ok) throw new Error("Audio normalization was unavailable.");
+    return {
+      buffer: await context.decodeAudioData(await response.arrayBuffer()),
+      offsetSeconds: sourceOffsetSeconds + rangeStart,
+    };
+  } catch {
+    const response = await fetch(mediaUrl(asset));
+    if (!response.ok) {
+      throw new Error(`Could not read "${asset.originalName}" for local captions.`);
+    }
+    return {
+      buffer: await context.decodeAudioData(await response.arrayBuffer()),
+      offsetSeconds: sourceOffsetSeconds,
+    };
+  }
 }
 
 function measureAudioBuffer(buffer: AudioBuffer): { mean: number; gain: number } {
@@ -507,7 +552,7 @@ function audioSourceForClip(
   return video.hasAudio ? { asset: video, offsetSeconds: 0 } : null;
 }
 
-function wordsFromResult(result: WorkerComplete["result"]): WordTiming[] {
+export function wordsFromWhisperResult(result: WorkerComplete["result"]): WordTiming[] {
   const chunks = result.chunks ?? [];
   return chunks
     .flatMap((chunk, index) => {
@@ -542,6 +587,13 @@ function wordsFromResult(result: WorkerComplete["result"]): WordTiming[] {
       });
     })
     .filter((word) => word.word && !NOISE_TOKEN.test(word.word));
+}
+
+function friendlyCaptionError(message: string): string {
+  if (/cross attentions|output_attentions/i.test(message)) {
+    return "The cached caption model is outdated. Reload once to use the compatible local model.";
+  }
+  return `${message} Try Chrome or Edge for the fastest local caption support.`;
 }
 
 /**

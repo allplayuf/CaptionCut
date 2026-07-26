@@ -27,6 +27,7 @@ import { cleanCaptions } from "@/lib/captions/clean";
 import { replaceCaptionsInsideRanges } from "@/lib/captions/ranges";
 import { applyEditRecipeToTimeline } from "@/lib/autoEdit/applyEditRecipeToTimeline";
 import { findBestMusicStart } from "@/lib/autoEdit/signals";
+import { remapCaptionCoverage } from "@/lib/transcription/coverage";
 import {
   assetKind,
   clipSpeedOf,
@@ -377,11 +378,25 @@ export const useEditorStore = create<EditorState>((set, get) => {
     selectedClipIds: id ? [id] : [],
   });
 
-  /** Main-track replacement + captions re-anchored to their source footage. */
-  const mainEdit = (s: EditorState, vi: number, newMain: Track) => ({
-    tracks: replaceTrack(s.tracks, vi, newMain),
-    captions: remapCaptionsToMainTrack(s.tracks[vi].clips, newMain.clips, s.captions),
-  });
+  /** Main-track replacement + captions/coverage re-anchored to source footage. */
+  const mainEdit = (
+    s: EditorState,
+    vi: number,
+    newMain: Track,
+    media: MediaAsset[] = s.media
+  ) => {
+    const tracks = replaceTrack(s.tracks, vi, newMain);
+    return {
+      tracks,
+      captions: remapCaptionsToMainTrack(s.tracks[vi].clips, newMain.clips, s.captions),
+      captionCoverage: remapCaptionCoverage(
+        s.captionCoverage,
+        mainClips(s.tracks),
+        mainClips(tracks),
+        media
+      ),
+    };
+  };
 
   return {
     projectId: nanoid(10),
@@ -570,9 +585,10 @@ export const useEditorStore = create<EditorState>((set, get) => {
         const vi = s.tracks.findIndex((t) => t.type === "video");
         const video = s.tracks[vi];
         const clip = makeMainClip(asset);
+        const nextMain = rippleMainTrack({ ...video, clips: [...video.clips, clip] });
         return {
           media,
-          tracks: replaceTrack(s.tracks, vi, rippleMainTrack({ ...video, clips: [...video.clips, clip] })),
+          ...mainEdit(s, vi, nextMain, media),
           ...sel(clip.id),
         };
       }),
@@ -721,7 +737,11 @@ export const useEditorStore = create<EditorState>((set, get) => {
         if (guardLocked(video)) return {};
         const clip = makeMainClip(asset);
         return {
-          tracks: replaceTrack(s.tracks, vi, rippleMainTrack({ ...video, clips: [...video.clips, clip] })),
+          ...mainEdit(
+            s,
+            vi,
+            rippleMainTrack({ ...video, clips: [...video.clips, clip] })
+          ),
           ...sel(clip.id),
         };
       }),
@@ -889,6 +909,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
         return {
           tracks,
           captions,
+          captionCoverage: remapCaptionCoverage(
+            s.captionCoverage,
+            mainClips(s.tracks),
+            mainClips(tracks),
+            s.media
+          ),
           selectedClipIds: newIds,
           selectedClipId: newIds[newIds.length - 1],
         };
@@ -990,7 +1016,17 @@ export const useEditorStore = create<EditorState>((set, get) => {
           tracks = replaceTrack(tracks, ti, next);
         });
         if (removed === 0) return {};
-        return { tracks, captions, ...sel(null) };
+        return {
+          tracks,
+          captions,
+          captionCoverage: remapCaptionCoverage(
+            s.captionCoverage,
+            mainClips(s.tracks),
+            mainClips(tracks),
+            s.media
+          ),
+          ...sel(null),
+        };
       }),
 
     moveClip: (clipId, direction) =>
@@ -1128,7 +1164,9 @@ export const useEditorStore = create<EditorState>((set, get) => {
         let nextTrack: Track = { ...track, clips };
         if (nextTrack.type === "video") nextTrack = rippleMainTrack(nextTrack);
         return {
-          tracks: replaceTrack(st.tracks, ti, nextTrack),
+          ...(nextTrack.type === "video"
+            ? mainEdit(st, ti, nextTrack)
+            : { tracks: replaceTrack(st.tracks, ti, nextTrack) }),
           ...sel(right.id),
         };
       });
@@ -1570,6 +1608,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
         return {
           tracks,
           captions: remapCaptions(s.captions, keptRanges),
+          captionCoverage: remapCaptionCoverage(
+            s.captionCoverage,
+            mainClips(s.tracks),
+            mainClips(tracks),
+            s.media
+          ),
           currentTime: 0,
           ...sel(null),
           selectedCaptionId: null,
@@ -1632,6 +1676,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
         return {
           tracks,
           captions: remapCaptions(s.captions, ranges),
+          captionCoverage: remapCaptionCoverage(
+            s.captionCoverage,
+            mainClips(s.tracks),
+            mainClips(tracks),
+            s.media
+          ),
           currentTime: 0,
           isPlaying: false,
           ...sel(null),
@@ -1664,6 +1714,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
         return {
           tracks: result.tracks,
           captions: result.captions,
+          captionCoverage: remapCaptionCoverage(
+            s.captionCoverage,
+            mainClips(s.tracks),
+            mainClips(result.tracks),
+            s.media
+          ),
           editRecipe: recipe,
           // commit() bumps once, the "auto-edit" saveVersion below once more.
           editRecipeRevision: s.revision + 2,
@@ -1908,11 +1964,12 @@ export function selectMainClips(state: { tracks: Track[] }) {
   return mainClips(state.tracks);
 }
 
-/** Seek helper for keyboard shortcuts: 1 frame (fine) or 1 second per press. */
-export function stepFrame(direction: -1 | 1, fine: boolean) {
+/** Seek by exact 30 fps timeline frames without accumulating float drift. */
+export function stepFrame(direction: -1 | 1, frameCount = 1) {
   const s = useEditorStore.getState();
-  const step = fine ? 1 / 30 : 1;
   s.setPlaying(false);
   const duration = tracksDuration(s.tracks);
-  s.setCurrentTime(Math.min(duration, Math.max(0, s.currentTime + direction * step)));
+  const currentFrame = Math.round(s.currentTime * 30);
+  const nextFrame = currentFrame + direction * Math.max(1, Math.round(frameCount));
+  s.setCurrentTime(Math.min(duration, Math.max(0, nextFrame / 30)));
 }

@@ -148,7 +148,7 @@ export function CommandPalette({
         label: "Dela vid spelhuvudet",
         detail: "Skapar ett rent klipp på nuvarande tid",
         group: "Redigera",
-        shortcut: "S",
+        shortcut: "C",
         icon: Scissors,
         disabled: duration <= 0,
         run: splitAtPlayhead,
@@ -469,10 +469,12 @@ export function HelpDrawer({
             <div className="mt-2 grid grid-cols-2 gap-1.5">
               {[
                 ["Spela / pausa", "Space"],
-                ["Dela klipp", "S"],
+                ["Dela klipp", "C"],
+                ["Radera klipp", "⌫"],
                 ["Ångra", "Ctrl Z"],
                 ["Duplicera", "Ctrl D"],
-                ["Finjustera", "⇧ ← →"],
+                ["En bildruta", "← →"],
+                ["Tio bildrutor", "⇧ ← →"],
                 ["Kommandon", "Ctrl K"],
               ].map(([label, shortcut]) => (
                 <div

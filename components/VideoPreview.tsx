@@ -284,7 +284,7 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
 
   const onScrubberKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (!hasContent) return;
-    const step = event.shiftKey ? 1 / 30 : 0.5;
+    const step = (event.shiftKey ? 10 : 1) / 30;
     let next: number | null = null;
     if (event.key === "ArrowLeft" || event.key === "ArrowDown") next = currentTime - step;
     if (event.key === "ArrowRight" || event.key === "ArrowUp") next = currentTime + step;

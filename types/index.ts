@@ -172,7 +172,11 @@ export interface ClipEffect {
   intensity?: number;
   /** vignette: darkening strength 0..1. */
   strength?: number;
-  /** Motion character for animated zooms. Defaults to smooth. */
+  /**
+   * Motion character for animated zooms. On a punch-in zoom, setting this
+   * enables a short eased attack and release; legacy zooms without it stay
+   * constant across the clip.
+   */
   easing?: "smooth" | "linear" | "snappy";
 }
 

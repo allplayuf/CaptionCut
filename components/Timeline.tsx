@@ -6,7 +6,13 @@ import { useEditorStore } from "@/hooks/useEditorStore";
 import { filmstripUrl, mediaUrl } from "@/lib/video/client";
 import { placeholderPeaks, queueWaveformPeaks } from "@/lib/audio/waveform";
 import { formatTime } from "@/lib/video/timeline";
-import { mainVideoTrack, snapTargets, snapTime, tracksDuration } from "@/lib/timeline/tracks";
+import {
+  mainVideoTrack,
+  snapClipStart,
+  snapTargets,
+  snapTime,
+  tracksDuration,
+} from "@/lib/timeline/tracks";
 import { timelineBeatMarkers } from "@/lib/autoEdit/signals";
 import {
   Eye,
@@ -25,7 +31,7 @@ import {
 
 const HEADER_W = 116;
 const PAD = 12;
-const SNAP_PX = 8;
+const SNAP_PX = 12;
 
 const TRACK_HEIGHTS: Partial<Record<Track["type"], number>> = {
   video: 54,
@@ -113,6 +119,7 @@ export default function Timeline() {
   const [zoom, setZoom] = useState<number | null>(null); // px per second; null = fit
   const [showAllTracks, setShowAllTracks] = useState(false);
   const [snapEnabled, setSnapEnabled] = useState(true);
+  const [snapGuideTime, setSnapGuideTime] = useState<number | null>(null);
   /** Live drag-reorder of a main-track clip: visual offset + insertion slot. */
   const [reorder, setReorder] = useState<{ clipId: string; dx: number; slot: number } | null>(null);
   /** Live marquee selection rectangle, in content-div pixel coordinates. */
@@ -121,8 +128,12 @@ export default function Timeline() {
 
   const duration = Math.max(tracksDuration(tracks), 0.001);
   const fitPxPerSec = Math.max(8, (viewportW - 2 * PAD) / duration);
-  const pxPerSec = zoom ?? fitPxPerSec;
+  const maxPxPerSec = Math.max(480, fitPxPerSec * 8);
+  const pxPerSec = Math.min(maxPxPerSec, Math.max(fitPxPerSec, zoom ?? fitPxPerSec));
   const contentW = duration * pxPerSec + 2 * PAD;
+  const zoomPercent = Math.round((pxPerSec / fitPxPerSec) * 100);
+  const zoomSliderValue =
+    100 * Math.log(pxPerSec / fitPxPerSec) / Math.log(maxPxPerSec / fitPxPerSec);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -130,6 +141,16 @@ export default function Timeline() {
     const observer = new ResizeObserver(() => setViewportW(el.getBoundingClientRect().width));
     observer.observe(el);
     return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const clearSnapGuide = () => setSnapGuideTime(null);
+    window.addEventListener("pointerup", clearSnapGuide);
+    window.addEventListener("pointercancel", clearSnapGuide);
+    return () => {
+      window.removeEventListener("pointerup", clearSnapGuide);
+      window.removeEventListener("pointercancel", clearSnapGuide);
+    };
   }, []);
 
   // Kick off waveform decoding for audible media on the timeline.
@@ -210,8 +231,12 @@ export default function Timeline() {
   );
 
   /** Clip edges + playhead + beat instants — everything drags snap onto. */
-  const allSnapTargets = () => {
-    const targets = snapTargets(tracks, captions, currentTime);
+  const allSnapTargets = (options?: {
+    clipId?: string;
+    captionId?: string;
+    excludeEdge?: "start" | "end" | "both";
+  }) => {
+    const targets = snapTargets(tracks, captions, currentTime, options);
     if (beatInfo) targets.push(...beatInfo.beats);
     return targets;
   };
@@ -280,13 +305,39 @@ export default function Timeline() {
     window.addEventListener("pointerup", up);
   };
 
-  const zoomBy = (factor: number) =>
-    setZoom(Math.max(fitPxPerSec * 0.5, Math.min(400, pxPerSec * factor)));
+  /**
+   * Zoom around the pointer (wheel) or viewport center (buttons/slider), so
+   * the moment under the user's eye stays put instead of jumping sideways.
+   */
+  const zoomTo = (wantedPxPerSec: number, anchorClientX?: number) => {
+    const el = scrollRef.current;
+    const nextPxPerSec = Math.max(fitPxPerSec, Math.min(maxPxPerSec, wantedPxPerSec));
+    if (!el) {
+      setZoom(nextPxPerSec <= fitPxPerSec * 1.001 ? null : nextPxPerSec);
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    const playheadInViewport = PAD + currentTime * pxPerSec - el.scrollLeft;
+    const anchorX =
+      anchorClientX === undefined
+        ? playheadInViewport >= 0 && playheadInViewport <= rect.width
+          ? playheadInViewport
+          : rect.width / 2
+        : anchorClientX - rect.left;
+    const anchorTime = Math.max(0, (el.scrollLeft + anchorX - PAD) / pxPerSec);
+    setZoom(nextPxPerSec <= fitPxPerSec * 1.001 ? null : nextPxPerSec);
+    requestAnimationFrame(() => {
+      el.scrollLeft = Math.max(0, PAD + anchorTime * nextPxPerSec - anchorX);
+    });
+  };
+
+  const zoomBy = (factor: number, anchorClientX?: number) =>
+    zoomTo(pxPerSec * factor, anchorClientX);
 
   const onWheel = (e: React.WheelEvent) => {
     if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
-    zoomBy(e.deltaY < 0 ? 1.2 : 1 / 1.2);
+    zoomBy(e.deltaY < 0 ? 1.18 : 1 / 1.18, e.clientX);
   };
 
   return (
@@ -296,8 +347,8 @@ export default function Timeline() {
         <span className="timeline-title mr-2 font-mono text-[9px] font-bold uppercase tracking-[0.18em] text-[#6d7986]">
           Tidslinje
         </span>
-        <ToolButton onClick={splitAtPlayhead} disabled={duration <= 0.001} title="Dela vid spelhuvudet (S)">
-          <Scissors size={13} /> Dela
+        <ToolButton onClick={splitAtPlayhead} disabled={duration <= 0.001} title="Dela vid spelhuvudet (C)">
+          <Scissors size={13} /> Dela <ShortcutKey>C</ShortcutKey>
         </ToolButton>
         <ToolButton
           onClick={deleteSelectedClips}
@@ -305,15 +356,16 @@ export default function Timeline() {
           title={
             selectedClipIds.length > 1
               ? `Radera ${selectedClipIds.length} valda klipp`
-              : "Radera valt klipp (Delete)"
+              : "Radera valt klipp (Backspace eller Delete)"
           }
         >
-          <Trash2 size={13} /> Radera
+          <Trash2 size={13} /> Radera <ShortcutKey>⌫</ShortcutKey>
           {selectedClipIds.length > 1 && <span>{selectedClipIds.length}</span>}
         </ToolButton>
         <ToolButton
           onClick={() => setSnapEnabled((value) => !value)}
           title={snapEnabled ? "Fästning är på · Shift kringgår tillfälligt" : "Slå på fästning"}
+          ariaPressed={snapEnabled}
         >
           <Magnet size={13} className={snapEnabled ? "text-[var(--timeline)]" : ""} />
           Fäst
@@ -326,17 +378,44 @@ export default function Timeline() {
           {showAllTracks ? "Aktiva spår" : "Alla spår"}
         </ToolButton>
         <div className="timeline-zoom-controls ml-auto flex items-center gap-1">
-          <ToolButton onClick={() => zoomBy(1 / 1.4)} title="Zooma ut tidslinjen">
+          <ToolButton
+            onClick={() => zoomBy(1 / 1.35)}
+            disabled={duration <= 0.001 || pxPerSec <= fitPxPerSec * 1.001}
+            title="Zooma ut tidslinjen"
+          >
             <ZoomOut size={13} />
           </ToolButton>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={zoomSliderValue}
+            disabled={duration <= 0.001}
+            onChange={(event) => {
+              const ratio = Math.pow(
+                maxPxPerSec / fitPxPerSec,
+                Number(event.target.value) / 100
+              );
+              zoomTo(fitPxPerSec * ratio);
+            }}
+            className="timeline-zoom-slider h-1 w-20 cursor-ew-resize accent-[#78b8ed] disabled:cursor-default disabled:opacity-30"
+            aria-label="Zoomnivå för tidslinjen"
+            aria-valuetext={`${zoomPercent} procent`}
+            title="Dra för att zooma · Ctrl/Cmd + mushjul fungerar också"
+          />
           <button
-            onClick={() => setZoom(null)}
+            onClick={() => zoomTo(fitPxPerSec)}
             className="rounded px-1.5 py-0.5 text-[10px] font-medium text-[#697583] transition hover:bg-white/[0.06] hover:text-[#c3ccd5]"
-            title="Visa hela tidslinjen"
+            title="Visa hela tidslinjen (100 %)"
           >
-            Anpassa
+            {zoomPercent === 100 ? "Anpassa" : `${zoomPercent}%`}
           </button>
-          <ToolButton onClick={() => zoomBy(1.4)} title="Zooma in tidslinjen">
+          <ToolButton
+            onClick={() => zoomBy(1.35)}
+            disabled={duration <= 0.001 || pxPerSec >= maxPxPerSec * 0.999}
+            title="Zooma in tidslinjen"
+          >
             <ZoomIn size={13} />
           </ToolButton>
           <span className="ml-2 font-mono text-[10px] tabular-nums text-[#697583]">
@@ -417,21 +496,36 @@ export default function Timeline() {
                   const grouped = s.selectedClipIds.length > 1 && s.selectedClipIds.includes(clipId);
                   let start = newStart;
                   if (snap && snapEnabled) {
-                    const targets = allSnapTargets().filter(
-                      (t) => t !== dragged.startTime && t !== dragged.endTime
-                    );
+                    const targets = allSnapTargets({
+                      clipId,
+                      excludeEdge: "both",
+                    });
                     const dur = dragged.endTime - dragged.startTime;
-                    start = snapTime(newStart, targets, SNAP_PX / pxPerSec);
-                    const endSnapped = snapTime(start + dur, targets, SNAP_PX / pxPerSec);
-                    if (endSnapped !== start + dur) start = endSnapped - dur;
+                    const result = snapClipStart(newStart, dur, targets, SNAP_PX / pxPerSec);
+                    start = result.startTime;
+                    setSnapGuideTime(result.targetTime);
+                  } else {
+                    setSnapGuideTime(null);
                   }
                   if (grouped) moveSelectedClips(clipId, start, { transient: true });
                   else moveTimelineClip(clipId, start, { transient: true });
                 }}
                 onTrim={(clipId, edge, newTime, snap) => {
-                  const time = snap && snapEnabled
-                    ? snapTime(newTime, allSnapTargets(), SNAP_PX / pxPerSec)
-                    : newTime;
+                  const targets = allSnapTargets({
+                    clipId,
+                    excludeEdge: edge,
+                  });
+                  const time =
+                    snap && snapEnabled
+                      ? snapTime(newTime, targets, SNAP_PX / pxPerSec)
+                      : newTime;
+                  setSnapGuideTime(
+                    snap &&
+                      snapEnabled &&
+                      targets.some((target) => Math.abs(target - newTime) <= SNAP_PX / pxPerSec)
+                      ? time
+                      : null
+                  );
                   trimTimelineClip(clipId, edge, time, { transient: true });
                 }}
               />
@@ -456,27 +550,57 @@ export default function Timeline() {
                     const dur = cap.endTime - cap.startTime;
                     let start = newStart;
                     if (snap && snapEnabled) {
-                      const targets = allSnapTargets().filter(
-                        (t) => t !== cap.startTime && t !== cap.endTime
-                      );
-                      start = snapTime(newStart, targets, SNAP_PX / pxPerSec);
-                      const endSnapped = snapTime(start + dur, targets, SNAP_PX / pxPerSec);
-                      if (endSnapped !== start + dur) start = endSnapped - dur;
+                      const targets = allSnapTargets({
+                        captionId: cap.id,
+                        excludeEdge: "both",
+                      });
+                      const result = snapClipStart(newStart, dur, targets, SNAP_PX / pxPerSec);
+                      start = result.startTime;
+                      setSnapGuideTime(result.targetTime);
+                    } else {
+                      setSnapGuideTime(null);
                     }
                     start = Math.max(0, start);
                     updateCaptionTiming(cap.id, start, start + dur, { transient: true });
                   }}
                   onTrim={(edge, newTime, snap) => {
-                    const t =
+                    const targets = allSnapTargets({
+                      captionId: cap.id,
+                      excludeEdge: edge,
+                    });
+                    const time =
                       snap && snapEnabled
-                        ? snapTime(newTime, allSnapTargets(), SNAP_PX / pxPerSec)
+                        ? snapTime(newTime, targets, SNAP_PX / pxPerSec)
                         : newTime;
-                    if (edge === "start") updateCaptionTiming(cap.id, t, cap.endTime, { transient: true });
-                    else updateCaptionTiming(cap.id, cap.startTime, t, { transient: true });
+                    setSnapGuideTime(
+                      snap &&
+                        snapEnabled &&
+                        targets.some((target) => Math.abs(target - newTime) <= SNAP_PX / pxPerSec)
+                        ? time
+                        : null
+                    );
+                    if (edge === "start") {
+                      updateCaptionTiming(cap.id, time, cap.endTime, { transient: true });
+                    } else {
+                      updateCaptionTiming(cap.id, cap.startTime, time, { transient: true });
+                    }
                   }}
                 />
               ))}
             </div>
+
+            {/* Magnetic edge guide confirms that adjoining clips share the
+                exact same timestamp rather than merely looking close. */}
+            {snapGuideTime !== null && (
+              <div
+                className="pointer-events-none absolute bottom-0 top-0 z-20 w-px bg-[#78d9c5] shadow-[0_0_8px_rgba(120,217,197,.65)]"
+                style={{ left: PAD + snapGuideTime * pxPerSec }}
+              >
+                <span className="absolute left-1 top-1 whitespace-nowrap rounded bg-[#17352f] px-1.5 py-0.5 font-mono text-[8px] font-bold text-[#9ce5d4] ring-1 ring-[#78d9c5]/35">
+                  Fäst {formatTime(snapGuideTime)}
+                </span>
+              </div>
+            )}
 
             {/* marquee selection rectangle */}
             {marquee && (
@@ -508,7 +632,7 @@ export default function Timeline() {
                   </span>
                 </div>
                 <p className="mt-2 text-[8px] text-[#4e5a66]">
-                  Importera i Bibliotek · dra klipp för att ordna · tryck S för att dela
+                  Importera i Bibliotek · dra klipp för att ordna · tryck C för att dela
                 </p>
               </div>
             )}
@@ -867,7 +991,9 @@ function ClipBlock({
   const dragging = dragDx !== null;
   return (
     <div
-      className={`group absolute top-0.5 bottom-0.5 overflow-hidden rounded-md bg-gradient-to-b ${TRACK_COLORS[track.type]} ${
+      className={`group absolute top-0.5 bottom-0.5 overflow-hidden ${
+        isMain ? "rounded-[2px]" : "rounded-md"
+      } bg-gradient-to-b ${TRACK_COLORS[track.type]} ${
         selected ? "ring-2 ring-[#7db8ff]" : "ring-1 ring-white/10 hover:ring-white/30"
       } ${movable ? "cursor-grab active:cursor-grabbing" : ""} ${
         dragging ? "z-30 opacity-80 shadow-xl shadow-black/50" : "transition-shadow"
@@ -1008,20 +1134,31 @@ function ToolButton({
   onClick,
   disabled,
   title,
+  ariaPressed,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
   title: string;
+  ariaPressed?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       title={title}
+      aria-pressed={ariaPressed}
       className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-zinc-300 transition hover:bg-white/10 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
     >
       {children}
     </button>
+  );
+}
+
+function ShortcutKey({ children }: { children: React.ReactNode }) {
+  return (
+    <kbd className="rounded-[4px] bg-white/[0.055] px-1 py-px font-mono text-[8px] font-bold leading-none text-[#788693] ring-1 ring-white/[0.08]">
+      {children}
+    </kbd>
   );
 }

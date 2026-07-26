@@ -7,12 +7,14 @@ import { tracksDuration } from "@/lib/timeline/tracks";
 import { useTranscription } from "@/hooks/useTranscription";
 import {
   AlertTriangle,
+  ChevronDown,
   ChevronsLeft,
   ChevronsRight,
   Merge,
   Plus,
   Replace,
   Scissors,
+  Settings2,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -53,6 +55,7 @@ export default function CaptionsPanel() {
   const canTranscribe = hasClips && (scope === "timeline" || selectedMainClipCount > 0);
 
   const [showReplace, setShowReplace] = useState(false);
+  const [setupExpanded, setSetupExpanded] = useState(false);
   const [reviewLowConfidence, setReviewLowConfidence] = useState(false);
   /** Snapshot the queue so a row stays mounted while editing clears confidence. */
   const [reviewQueueIds, setReviewQueueIds] = useState<string[]>([]);
@@ -63,6 +66,7 @@ export default function CaptionsPanel() {
   const visibleCaptions = reviewLowConfidence
     ? captions.filter((caption) => reviewQueue.has(caption.id))
     : captions;
+  const showSetup = captions.length === 0 || setupExpanded;
 
   const runReplace = () => {
     const count = searchReplaceCaptions(findText, replaceText);
@@ -71,106 +75,128 @@ export default function CaptionsPanel() {
 
   return (
     <div className="flex h-full flex-col bg-[#10141b]">
-      <div className="border-b border-white/[0.07] p-4">
-        <div className="mb-3">
-          <div className="flex items-center justify-between">
-            <p className="panel-eyebrow text-[var(--caption)]">Lokala captions</p>
-            <span className="inline-flex items-center gap-1 rounded-full bg-[var(--caption)]/10 px-2 py-1 text-[8px] font-bold uppercase tracking-[0.12em] text-[var(--caption)] ring-1 ring-[var(--caption)]/15">
-              <ShieldCheck size={10} /> Privat
-            </span>
+      <div className="max-h-[72%] shrink-0 overflow-y-auto border-b border-white/[0.07]">
+        <div className="flex min-h-14 items-center gap-3 px-3 py-2.5">
+          <div className="min-w-0 flex-1">
+            <p className="panel-eyebrow text-[var(--caption)]">Captions</p>
+            <p className="mt-0.5 truncate text-[10px] text-[#778391]">
+              {captions.length > 0
+                ? `${captions.length} rader · klicka direkt i texten för att redigera`
+                : "Skapa privat textning direkt i webbläsaren"}
+            </p>
           </div>
-          <h2 className="mt-2 text-[19px] font-semibold tracking-[-0.03em] text-[#f0f3f6]">
-            Din video lämnar aldrig enheten.
-          </h2>
-          <p className="mt-1 text-[10px] leading-relaxed text-[#778391]">
-            Whisper laddas ner automatiskt första gången och sparas i webbläsaren.
-            Ingen API-nyckel, kostnad eller caption-uppladdning krävs.
-          </p>
-        </div>
-        <div className="mb-2 grid grid-cols-2 gap-1.5 rounded-xl bg-black/20 p-1.5 ring-1 ring-white/[0.07]">
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value as typeof language)}
-            className="h-8 min-w-0 rounded-lg border-0 bg-white/[0.05] px-2 text-[10px] font-semibold text-zinc-200 outline-none ring-1 ring-white/[0.07] focus:ring-[var(--caption)]/40"
-            title="Spoken language"
-          >
-            <option value="auto">Upptäck språk</option>
-            <option value="en">English</option>
-            <option value="sv">Svenska</option>
-          </select>
-          <select
-            value={quality}
-            onChange={(e) => setQuality(e.target.value as typeof quality)}
-            className="h-8 min-w-0 rounded-lg border-0 bg-white/[0.05] px-2 text-[10px] font-semibold text-zinc-200 outline-none ring-1 ring-white/[0.07] focus:ring-[var(--caption)]/40"
-            title="Välj en snabb eller noggrann lokal Whisper-modell"
-          >
-            <option value="fast">Snabb · ~75 MB</option>
-            <option value="accurate">Noggrann · ~150 MB</option>
-          </select>
-        </div>
-        <select
-          value={scope}
-          onChange={(e) => setScope(e.target.value as typeof scope)}
-          className="mb-2 h-9 w-full rounded-xl border-0 bg-white/[0.045] px-3 text-[10px] font-semibold text-zinc-200 outline-none ring-1 ring-white/[0.07] focus:ring-[var(--caption)]/40"
-          title="Caption the whole timeline or only selected clips on the main video track"
-        >
-          <option value="timeline">Hela tidslinjen</option>
-          <option value="selected" disabled={selectedMainClipCount === 0}>
-            Valda huvudklipp ({selectedMainClipCount})
-          </option>
-        </select>
-        <button
-          onClick={() => void runTranscription()}
-          disabled={isTranscribing || !canTranscribe}
-          className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#9ce5c3] px-4 text-[12px] font-extrabold text-[#0e1a15] shadow-[0_10px_28px_rgba(156,229,195,0.13)] transition hover:bg-[#b9f0d7] active:translate-y-px disabled:opacity-40"
-        >
-          {isTranscribing ? (
-            <>
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-              {progress?.stage === "model" ? "Laddar lokal modell…" : "Skapar captions…"}
-            </>
-          ) : (
-            <>
-              <Sparkles size={16} />
-              {scope === "selected" ? "Texta valda klipp lokalt" : "Skapa captions lokalt"}
-            </>
-          )}
-        </button>
-        {scope === "selected" && selectedMainClipCount === 0 && (
-          <p className="mt-2 text-center text-[11px] text-amber-400/80">
-            Select one or more clips on the main video track.
-          </p>
-        )}
-        {isTranscribing && (
-          <div className="mt-2.5 rounded-xl bg-black/20 p-2.5 ring-1 ring-white/[0.07]">
-            <div className="flex items-center justify-between gap-2 text-[9px]">
-              <span className="truncate text-[#9aa6b2]">
-                {progress?.detail ?? "Arbetar på den här enheten"}
-              </span>
-              <span className="shrink-0 font-mono text-[var(--caption)]">
-                {progress?.stage === "model" && progress.progress > 0
-                  ? `${Math.round(progress.progress * 100)}%`
-                  : progress?.device === "webgpu"
-                    ? "GPU"
-                    : "LOKALT"}
-              </span>
-            </div>
-            <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.07]">
-              <div
-                className={`h-full rounded-full bg-[var(--caption)] transition-[width] ${
-                  progress?.stage === "transcribing" ? "w-2/3 animate-pulse" : ""
-                }`}
-                style={
-                  progress?.stage === "transcribing"
-                    ? undefined
-                    : { width: `${Math.max(4, (progress?.progress ?? 0) * 100)}%` }
-                }
+          {captions.length > 0 && (
+            <button
+              type="button"
+              aria-expanded={setupExpanded}
+              onClick={() => setSetupExpanded((value) => !value)}
+              className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-white/[0.04] px-2.5 text-[9px] font-semibold text-[#9aa5b1] ring-1 ring-white/[0.08] transition hover:bg-white/[0.07] hover:text-[#e1e6eb]"
+            >
+              <Settings2 size={12} />
+              Inställningar
+              <ChevronDown
+                size={12}
+                className={`transition-transform ${setupExpanded ? "rotate-180" : ""}`}
               />
-            </div>
-            {duration > 180 && (
-              <p className="mt-2 text-[9px] leading-relaxed text-[#687480]">
-                Långa videor kan ta några minuter. Du kan fortsätta arbeta under tiden.
+            </button>
+          )}
+        </div>
+
+        {showSetup && (
+          <div className="border-t border-white/[0.06] px-3 pb-3 pt-2.5">
+            <div className="mb-2.5 flex items-start gap-2 rounded-xl bg-[var(--caption)]/[0.055] p-2.5 ring-1 ring-[var(--caption)]/10">
+              <ShieldCheck size={14} className="mt-0.5 shrink-0 text-[var(--caption)]" />
+              <p className="text-[9px] leading-relaxed text-[#809087]">
+                Videon lämnar aldrig enheten. Modellen sparas i webbläsaren efter första
+                nedladdningen.
               </p>
+            </div>
+            <div className="mb-2 grid grid-cols-2 gap-1.5 rounded-xl bg-black/20 p-1.5 ring-1 ring-white/[0.07]">
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value as typeof language)}
+                className="h-8 min-w-0 rounded-lg border-0 bg-white/[0.05] px-2 text-[10px] font-semibold text-zinc-200 outline-none ring-1 ring-white/[0.07] focus:ring-[var(--caption)]/40"
+                title="Spoken language"
+              >
+                <option value="auto">Upptäck språk</option>
+                <option value="en">English</option>
+                <option value="sv">Svenska</option>
+              </select>
+              <select
+                value={quality}
+                onChange={(e) => setQuality(e.target.value as typeof quality)}
+                className="h-8 min-w-0 rounded-lg border-0 bg-white/[0.05] px-2 text-[10px] font-semibold text-zinc-200 outline-none ring-1 ring-white/[0.07] focus:ring-[var(--caption)]/40"
+                title="Välj en snabb eller noggrann lokal Whisper-modell"
+              >
+                <option value="fast">Snabb · ~75 MB</option>
+                <option value="accurate">Noggrann · ~150 MB</option>
+              </select>
+            </div>
+            <select
+              value={scope}
+              onChange={(e) => setScope(e.target.value as typeof scope)}
+              className="mb-2 h-9 w-full rounded-xl border-0 bg-white/[0.045] px-3 text-[10px] font-semibold text-zinc-200 outline-none ring-1 ring-white/[0.07] focus:ring-[var(--caption)]/40"
+              title="Caption the whole timeline or only selected clips on the main video track"
+            >
+              <option value="timeline">Hela tidslinjen</option>
+              <option value="selected" disabled={selectedMainClipCount === 0}>
+                Valda huvudklipp ({selectedMainClipCount})
+              </option>
+            </select>
+            <button
+              onClick={() => void runTranscription()}
+              disabled={isTranscribing || !canTranscribe}
+              className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#9ce5c3] px-4 text-[12px] font-extrabold text-[#0e1a15] shadow-[0_10px_28px_rgba(156,229,195,0.13)] transition hover:bg-[#b9f0d7] active:translate-y-px disabled:opacity-40"
+            >
+              {isTranscribing ? (
+                <>
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  {progress?.stage === "model" ? "Laddar lokal modell…" : "Skapar captions…"}
+                </>
+              ) : (
+                <>
+                  <Sparkles size={16} />
+                  {scope === "selected" ? "Texta valda klipp lokalt" : "Skapa captions lokalt"}
+                </>
+              )}
+            </button>
+            {scope === "selected" && selectedMainClipCount === 0 && (
+              <p className="mt-2 text-center text-[11px] text-amber-400/80">
+                Select one or more clips on the main video track.
+              </p>
+            )}
+            {isTranscribing && (
+              <div className="mt-2.5 rounded-xl bg-black/20 p-2.5 ring-1 ring-white/[0.07]">
+                <div className="flex items-center justify-between gap-2 text-[9px]">
+                  <span className="truncate text-[#9aa6b2]">
+                    {progress?.detail ?? "Arbetar på den här enheten"}
+                  </span>
+                  <span className="shrink-0 font-mono text-[var(--caption)]">
+                    {progress?.stage === "model" && progress.progress > 0
+                      ? `${Math.round(progress.progress * 100)}%`
+                      : progress?.device === "webgpu"
+                        ? "GPU"
+                        : "LOKALT"}
+                  </span>
+                </div>
+                <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.07]">
+                  <div
+                    className={`h-full rounded-full bg-[var(--caption)] transition-[width] ${
+                      progress?.stage === "transcribing" ? "w-2/3 animate-pulse" : ""
+                    }`}
+                    style={
+                      progress?.stage === "transcribing"
+                        ? undefined
+                        : { width: `${Math.max(4, (progress?.progress ?? 0) * 100)}%` }
+                    }
+                  />
+                </div>
+                {duration > 180 && (
+                  <p className="mt-2 text-[9px] leading-relaxed text-[#687480]">
+                    Långa videor kan ta några minuter. Du kan fortsätta arbeta under tiden.
+                  </p>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -341,7 +367,7 @@ function CaptionRow({
   return (
     <div
       ref={rowRef}
-      className={`group rounded-lg p-2 ring-1 transition ${
+      className={`group rounded-xl p-2.5 ring-1 transition ${
         active
           ? "bg-[var(--caption)]/10 ring-[var(--caption)]/40"
           : selected
@@ -358,7 +384,7 @@ function CaptionRow({
         value={caption.text}
         onChange={(e) => updateCaptionText(caption.id, e.target.value)}
         onClick={(e) => e.stopPropagation()}
-        className="w-full bg-transparent text-xs font-medium text-zinc-100 outline-none placeholder:text-zinc-600"
+        className="min-h-7 w-full bg-transparent text-[13px] font-medium leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-600"
         placeholder="Caption text…"
       />
       <div className="mt-1 flex items-center gap-1">
@@ -394,7 +420,7 @@ function CaptionRow({
               : `${Math.round(caption.confidence * 100)}%`}
           </span>
         )}
-        <div className="ml-auto flex items-center opacity-0 transition group-hover:opacity-100">
+        <div className="caption-row-actions ml-auto flex items-center opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100">
           <button
             onClick={(e) => {
               e.stopPropagation();

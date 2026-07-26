@@ -9,6 +9,7 @@ import { replaceCaptionsInsideRanges } from "@/lib/captions/ranges";
 import {
   captionCoverageStatus,
   captionSourceSignature,
+  remapCaptionCoverage,
 } from "@/lib/transcription/coverage";
 import {
   createDefaultTracks,
@@ -216,6 +217,37 @@ assert.equal(
   "selected transcript coverage must not masquerade as whole-timeline coverage"
 );
 
+const remappedCoverageClips = [
+  {
+    ...clips[0],
+    id: "interview-slice",
+    sourceStart: clips[0].sourceStart + 1,
+    sourceEnd: clips[0].sourceEnd - 1,
+  },
+  { ...clips[1], id: "uncovered-action-slice", sourceEnd: clips[1].sourceEnd - 1 },
+];
+const remappedCoverage = remapCaptionCoverage(
+  { sourceSignature, coveredClipIds: [clips[0].id] },
+  clips,
+  remappedCoverageClips,
+  pairedAssets
+);
+assert.equal(
+  captionCoverageStatus(
+    remappedCoverage,
+    remappedCoverageClips,
+    pairedAssets,
+    ["interview-slice"]
+  ),
+  "complete",
+  "trimmed/reordered source ranges should keep their transcript coverage"
+);
+assert.equal(
+  captionCoverageStatus(remappedCoverage, remappedCoverageClips, pairedAssets),
+  "incomplete",
+  "new clips outside covered source ranges must still require transcription"
+);
+
 const pauseTranscript = analyzeTranscript([
   { id: "first-word", text: "Hej", startTime: 0.5, endTime: 1 },
   { id: "second-word", text: "igen", startTime: 2, endTime: 2.5 },
@@ -240,7 +272,7 @@ assert.deepEqual(
 );
 
 console.log(
-  "Editor workflow checks passed: source scope, interview audio/B-roll, draft revision, caption boundaries, transcript coverage, and silence padding."
+  "Editor workflow checks passed: source scope, interview audio/B-roll, draft revision, caption boundaries, remapped transcript coverage, and silence padding."
 );
 
 function makeAsset(id: string): MediaAsset {

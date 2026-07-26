@@ -50,7 +50,9 @@ separate desktop setup or transcription key.
    `BLOB_READ_WRITE_TOKEN` is available to Production.
 3. No AI service or transcription secret is required. Each browser downloads
    and caches its own free Whisper model on first use.
-4. Optionally configure Google Drive with the variables below.
+4. Google Drive works without credentials: visitors can choose Drive from
+   their device file browser or paste an “Anyone with the link” file URL.
+   Optionally configure the variables below to add Google's signed-in Picker.
 5. Deploy, then open `/api/health`. A launch-ready deployment returns HTTP 200
    with Blob storage and both media tools ready.
 
@@ -78,7 +80,7 @@ browser/IP.
 # Required in production
 BLOB_READ_WRITE_TOKEN=
 
-# Optional Google Drive Picker
+# Optional signed-in Google Drive Picker (keyless file/link import still works)
 GOOGLE_DRIVE_CLIENT_ID=...apps.googleusercontent.com
 GOOGLE_DRIVE_API_KEY=...
 GOOGLE_DRIVE_APP_ID=...
@@ -89,11 +91,17 @@ GOOGLE_DRIVE_APP_ID=...
 # WHISPER_CPP_PATH=
 ```
 
-For Google Drive, enable both Google Picker API and Google Drive API in one
-Google Cloud project. Add each deployed origin to the OAuth web client's
-authorized JavaScript origins. While the consent screen is in Testing, add each
-friend as a test user. Imported files are copied to CaptionCut storage; Drive
-tokens are never saved. Drive imports are capped at 400 MB on Vercel.
+No Google configuration is needed for the default Drive flow. Private files
+can be selected through a phone's Drive file provider or a mounted Google Drive
+folder. Pasted links must have **General access → Anyone with the link** and
+downloads enabled.
+
+For the optional signed-in Picker, enable both Google Picker API and Google
+Drive API in one Google Cloud project. Add each deployed origin to the OAuth
+web client's authorized JavaScript origins. While the consent screen is in
+Testing, add each friend as a test user. Imported files are copied to CaptionCut
+storage; Drive tokens are never saved. Drive imports are capped at 400 MB on
+Vercel.
 
 ## Commands
 
@@ -108,6 +116,7 @@ npx tsx scripts/verify-formats.ts
 npx tsx scripts/verify-effects.ts
 npx tsx scripts/verify-fast-interview.ts
 npx tsx scripts/verify-drive-pairing.ts
+npm run verify-browser-imports
 npm run verify-boundaries
 npm run verify-large-project
 ```

@@ -17,11 +17,24 @@ import { CommandPalette, HelpDrawer } from "@/components/WorkspaceOverlays";
 import type { EditorTool } from "@/lib/ui/editorTools";
 import { GripHorizontal, GripVertical } from "lucide-react";
 
-const DEFAULT_SIDEBAR_WIDTH = 368;
+const MIN_SIDEBAR_WIDTH = 344;
+const DEFAULT_SIDEBAR_WIDTH = 456;
+const COMFORTABLE_SIDEBAR_WIDTH = 520;
+const MAX_SIDEBAR_WIDTH = 760;
+const MIN_TIMELINE_HEIGHT = 150;
+const COMPACT_TIMELINE_HEIGHT = 154;
 const DEFAULT_TIMELINE_HEIGHT = 238;
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function maxSidebarWidth() {
+  if (typeof window === "undefined") return MAX_SIDEBAR_WIDTH;
+  return Math.max(
+    MIN_SIDEBAR_WIDTH,
+    Math.min(MAX_SIDEBAR_WIDTH, window.innerWidth - 360)
+  );
 }
 
 export default function EditorPage() {
@@ -42,8 +55,17 @@ export default function EditorPage() {
   const [layoutReady, setLayoutReady] = useState(false);
   const retryAutosave = useProjectAutosave({ projectId, revision, enabled: booted });
 
-  const openTool = (tool: EditorTool) => {
+  const selectTool = (tool: EditorTool) => {
     setActiveTool(tool);
+    if (tool === "captions") {
+      setSidebarWidth((current) =>
+        Math.max(current, Math.min(COMFORTABLE_SIDEBAR_WIDTH, maxSidebarWidth()))
+      );
+    }
+  };
+
+  const openTool = (tool: EditorTool) => {
+    selectTool(tool);
     setSidebarCollapsed(false);
   };
 
@@ -54,10 +76,12 @@ export default function EditorPage() {
       const savedTimeline = Number(localStorage.getItem("captioncut.timelineHeight"));
       const savedCollapsed = localStorage.getItem("captioncut.sidebarCollapsed");
       if (Number.isFinite(savedSidebar) && savedSidebar > 0) {
-        setSidebarWidth(clamp(savedSidebar, 320, Math.min(620, window.innerWidth - 360)));
+        setSidebarWidth(clamp(savedSidebar, MIN_SIDEBAR_WIDTH, maxSidebarWidth()));
       }
       if (Number.isFinite(savedTimeline) && savedTimeline > 0) {
-        setTimelineHeight(clamp(savedTimeline, 220, window.innerHeight - 180));
+        setTimelineHeight(
+          clamp(savedTimeline, MIN_TIMELINE_HEIGHT, window.innerHeight - 180)
+        );
       }
       setSidebarCollapsed(
         window.innerWidth < 768 ||
@@ -117,7 +141,11 @@ export default function EditorPage() {
     document.body.classList.add("is-resizing");
     const move = (moveEvent: PointerEvent) =>
       setSidebarWidth(
-        clamp(startWidth + moveEvent.clientX - startX, 320, Math.min(620, window.innerWidth - 360))
+        clamp(
+          startWidth + moveEvent.clientX - startX,
+          MIN_SIDEBAR_WIDTH,
+          maxSidebarWidth()
+        )
       );
     const up = () => {
       document.body.classList.remove("is-resizing");
@@ -135,7 +163,11 @@ export default function EditorPage() {
     document.body.classList.add("is-resizing");
     const move = (moveEvent: PointerEvent) =>
       setTimelineHeight(
-        clamp(startHeight - (moveEvent.clientY - startY), 220, window.innerHeight - 180)
+        clamp(
+          startHeight - (moveEvent.clientY - startY),
+          MIN_TIMELINE_HEIGHT,
+          window.innerHeight - 180
+        )
       );
     const up = () => {
       document.body.classList.remove("is-resizing");
@@ -230,12 +262,14 @@ export default function EditorPage() {
       } else if (e.code === "Space") {
         e.preventDefault();
         s.setPlaying(!s.isPlaying);
-      } else if (e.key === "s" || e.key === "S") {
+      } else if (e.key === "c" || e.key === "C") {
+        e.preventDefault();
         s.splitAtPlayhead();
       } else if (
         (e.key === "Delete" || e.key === "Backspace") &&
         (s.selectedClipIds.length > 0 || s.selectedClipId)
       ) {
+        e.preventDefault();
         s.deleteSelectedClips();
       } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
         const dir = e.key === "ArrowLeft" ? -1 : 1;
@@ -244,8 +278,9 @@ export default function EditorPage() {
           e.preventDefault();
           s.nudgeSelectedClips(dir * (e.shiftKey ? 10 / 30 : 1 / 30));
         } else {
-          // plain = 1s, shift = 1 frame
-          stepFrame(dir as -1 | 1, e.shiftKey);
+          // Plain arrows step one frame; Shift crosses ten frames quickly.
+          e.preventDefault();
+          stepFrame(dir as -1 | 1, e.shiftKey ? 10 : 1);
         }
       }
     };
@@ -269,7 +304,18 @@ export default function EditorPage() {
           collapsed={sidebarCollapsed}
           onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
           activeTool={activeTool}
-          onToolChange={setActiveTool}
+          onToolChange={selectTool}
+          onWidthChange={(width) =>
+            setSidebarWidth(clamp(width, MIN_SIDEBAR_WIDTH, maxSidebarWidth()))
+          }
+          timelineCompact={timelineHeight <= COMPACT_TIMELINE_HEIGHT + 8}
+          onToggleTimelineCompact={() =>
+            setTimelineHeight((height) =>
+              height <= COMPACT_TIMELINE_HEIGHT + 8
+                ? DEFAULT_TIMELINE_HEIGHT
+                : COMPACT_TIMELINE_HEIGHT
+            )
+          }
         />
 
         {!sidebarCollapsed && (
@@ -278,12 +324,25 @@ export default function EditorPage() {
             role="separator"
             aria-label="Ändra verktygspanelens bredd"
             aria-orientation="vertical"
+            aria-valuemin={MIN_SIDEBAR_WIDTH}
+            aria-valuemax={MAX_SIDEBAR_WIDTH}
+            aria-valuenow={Math.round(sidebarWidth)}
             className="workspace-resizer workspace-resizer-vertical"
             onPointerDown={beginSidebarResize}
             onDoubleClick={() => setSidebarWidth(DEFAULT_SIDEBAR_WIDTH)}
             onKeyDown={(event) => {
-              if (event.key === "ArrowLeft") setSidebarWidth((value) => clamp(value - 16, 320, 620));
-              if (event.key === "ArrowRight") setSidebarWidth((value) => clamp(value + 16, 320, 620));
+              if (event.key === "ArrowLeft") {
+                event.preventDefault();
+                setSidebarWidth((value) =>
+                  clamp(value - 24, MIN_SIDEBAR_WIDTH, maxSidebarWidth())
+                );
+              }
+              if (event.key === "ArrowRight") {
+                event.preventDefault();
+                setSidebarWidth((value) =>
+                  clamp(value + 24, MIN_SIDEBAR_WIDTH, maxSidebarWidth())
+                );
+              }
             }}
             title="Dra för större eller mindre verktyg · dubbelklicka för standard"
           >
@@ -306,10 +365,14 @@ export default function EditorPage() {
         onDoubleClick={() => setTimelineHeight(DEFAULT_TIMELINE_HEIGHT)}
         onKeyDown={(event) => {
           if (event.key === "ArrowUp") {
-            setTimelineHeight((value) => clamp(value + 20, 220, window.innerHeight - 180));
+            setTimelineHeight((value) =>
+              clamp(value + 20, MIN_TIMELINE_HEIGHT, window.innerHeight - 180)
+            );
           }
           if (event.key === "ArrowDown") {
-            setTimelineHeight((value) => clamp(value - 20, 220, window.innerHeight - 180));
+            setTimelineHeight((value) =>
+              clamp(value - 20, MIN_TIMELINE_HEIGHT, window.innerHeight - 180)
+            );
           }
         }}
         title="Dra upp för större tidslinje · dubbelklicka för standard"

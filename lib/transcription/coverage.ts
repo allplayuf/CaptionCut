@@ -53,3 +53,41 @@ export function captionCoverageStatus(
   const requested = requestedClipIds ?? clips.map((clip) => clip.id);
   return requested.every((id) => covered.has(id)) ? "complete" : "incomplete";
 }
+
+/**
+ * Carry transcript coverage through non-destructive main-track edits.
+ *
+ * Timeline operations create new clip ids even when every resulting clip is
+ * only a trim, split, duplicate or reorder of audio that was already
+ * transcribed. Match those new clips back to covered source ranges so another
+ * caption/AutoEdit pass does not needlessly run Whisper again. Expanded or
+ * newly imported source ranges remain uncovered.
+ */
+export function remapCaptionCoverage(
+  coverage: CaptionCoverage | null,
+  before: Clip[],
+  after: Clip[],
+  media: MediaAsset[]
+): CaptionCoverage | null {
+  if (!coverage || coverage.sourceSignature !== captionSourceSignature(before, media)) {
+    return null;
+  }
+
+  const coveredBeforeIds = new Set(coverage.coveredClipIds);
+  const coveredSources = before.filter((clip) => coveredBeforeIds.has(clip.id));
+  const coveredClipIds = after
+    .filter((clip) =>
+      coveredSources.some(
+        (source) =>
+          source.mediaId === clip.mediaId &&
+          clip.sourceStart >= source.sourceStart - 0.002 &&
+          clip.sourceEnd <= source.sourceEnd + 0.002
+      )
+    )
+    .map((clip) => clip.id);
+
+  return {
+    sourceSignature: captionSourceSignature(after, media),
+    coveredClipIds,
+  };
+}

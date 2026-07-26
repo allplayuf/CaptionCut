@@ -37,7 +37,10 @@ interface TranscriptionPreferences {
     local model and language when it needs to transcribe selected footage. */
 const useTranscriptionPreferences = create<TranscriptionPreferences>((set) => ({
   language: "auto",
-  quality: "accurate",
+  // Match the model that EditorPage preloads after import. New visitors should
+  // never have to download both Whisper Tiny and Whisper Base before their
+  // first caption appears.
+  quality: "fast",
   scope: "timeline",
   progress: null,
   setLanguage: (language) => set({ language }),

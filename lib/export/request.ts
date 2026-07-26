@@ -242,13 +242,53 @@ export function buildExportRequest(input: {
       if (fx.kind === "zoom") {
         const scale = fx.zoomScale ?? 1;
         if (scale <= 1.001) continue;
-        zooms.push({
-          start,
-          end,
-          scale: Math.min(2.5, scale),
-          anchorX: fx.anchorX ?? 0.5,
-          anchorY: fx.anchorY ?? 0.45,
-        });
+        const peak = Math.min(2.5, scale);
+        const anchorX = fx.anchorX ?? 0.5;
+        const anchorY = fx.anchorY ?? 0.45;
+        if (fx.easing) {
+          // Match effectStateAt(): a short eased attack, steady hold, and
+          // eased release. Splitting the window keeps export and preview in
+          // lockstep without adding another payload shape.
+          const duration = end - start;
+          const transition = Math.min(0.24, Math.max(0.08, duration * 0.2));
+          const attackEnd = Math.min(end, start + transition);
+          const releaseStart = Math.max(attackEnd, end - transition);
+          zooms.push({
+            start,
+            end: attackEnd,
+            scale: 1,
+            endScale: peak,
+            easing: fx.easing,
+            anchorX,
+            anchorY,
+          });
+          if (releaseStart - attackEnd > 0.05) {
+            zooms.push({
+              start: attackEnd,
+              end: releaseStart,
+              scale: peak,
+              anchorX,
+              anchorY,
+            });
+          }
+          zooms.push({
+            start: releaseStart,
+            end,
+            scale: peak,
+            endScale: 1,
+            easing: fx.easing,
+            anchorX,
+            anchorY,
+          });
+        } else {
+          zooms.push({
+            start,
+            end,
+            scale: peak,
+            anchorX,
+            anchorY,
+          });
+        }
       } else if (fx.kind === "slow-zoom") {
         const endScale = Math.min(2.5, Math.max(1.01, fx.zoomScale ?? 1.25));
         zooms.push({

@@ -9,6 +9,7 @@
     "lint": "eslint",
     "verify-boundaries": "tsx scripts/verify-request-boundaries.ts",
     "verify-large-project": "tsx scripts/verify-large-project.ts",
+    "verify-browser-imports": "tsx scripts/verify-browser-imports.ts",
     "setup-whisper": "tsx scripts/setup-whisper.ts"
   },
   "dependencies": {

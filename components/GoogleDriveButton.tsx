@@ -1,11 +1,18 @@
 "use client";
 
 import Script from "next/script";
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { MediaAsset } from "@/types";
-import { registerImportedMedia } from "@/hooks/useMediaUpload";
+import { registerImportedMedia, useMediaUpload } from "@/hooks/useMediaUpload";
 import { useEditorStore } from "@/hooks/useEditorStore";
-import { LoaderCircle } from "lucide-react";
+import { ExternalLink, FileUp, Link2, LoaderCircle, X } from "lucide-react";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const PICKER_MIME_TYPES = [
@@ -32,6 +39,11 @@ const AUDIO_PICKER_MIME_TYPES = PICKER_MIME_TYPES.split(",")
 const VIDEO_PICKER_MIME_TYPES = PICKER_MIME_TYPES.split(",")
   .filter((mimeType) => mimeType.startsWith("video/"))
   .join(",");
+const DRIVE_FILE_ACCEPT = {
+  all: "video/*,audio/*,.mp4,.mov,.webm,.m4v,.mkv,.avi,.mp3,.wav,.m4a,.aac,.ogg,.flac",
+  audio: "audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac",
+  video: "video/*,.mp4,.mov,.webm,.m4v,.mkv,.avi",
+} as const;
 
 type DriveImportProgress = { index: number; total: number; name: string } | null;
 
@@ -138,6 +150,11 @@ export default function GoogleDriveButton({
   const [gisReady, setGisReady] = useState(false);
   const [pickerReady, setPickerReady] = useState(false);
   const [config, setConfig] = useState<DriveConfig | null>(null);
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+  const shareInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { uploading: fileUploading, handleFiles } = useMediaUpload();
   const importing = useSyncExternalStore(
     subscribeToImportProgress,
     getImportProgressSnapshot,
@@ -163,6 +180,21 @@ export default function GoogleDriveButton({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!linkDialogOpen) return;
+    const focusTimer = window.setTimeout(() => shareInputRef.current?.focus(), 0);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !getImportProgressSnapshot() && !fileUploading) {
+        setLinkDialogOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [fileUploading, linkDialogOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -290,6 +322,52 @@ export default function GoogleDriveButton({
     [config, importDocuments, kind]
   );
 
+  const importSharedLink = useCallback(async () => {
+    const url = shareUrl.trim();
+    if (!url) {
+      useEditorStore.getState().addToast("info", "Paste a Google Drive file link first.");
+      shareInputRef.current?.focus();
+      return;
+    }
+    if (getImportProgressSnapshot()) {
+      useEditorStore.getState().addToast("info", "Another Google Drive import is still running.");
+      return;
+    }
+
+    setSharedImportProgress({ index: 1, total: 1, name: "Shared Drive file" });
+    try {
+      const response = await fetch("/api/import/google-drive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, kind }),
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(readErrorMessage(body) ?? "Google Drive import failed.");
+      }
+      if (!isMediaAsset(body)) {
+        throw new Error("Google Drive returned invalid media information.");
+      }
+      const importedKind = body.kind ?? (body.mimeType.startsWith("audio/") ? "audio" : "video");
+      if (kind !== "all" && importedKind !== kind) {
+        throw new Error(`Choose ${kind === "audio" ? "an audio" : "a video"} file from Google Drive.`);
+      }
+      registerImportedMedia(body, { silentAudioTip: true });
+      setShareUrl("");
+      setLinkDialogOpen(false);
+      useEditorStore.getState().addToast("success", `Imported "${body.originalName}" from Google Drive.`);
+    } catch (error) {
+      useEditorStore
+        .getState()
+        .addToast(
+          "error",
+          error instanceof Error ? error.message : "Google Drive import failed."
+        );
+    } finally {
+      setSharedImportProgress(null);
+    }
+  }, [kind, shareUrl]);
+
   const chooseFromDrive = () => {
     const store = useEditorStore.getState();
     if (config === null) {
@@ -297,10 +375,7 @@ export default function GoogleDriveButton({
       return;
     }
     if (!config?.configured || !config.clientId || !config.apiKey || !config.appId) {
-      store.addToast(
-        "error",
-        "Google Drive needs GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_API_KEY and GOOGLE_DRIVE_APP_ID."
-      );
+      setLinkDialogOpen(true);
       return;
     }
     const oauth = window.google?.accounts?.oauth2;
@@ -343,26 +418,176 @@ export default function GoogleDriveButton({
     client.requestAccessToken({ prompt: consentGranted ? "" : "consent" });
   };
 
-  const busy = importing !== null;
+  const busy = importing !== null || fileUploading !== null;
+  const busyLabel = importing
+    ? `${importing.index}/${importing.total} ${importing.name}`
+    : fileUploading
+      ? `${fileUploading.index}/${fileUploading.total} ${fileUploading.name}`
+      : "";
+  const linkDialog =
+    linkDialogOpen && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            className="fixed inset-0 z-[120] flex items-center justify-center bg-black/75 p-4 backdrop-blur-md"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget && !busy) setLinkDialogOpen(false);
+            }}
+          >
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="drive-import-title"
+              className="w-full max-w-[470px] overflow-hidden rounded-[22px] bg-[#0e151d] shadow-2xl shadow-black/60 ring-1 ring-white/12"
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-white/[0.07] px-5 py-4">
+                <div>
+                  <p className="font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-[#7db8ff]">
+                    No API keys needed
+                  </p>
+                  <h2
+                    id="drive-import-title"
+                    className="mt-1 text-base font-bold tracking-[-0.025em] text-[#edf3f8]"
+                  >
+                    Import from your Google Drive
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLinkDialogOpen(false)}
+                  disabled={busy}
+                  aria-label="Close Google Drive import"
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[#708090] transition hover:bg-white/[0.06] hover:text-white disabled:opacity-30"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+
+              <div className="space-y-3 p-4">
+                <div className="rounded-2xl bg-[#7db8ff]/[0.055] p-4 ring-1 ring-[#7db8ff]/15">
+                  <div className="flex gap-3">
+                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#7db8ff]/10 text-[#8ac4ff]">
+                      <FileUp size={16} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-[#dce8f2]">Choose a private file</p>
+                      <p className="mt-1 text-[10px] leading-relaxed text-[#748596]">
+                        On a phone, choose Drive in the file browser. On a computer, choose
+                        your Google Drive folder. No Drive sharing change is needed.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={busy}
+                        className="mt-3 inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-[#7db8ff] px-3 text-[10px] font-extrabold text-[#07121c] transition hover:bg-[#9bd0ff] disabled:opacity-40"
+                      >
+                        {fileUploading ? (
+                          <LoaderCircle size={12} className="animate-spin" />
+                        ) : (
+                          <FileUp size={12} />
+                        )}
+                        Browse files
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-white/[0.025] p-4 ring-1 ring-white/[0.08]">
+                  <div className="flex gap-3">
+                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/[0.05] text-[#9ba9b6]">
+                      <Link2 size={16} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-[#dce3e9]">Or paste a share link</p>
+                      <p className="mt-1 text-[10px] leading-relaxed text-[#74808c]">
+                        In Drive, set General access to “Anyone with the link,” then copy the
+                        file link here.
+                      </p>
+                    </div>
+                  </div>
+                  <label className="mt-3 block">
+                    <span className="sr-only">Google Drive share link</span>
+                    <input
+                      ref={shareInputRef}
+                      type="url"
+                      inputMode="url"
+                      autoComplete="off"
+                      value={shareUrl}
+                      onChange={(event) => setShareUrl(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") void importSharedLink();
+                      }}
+                      placeholder="https://drive.google.com/file/d/…/view"
+                      disabled={busy}
+                      className="h-10 w-full rounded-lg border border-white/[0.09] bg-[#080d12] px-3 text-[11px] text-[#dce5ed] placeholder:text-[#46525e] focus:border-[#7db8ff]/50 disabled:opacity-40"
+                    />
+                  </label>
+                  <div className="mt-2 flex items-center justify-between gap-3">
+                    <a
+                      href="https://drive.google.com/drive/my-drive"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[9px] font-semibold text-[#718395] transition hover:text-[#9db5ca]"
+                    >
+                      Open Google Drive <ExternalLink size={10} />
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => void importSharedLink()}
+                      disabled={busy || !shareUrl.trim()}
+                      className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-white/[0.08] px-3 text-[10px] font-bold text-[#dce5ed] ring-1 ring-white/[0.1] transition hover:bg-white/[0.12] disabled:opacity-35"
+                    >
+                      {importing ? <LoaderCircle size={12} className="animate-spin" /> : <Link2 size={12} />}
+                      Import link
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>,
+          document.body
+        )
+      : null;
+
   return (
     <>
-      <Script
-        src="https://accounts.google.com/gsi/client"
-        strategy="afterInteractive"
-        onLoad={() => setGisReady(Boolean(window.google?.accounts?.oauth2))}
-        onReady={() => setGisReady(Boolean(window.google?.accounts?.oauth2))}
-        onError={() => setGisReady(false)}
-      />
-      <Script
-        src="https://apis.google.com/js/api.js"
-        strategy="afterInteractive"
-        onLoad={() => {
-          window.gapi?.load("picker", () => setPickerReady(Boolean(window.google?.picker)));
+      {config?.configured && (
+        <>
+          <Script
+            src="https://accounts.google.com/gsi/client"
+            strategy="afterInteractive"
+            onLoad={() => setGisReady(Boolean(window.google?.accounts?.oauth2))}
+            onReady={() => setGisReady(Boolean(window.google?.accounts?.oauth2))}
+            onError={() => setGisReady(false)}
+          />
+          <Script
+            src="https://apis.google.com/js/api.js"
+            strategy="afterInteractive"
+            onLoad={() => {
+              window.gapi?.load("picker", () => setPickerReady(Boolean(window.google?.picker)));
+            }}
+            onReady={() => {
+              window.gapi?.load("picker", () => setPickerReady(Boolean(window.google?.picker)));
+            }}
+            onError={() => setPickerReady(false)}
+          />
+        </>
+      )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={DRIVE_FILE_ACCEPT[kind]}
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          const files = event.target.files;
+          if (files?.length) {
+            void handleFiles(files, { silentAudioTip: kind === "audio" }).then((assets) => {
+              if (assets.length > 0) setLinkDialogOpen(false);
+            });
+          }
+          event.target.value = "";
         }}
-        onReady={() => {
-          window.gapi?.load("picker", () => setPickerReady(Boolean(window.google?.picker)));
-        }}
-        onError={() => setPickerReady(false)}
       />
       <button
         type="button"
@@ -372,21 +597,20 @@ export default function GoogleDriveButton({
         className={className}
         title={
           config?.configured === false
-            ? "Google Drive setup is required"
+            ? "Import from Google Drive without API keys"
             : "Choose video or audio from Google Drive"
         }
       >
         {busy ? (
           <>
             <LoaderCircle size={14} className="shrink-0 animate-spin" />
-            <span className="truncate">
-              {importing.index}/{importing.total} {importing.name}
-            </span>
+            <span className="truncate">{busyLabel}</span>
           </>
         ) : (
           children
         )}
       </button>
+      {linkDialog}
     </>
   );
 }

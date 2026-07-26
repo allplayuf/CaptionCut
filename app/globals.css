@@ -412,7 +412,7 @@ kbd {
   justify-content: center;
   border: 0;
   padding: 0;
-  color: transparent;
+  color: #556270;
   transition:
     color 120ms ease,
     background-color 120ms ease;
@@ -438,13 +438,17 @@ kbd {
 }
 
 .workspace-resizer-vertical {
-  width: 7px;
+  width: 11px;
   cursor: col-resize;
+  background: #090d12;
+  box-shadow:
+    inset 1px 0 rgba(255, 255, 255, 0.035),
+    inset -1px 0 rgba(255, 255, 255, 0.035);
 }
 
 .workspace-resizer-vertical::before {
-  width: 1px;
-  height: 34px;
+  width: 2px;
+  height: 48px;
 }
 
 .workspace-resizer-horizontal {
@@ -463,6 +467,20 @@ kbd {
 .is-resizing * {
   cursor: grabbing !important;
   user-select: none !important;
+}
+
+.is-resizing .workspace-sidebar {
+  transition: none !important;
+}
+
+.workspace-tool-panel {
+  container-type: inline-size;
+}
+
+@media (hover: none) {
+  .caption-row-actions {
+    opacity: 1 !important;
+  }
 }
 
 .start-grid {
@@ -595,6 +613,10 @@ kbd {
     overflow: hidden;
   }
 
+  .workspace-panel-sizebar {
+    display: none;
+  }
+
   .workspace-sidebar[data-collapsed="false"] .workspace-tool-panel {
     background: #0f151c;
   }
@@ -664,7 +686,8 @@ kbd {
   }
 
   .timeline-title,
-  .timeline-zoom-controls > :nth-child(-n + 3) {
+  .timeline-zoom-controls > button,
+  .timeline-zoom-slider {
     display: none;
   }
 
