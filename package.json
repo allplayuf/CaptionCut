@@ -1,12 +1,14 @@
 {
   "name": "captioncut",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run lint && npm run typecheck && npm run verify-browser-imports && npm run verify-boundaries && npm run verify-large-project",
     "verify-boundaries": "tsx scripts/verify-request-boundaries.ts",
     "verify-large-project": "tsx scripts/verify-large-project.ts",
     "verify-browser-imports": "tsx scripts/verify-browser-imports.ts",

@@ -302,12 +302,7 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
     <div className="video-preview flex h-full min-h-0 flex-col items-center bg-transparent">
       <div className="preview-meta flex h-8 w-full shrink-0 items-center justify-between px-1">
         <div className="flex items-center gap-2">
-          <span className="panel-eyebrow text-[#667482]">Förhandsvisning</span>
-          {hasContent && (
-            <span className="rounded-full bg-[var(--caption)]/[0.06] px-2 py-0.5 text-[8px] font-semibold text-[var(--caption)] ring-1 ring-[var(--caption)]/10">
-              Live
-            </span>
-          )}
+          <span className="panel-eyebrow text-[#667482]">Preview</span>
         </div>
         <div className="flex items-center gap-2 font-mono text-[8px] text-[#586571]">
           <span>{canvas.width}×{canvas.height}</span>
@@ -318,7 +313,7 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
       <div ref={wrapperRef} className="flex min-h-0 w-full flex-1 items-center justify-center">
         <div
           data-preview-frame
-          className="relative overflow-hidden rounded-[20px] bg-black shadow-[0_24px_70px_rgba(0,0,0,0.55)] ring-1 ring-white/[0.11]"
+          className="relative overflow-hidden rounded-[12px] bg-black shadow-[0_24px_70px_rgba(0,0,0,0.55)] ring-1 ring-white/[0.11]"
           style={{ width: frameWidth, height: frameHeight }}
         >
           {hasContent ? (
@@ -408,12 +403,12 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
             </>
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-[#05070a] px-4 text-center">
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[var(--cut)]/10 text-[var(--cut)]">
+              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[var(--cut)]/10 text-[var(--cut)]">
                 <Scissors size={14} />
               </div>
-              <p className="text-[11px] font-semibold text-[#b8c1cc]">Tidslinjen är tom</p>
+              <p className="text-[11px] font-semibold text-[#b8c1cc]">The timeline is empty</p>
               <p className="max-w-[180px] text-[9px] leading-relaxed text-[#596471]">
-                Välj en video i Bibliotek. Den anpassas automatiskt till {canvas.id}.
+                Choose a video in Media. It will fit the {canvas.id} frame.
               </p>
               {onOpenLibrary && (
                 <button
@@ -421,7 +416,7 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
                   onClick={onOpenLibrary}
                   className="whitespace-nowrap rounded-lg bg-[var(--cut)] px-3 py-1.5 text-[8px] font-extrabold text-[#1b140b] transition hover:bg-[#fac688]"
                 >
-                  Öppna bibliotek
+                  Open media
                 </button>
               )}
             </div>
@@ -439,13 +434,13 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
         onKeyDown={onScrubberKeyDown}
         role="slider"
         tabIndex={hasContent ? 0 : -1}
-        aria-label="Sök i videon"
+        aria-label="Seek video"
         aria-disabled={!hasContent}
         aria-valuemin={0}
         aria-valuemax={Math.max(0, duration)}
         aria-valuenow={Math.max(0, Math.min(duration, currentTime))}
-        aria-valuetext={`${formatTime(currentTime)} av ${formatTime(duration)}`}
-        title="Sök i videon"
+        aria-valuetext={`${formatTime(currentTime)} of ${formatTime(duration)}`}
+        title="Seek video"
       >
         <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-white/10 transition-all group-hover:h-2.5">
           <div
@@ -465,8 +460,8 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
           }}
           disabled={!hasContent}
           className="rounded-full p-2 text-zinc-400 transition hover:bg-white/10 hover:text-white disabled:opacity-30"
-          title="Till början"
-          aria-label="Till början"
+          title="Go to start"
+          aria-label="Go to start"
         >
           <SkipBack size={18} />
         </button>
@@ -475,23 +470,23 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
           onClick={togglePlay}
           disabled={!hasContent}
           className="flex h-11 w-11 items-center justify-center rounded-full bg-[#edf1f5] text-[#11151b] shadow-[0_8px_24px_rgba(0,0,0,0.32)] transition hover:scale-105 active:scale-95 disabled:opacity-30 disabled:hover:scale-100"
-          title="Spela/pausa (Mellanslag)"
-          aria-label={isPlaying ? "Pausa" : "Spela"}
+          title="Play/pause (Space)"
+          aria-label={isPlaying ? "Pause" : "Play"}
         >
           {isPlaying ? <Pause size={20} /> : <Play size={20} className="ml-0.5" />}
         </button>
         <div className="preview-time w-28 font-mono text-xs tabular-nums text-zinc-400">
           {formatTime(currentTime)} / {formatTime(duration)}
         </div>
-        <div className="preview-format flex items-center gap-0.5 rounded-full bg-white/[0.04] p-0.5 ring-1 ring-white/[0.08]" title="Videoformat">
+        <div className="preview-format flex items-center gap-0.5 rounded-md bg-white/[0.04] p-0.5 ring-1 ring-white/[0.08]" title="Video format">
           {FORMAT_IDS.map((id) => (
             <button
               key={id}
               type="button"
               onClick={() => setFormat(id)}
-              aria-label={`Videoformat ${id}`}
+              aria-label={`Video format ${id}`}
               aria-pressed={id === format}
-              className={`rounded-full px-2 py-1 text-[10px] font-semibold transition ${
+              className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
                 id === format
                   ? "bg-[#7db8ff]/18 text-[#afd3ff]"
                   : "text-zinc-500 hover:text-zinc-300"
@@ -506,15 +501,15 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
             type="button"
             onClick={toggleSafeZones}
             aria-pressed={showSafeZones}
-            className={`preview-safe-zones flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+            className={`preview-safe-zones flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition ${
               showSafeZones
                 ? "bg-[#7db8ff]/15 text-[#9bcaff]"
                 : "text-zinc-500 hover:bg-white/10 hover:text-zinc-300"
             }`}
-            title="Visa eller dölj TikTok-säkerhetsytor"
+            title="Show or hide TikTok safe areas"
           >
             {showSafeZones ? <Eye size={14} /> : <EyeOff size={14} />}
-            Säker yta
+            Safe areas
           </button>
         )}
         <button
@@ -522,8 +517,8 @@ export default function VideoPreview({ onOpenLibrary }: { onOpenLibrary?: () => 
           onClick={toggleFullscreen}
           disabled={!hasContent}
           className="rounded-full p-2 text-zinc-400 transition hover:bg-white/10 hover:text-white disabled:opacity-30"
-          title={isFullscreen ? "Stäng helskärm" : "Visa i helskärm"}
-          aria-label={isFullscreen ? "Stäng helskärm" : "Visa i helskärm"}
+          title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+          aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
         >
           {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
         </button>

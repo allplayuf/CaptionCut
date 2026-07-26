@@ -24,7 +24,7 @@ export default function Toasts() {
           key={toast.id}
           role={toast.kind === "error" ? "alert" : "status"}
           aria-atomic="true"
-          className="pointer-events-auto flex items-start gap-2 rounded-xl border border-white/10 bg-[#1a1a24]/95 px-3 py-2.5 shadow-xl shadow-black/40 backdrop-blur"
+          className="pointer-events-auto flex items-start gap-2 rounded-lg border border-white/10 bg-[#17191e]/95 px-3 py-2.5 shadow-xl shadow-black/40 backdrop-blur"
         >
           <span className="mt-0.5 shrink-0">{ICONS[toast.kind]}</span>
           <p className="flex-1 text-xs leading-snug text-zinc-200">{toast.message}</p>
@@ -32,7 +32,7 @@ export default function Toasts() {
             type="button"
             onClick={() => dismissToast(toast.id)}
             className="shrink-0 rounded p-0.5 text-zinc-500 transition hover:text-zinc-300"
-            aria-label="Stäng meddelandet"
+            aria-label="Dismiss message"
           >
             <X size={13} />
           </button>

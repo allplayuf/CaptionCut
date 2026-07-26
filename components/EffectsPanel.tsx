@@ -11,7 +11,6 @@ import {
   Snowflake,
   Sparkles,
   Sun,
-  WandSparkles,
   Zap,
   ZoomIn,
 } from "lucide-react";
@@ -31,7 +30,7 @@ const EFFECTS: EffectChoice[] = [
   {
     id: "punch",
     title: "Punch-in",
-    description: "Ett snabbt, kontrollerat klipp-in för viktiga ord och reaktioner.",
+    description: "A quick, controlled push for key words and reactions.",
     duration: 0.7,
     icon: ZoomIn,
     tone: "from-[#78aef8]/25 to-[#78aef8]/5 text-[#9bc4ff]",
@@ -42,12 +41,12 @@ const EFFECTS: EffectChoice[] = [
       anchorY: 0.42,
       easing: "snappy",
     },
-    badge: "Tal",
+    badge: "Speech",
   },
   {
     id: "drift",
-    title: "Mjuk rörelse",
-    description: "En diskret filmisk zoom som ger stilla material mer liv.",
+    title: "Slow drift",
+    description: "A subtle cinematic push that adds life to a static frame.",
     duration: 3.2,
     icon: Focus,
     tone: "from-[#63d9c6]/25 to-[#63d9c6]/5 text-[#8ce7d8]",
@@ -58,22 +57,22 @@ const EFFECTS: EffectChoice[] = [
       anchorY: 0.44,
       easing: "smooth",
     },
-    badge: "Filmisk",
+    badge: "Cinematic",
   },
   {
     id: "handheld",
-    title: "Handhållen",
-    description: "Organisk kamerarörelse med mjuk in- och utfasning.",
+    title: "Handheld",
+    description: "Organic camera movement with a smooth entrance and exit.",
     duration: 0.8,
     icon: Move,
     tone: "from-[#c49af6]/25 to-[#c49af6]/5 text-[#d4b6ff]",
     effect: { kind: "shake", intensity: 0.32, easing: "smooth" },
-    badge: "Energi",
+    badge: "Energy",
   },
   {
     id: "vignette",
     title: "Cinematic focus",
-    description: "Subtil kantmörkning och färgdjup som leder blicken mot motivet.",
+    description: "Subtle edge falloff and color depth that keep focus on the subject.",
     duration: "remaining",
     icon: Aperture,
     tone: "from-[#f5b86b]/22 to-[#f5b86b]/5 text-[#ffd090]",
@@ -82,7 +81,7 @@ const EFFECTS: EffectChoice[] = [
   {
     id: "impact",
     title: "Impact",
-    description: "Punch, organisk shake och kort ljusimpuls i ett balanserat paket.",
+    description: "Punch, organic shake, and a short light pulse in one balanced effect.",
     duration: 0.72,
     icon: Zap,
     tone: "from-[#f08ca0]/25 to-[#f08ca0]/5 text-[#ffadba]",
@@ -99,7 +98,7 @@ const EFFECTS: EffectChoice[] = [
   {
     id: "freeze",
     title: "Freeze",
-    description: "Håll exakt bildruta medan musik, text och tidslinje fortsätter.",
+    description: "Hold one frame while music, captions, and the timeline continue.",
     duration: 1.2,
     icon: Snowflake,
     tone: "from-[#a9d8ff]/20 to-[#a9d8ff]/5 text-[#c6e5ff]",
@@ -108,7 +107,7 @@ const EFFECTS: EffectChoice[] = [
   {
     id: "flash",
     title: "Soft flash",
-    description: "Kort ljuspuls med snabb attack och mjuk decay, utan helvit smäll.",
+    description: "A brief light pulse with a quick attack and soft decay.",
     duration: 0.24,
     icon: Sun,
     tone: "from-white/20 to-white/[0.03] text-white",
@@ -131,7 +130,7 @@ export default function EffectsPanel() {
 
   const apply = (choice: EffectChoice) => {
     if (!hasVideo) {
-      addToast("info", "Lägg först en video på tidslinjen.");
+      addToast("info", "Add a video to the timeline first.");
       return;
     }
     const start = Math.min(currentTime, Math.max(0, duration - 0.08));
@@ -143,7 +142,7 @@ export default function EffectsPanel() {
     addEffectClip(start, effectDuration, choice.effect);
     addToast(
       "success",
-      `${choice.title} lades vid ${formatTime(start)}. Dra blockets kanter för att ändra längden.`
+      `${choice.title} added at ${formatTime(start)}. Drag the block edges to change its length.`
     );
   };
 
@@ -151,9 +150,9 @@ export default function EffectsPanel() {
     <div className="h-full overflow-y-auto bg-[var(--panel)] p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="panel-eyebrow text-[#c5a4ff]">Effekter</p>
+          <p className="panel-eyebrow text-[#c5a4ff]">Effects</p>
           <h2 className="mt-1 text-[18px] font-semibold tracking-[-0.025em] text-[var(--text)]">
-            Rörelse med kontroll
+            Motion with control
           </h2>
         </div>
         <span
@@ -163,23 +162,22 @@ export default function EffectsPanel() {
               : "bg-white/[0.035] text-[#667280] ring-white/[0.07]"
           }`}
         >
-          {activeCount ? `${activeCount} aktiv` : formatTime(currentTime)}
+          {activeCount ? `${activeCount} active` : formatTime(currentTime)}
         </span>
       </div>
       <p className="mt-2 text-[10px] leading-relaxed text-[var(--muted)]">
-        Effekten börjar vid spelhuvudet. Resultatet visas i förhandsvisningen och renderas med samma
-        rörelse i exporten.
+        Effects start at the playhead and render exactly as previewed.
       </p>
 
-      <section className="mt-4 rounded-2xl bg-[#0a0e13] p-3 ring-1 ring-white/[0.07]">
+      <section className="mt-4 rounded-lg bg-[#0a0e13] p-3 ring-1 ring-white/[0.07]">
         <div className="flex items-center gap-2">
           <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[linear-gradient(135deg,#78aef833,#63d9c61a)] text-[#9bc4ff]">
-            <WandSparkles size={14} />
+            <Aperture size={14} />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-semibold text-[#dce3ea]">Färdiga kombinationer</p>
+            <p className="text-[10px] font-semibold text-[#dce3ea]">Effect stacks</p>
             <p className="mt-0.5 text-[8px] leading-relaxed text-[#64717e]">
-              Byggda för tydlig rytm utan överdrivna standardeffekter.
+              Balanced combinations for emphasis and pacing.
             </p>
           </div>
         </div>
@@ -203,7 +201,7 @@ export default function EffectsPanel() {
       </section>
 
       <div className="mt-4">
-        <p className="panel-eyebrow text-[#677482]">Enskilda effekter</p>
+        <p className="panel-eyebrow text-[#677482]">Single effects</p>
         <div className="mt-2 space-y-2">
           {EFFECTS.map((choice) => {
             const Icon = choice.icon;
@@ -216,7 +214,7 @@ export default function EffectsPanel() {
                 className="effect-card group"
               >
                 <span
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] bg-gradient-to-br ${choice.tone} ring-1 ring-white/[0.07]`}
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${choice.tone} ring-1 ring-white/[0.07]`}
                 >
                   <Icon size={16} />
                 </span>
@@ -240,17 +238,6 @@ export default function EffectsPanel() {
             );
           })}
         </div>
-      </div>
-
-      <div className="mt-4 rounded-xl border border-[var(--caption)]/10 bg-[var(--caption)]/[0.035] p-3">
-        <p className="flex items-center gap-1.5 text-[9px] font-semibold text-[var(--caption)]">
-          <Sparkles size={10} /> Så blir effekterna rena
-        </p>
-        <ul className="mt-2 space-y-1 text-[8px] leading-relaxed text-[#71808d]">
-          <li>• Mjuk in- och utfasning hindrar shake från att “hoppa”.</li>
-          <li>• Zoomar använder motivnära ankare och begränsad förstoring.</li>
-          <li>• Samma timing och amplitud används i preview och export.</li>
-        </ul>
       </div>
     </div>
   );

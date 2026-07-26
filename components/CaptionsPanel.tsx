@@ -7,18 +7,18 @@ import { tracksDuration } from "@/lib/timeline/tracks";
 import { useTranscription } from "@/hooks/useTranscription";
 import {
   AlertTriangle,
+  Captions as CaptionsIcon,
   ChevronDown,
   ChevronsLeft,
   ChevronsRight,
+  Eraser,
   Merge,
   Plus,
   Replace,
   Scissors,
   Settings2,
   ShieldCheck,
-  Sparkles,
   Trash2,
-  Wand2,
 } from "lucide-react";
 
 /** Right panel, Captions tab: auto-caption trigger + line-by-line editor + tools. */
@@ -74,15 +74,15 @@ export default function CaptionsPanel() {
   };
 
   return (
-    <div className="flex h-full flex-col bg-[#10141b]">
+    <div className="flex h-full flex-col bg-[#101216]">
       <div className="max-h-[72%] shrink-0 overflow-y-auto border-b border-white/[0.07]">
         <div className="flex min-h-14 items-center gap-3 px-3 py-2.5">
           <div className="min-w-0 flex-1">
             <p className="panel-eyebrow text-[var(--caption)]">Captions</p>
             <p className="mt-0.5 truncate text-[10px] text-[#778391]">
               {captions.length > 0
-                ? `${captions.length} rader · klicka direkt i texten för att redigera`
-                : "Skapa privat textning direkt i webbläsaren"}
+                ? `${captions.length} ${captions.length === 1 ? "line" : "lines"} · edit text directly`
+                : "Create captions on this device"}
             </p>
           </div>
           {captions.length > 0 && (
@@ -93,7 +93,7 @@ export default function CaptionsPanel() {
               className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-white/[0.04] px-2.5 text-[9px] font-semibold text-[#9aa5b1] ring-1 ring-white/[0.08] transition hover:bg-white/[0.07] hover:text-[#e1e6eb]"
             >
               <Settings2 size={12} />
-              Inställningar
+              Settings
               <ChevronDown
                 size={12}
                 className={`transition-transform ${setupExpanded ? "rotate-180" : ""}`}
@@ -104,11 +104,10 @@ export default function CaptionsPanel() {
 
         {showSetup && (
           <div className="border-t border-white/[0.06] px-3 pb-3 pt-2.5">
-            <div className="mb-2.5 flex items-start gap-2 rounded-xl bg-[var(--caption)]/[0.055] p-2.5 ring-1 ring-[var(--caption)]/10">
+            <div className="mb-2.5 flex items-start gap-2 rounded-lg bg-[var(--caption)]/[0.055] p-2.5 ring-1 ring-[var(--caption)]/10">
               <ShieldCheck size={14} className="mt-0.5 shrink-0 text-[var(--caption)]" />
               <p className="text-[9px] leading-relaxed text-[#809087]">
-                Videon lämnar aldrig enheten. Modellen sparas i webbläsaren efter första
-                nedladdningen.
+                Audio stays on this device. The caption model is cached after the first download.
               </p>
             </div>
             <div className="mb-2 grid grid-cols-2 gap-1.5 rounded-xl bg-black/20 p-1.5 ring-1 ring-white/[0.07]">
@@ -118,18 +117,18 @@ export default function CaptionsPanel() {
                 className="h-8 min-w-0 rounded-lg border-0 bg-white/[0.05] px-2 text-[10px] font-semibold text-zinc-200 outline-none ring-1 ring-white/[0.07] focus:ring-[var(--caption)]/40"
                 title="Spoken language"
               >
-                <option value="auto">Upptäck språk</option>
+                <option value="auto">Detect language</option>
                 <option value="en">English</option>
-                <option value="sv">Svenska</option>
+                <option value="sv">Swedish</option>
               </select>
               <select
                 value={quality}
                 onChange={(e) => setQuality(e.target.value as typeof quality)}
                 className="h-8 min-w-0 rounded-lg border-0 bg-white/[0.05] px-2 text-[10px] font-semibold text-zinc-200 outline-none ring-1 ring-white/[0.07] focus:ring-[var(--caption)]/40"
-                title="Välj en snabb eller noggrann lokal Whisper-modell"
+                title="Choose caption speed and accuracy"
               >
-                <option value="fast">Snabb · ~75 MB</option>
-                <option value="accurate">Noggrann · ~150 MB</option>
+                <option value="fast">Fast · ~75 MB</option>
+                <option value="accurate">Accurate · ~150 MB</option>
               </select>
             </div>
             <select
@@ -138,25 +137,25 @@ export default function CaptionsPanel() {
               className="mb-2 h-9 w-full rounded-xl border-0 bg-white/[0.045] px-3 text-[10px] font-semibold text-zinc-200 outline-none ring-1 ring-white/[0.07] focus:ring-[var(--caption)]/40"
               title="Caption the whole timeline or only selected clips on the main video track"
             >
-              <option value="timeline">Hela tidslinjen</option>
+              <option value="timeline">Entire timeline</option>
               <option value="selected" disabled={selectedMainClipCount === 0}>
-                Valda huvudklipp ({selectedMainClipCount})
+                Selected main clips ({selectedMainClipCount})
               </option>
             </select>
             <button
               onClick={() => void runTranscription()}
               disabled={isTranscribing || !canTranscribe}
-              className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#9ce5c3] px-4 text-[12px] font-extrabold text-[#0e1a15] shadow-[0_10px_28px_rgba(156,229,195,0.13)] transition hover:bg-[#b9f0d7] active:translate-y-px disabled:opacity-40"
+              className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#9ce5c3] px-4 text-[12px] font-extrabold text-[#0e1a15] transition hover:bg-[#b9f0d7] active:translate-y-px disabled:opacity-40"
             >
               {isTranscribing ? (
                 <>
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                  {progress?.stage === "model" ? "Laddar lokal modell…" : "Skapar captions…"}
+                  {progress?.stage === "model" ? "Loading caption model…" : "Creating captions…"}
                 </>
               ) : (
                 <>
-                  <Sparkles size={16} />
-                  {scope === "selected" ? "Texta valda klipp lokalt" : "Skapa captions lokalt"}
+                  <CaptionsIcon size={16} />
+                  {scope === "selected" ? "Caption selected clips" : "Create captions"}
                 </>
               )}
             </button>
@@ -166,17 +165,17 @@ export default function CaptionsPanel() {
               </p>
             )}
             {isTranscribing && (
-              <div className="mt-2.5 rounded-xl bg-black/20 p-2.5 ring-1 ring-white/[0.07]">
+              <div className="mt-2.5 rounded-lg bg-black/20 p-2.5 ring-1 ring-white/[0.07]">
                 <div className="flex items-center justify-between gap-2 text-[9px]">
                   <span className="truncate text-[#9aa6b2]">
-                    {progress?.detail ?? "Arbetar på den här enheten"}
+                    {progress?.detail ?? "Working on this device"}
                   </span>
                   <span className="shrink-0 font-mono text-[var(--caption)]">
                     {progress?.stage === "model" && progress.progress > 0
                       ? `${Math.round(progress.progress * 100)}%`
                       : progress?.device === "webgpu"
                         ? "GPU"
-                        : "LOKALT"}
+                        : "LOCAL"}
                   </span>
                 </div>
                 <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.07]">
@@ -193,7 +192,7 @@ export default function CaptionsPanel() {
                 </div>
                 {duration > 180 && (
                   <p className="mt-2 text-[9px] leading-relaxed text-[#687480]">
-                    Långa videor kan ta några minuter. Du kan fortsätta arbeta under tiden.
+                    Long videos can take a few minutes. You can keep editing.
                   </p>
                 )}
               </div>
@@ -207,7 +206,7 @@ export default function CaptionsPanel() {
         <div className="border-b border-white/8 px-2 py-1.5">
           <div className="flex items-center gap-0.5">
             <ToolIcon title="Clean captions: fix punctuation, strip ums/uhs, bold key words" onClick={cleanAllCaptions}>
-              <Wand2 size={13} />
+              <Eraser size={13} />
             </ToolIcon>
             <ToolIcon title="Shift all captions 0.1s earlier" onClick={() => shiftAllCaptions(-0.1)}>
               <ChevronsLeft size={13} />
@@ -273,10 +272,10 @@ export default function CaptionsPanel() {
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {captions.length === 0 ? (
           <div className="px-4 py-8 text-center text-xs leading-relaxed text-zinc-600">
-            Inga captions ännu.
+            No captions yet.
             <br />
-            Tryck <span className="font-semibold text-zinc-400">Skapa captions lokalt</span> så
-            textas videon privat på den här enheten.
+            Choose <span className="font-semibold text-zinc-400">Create captions</span> to
+            transcribe the timeline on this device.
           </div>
         ) : visibleCaptions.length === 0 ? (
           <div className="px-4 py-8 text-center text-xs leading-relaxed text-zinc-600">
@@ -367,7 +366,7 @@ function CaptionRow({
   return (
     <div
       ref={rowRef}
-      className={`group rounded-xl p-2.5 ring-1 transition ${
+      className={`group rounded-lg p-2.5 ring-1 transition ${
         active
           ? "bg-[var(--caption)]/10 ring-[var(--caption)]/40"
           : selected

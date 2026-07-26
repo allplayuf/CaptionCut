@@ -24,21 +24,21 @@ export default function EditorError({
           <AlertTriangle size={21} />
         </span>
         <h1 className="mt-5 text-xl font-semibold tracking-[-0.035em]">
-          Editorn stannade oväntat
+          The editor stopped unexpectedly
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-[#82909c]">
-          Projektet är fortfarande sparat. Försök öppna arbetsytan igen.
+          Your saved project is safe. Reopen the workspace to continue.
         </p>
         <button
           type="button"
           onClick={unstable_retry}
           className="primary-compact mt-6 h-11 w-full text-xs"
         >
-          <RefreshCw size={14} /> Öppna editorn igen
+          <RefreshCw size={14} /> Reopen editor
         </button>
         {error.digest && (
           <p className="mt-4 font-mono text-[9px] text-[#53606c]">
-            Felkod {error.digest}
+            Error code {error.digest}
           </p>
         )}
       </section>

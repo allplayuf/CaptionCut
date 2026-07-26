@@ -13,6 +13,7 @@ import {
   AlertCircle,
   Check,
   ChevronDown,
+  Clapperboard,
   Cloud,
   CloudUpload,
   Film,
@@ -27,7 +28,6 @@ import {
   Pencil,
   Plus,
   Search,
-  Sparkles,
   Trash2,
   Upload,
   X,
@@ -74,14 +74,14 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
   );
 
   const visible = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase("sv-SE");
+    const normalized = query.trim().toLocaleLowerCase("en-US");
     return media.filter((asset) => {
       if (kindFilter !== "all" && assetKind(asset) !== kindFilter) return false;
       if (folderFilter === "unfiled" && asset.folderId) return false;
       if (folderFilter !== "all" && folderFilter !== "unfiled" && asset.folderId !== folderFilter) {
         return false;
       }
-      return !normalized || asset.originalName.toLocaleLowerCase("sv-SE").includes(normalized);
+      return !normalized || asset.originalName.toLocaleLowerCase("en-US").includes(normalized);
     });
   }, [media, query, kindFilter, folderFilter]);
 
@@ -105,7 +105,7 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
 
   const addSelectionToTimeline = (openSmart: boolean) => {
     if (selectedVideos.length === 0) {
-      addToast("info", "Markera minst en video för att bygga en sekvens.");
+      addToast("info", "Select at least one video.");
       return;
     }
     addMediaBatchToTimeline(selectedVideos.map((asset) => asset.id));
@@ -141,16 +141,16 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
       <div className="border-b border-white/[0.07] px-4 pb-3 pt-4">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="panel-eyebrow text-[var(--timeline)]">Bibliotek</p>
+            <p className="panel-eyebrow text-[var(--timeline)]">Media</p>
             <h2 className="mt-1 text-[18px] font-semibold tracking-[-0.025em] text-[var(--text)]">
-              Allt ditt material
+              Source library
             </h2>
             <p className="mt-1 text-[10px] leading-relaxed text-[var(--muted)]">
-              Filer öppnas direkt från enheten och synkas tryggt i bakgrunden.
+              Import, organize, and add clips to the timeline.
             </p>
           </div>
           <span className="rounded-full bg-white/[0.045] px-2 py-1 font-mono text-[9px] text-[#7d8997] ring-1 ring-white/[0.07]">
-            {media.length} filer
+            {media.length} {media.length === 1 ? "file" : "files"}
           </span>
         </div>
 
@@ -160,7 +160,7 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
             onClick={() => inputRef.current?.click()}
             className="primary-compact"
           >
-            <Upload size={12} /> Importera
+            <Upload size={12} /> Import
           </button>
           <GoogleDriveButton className="secondary-compact">
             <Cloud size={12} className="text-[var(--timeline)]" /> Drive
@@ -168,10 +168,10 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
         </div>
 
         {uploading && (
-          <div className="mt-2 rounded-xl bg-[#080c11] p-2.5 ring-1 ring-white/[0.08]">
+          <div className="mt-2 rounded-lg bg-[#080c11] p-2.5 ring-1 ring-white/[0.08]">
             <div className="flex items-center justify-between gap-2 text-[9px]">
               <span className="truncate text-[#aab5c1]">
-                Redan användbar · synkar {uploading.index}/{uploading.total} · {uploading.name}
+                Ready to edit · syncing {uploading.index}/{uploading.total} · {uploading.name}
               </span>
               <span className="font-mono text-[var(--cut)]">
                 {Math.round(uploading.progress * 100)}%
@@ -197,7 +197,7 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Sök namn…"
+              placeholder="Search files…"
               className="h-8 w-full rounded-lg border-0 bg-[#080c11] pl-8 pr-7 text-[10px] text-[#dbe2e8] outline-none ring-1 ring-white/[0.08] placeholder:text-[#515c69] focus:ring-[var(--timeline)]/45"
             />
             {query && (
@@ -205,17 +205,17 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
                 type="button"
                 onClick={() => setQuery("")}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-[#65717f] hover:text-white"
-                aria-label="Rensa sökning"
+                aria-label="Clear search"
               >
                 <X size={11} />
               </button>
             )}
           </label>
           <KindMenu value={kindFilter} onChange={setKindFilter} />
-          <ViewButton active={view === "grid"} label="Rutnät" onClick={() => setView("grid")}>
+          <ViewButton active={view === "grid"} label="Grid view" onClick={() => setView("grid")}>
             <Grid2X2 size={13} />
           </ViewButton>
-          <ViewButton active={view === "list"} label="Lista" onClick={() => setView("list")}>
+          <ViewButton active={view === "list"} label="List view" onClick={() => setView("list")}>
             <List size={14} />
           </ViewButton>
         </div>
@@ -225,7 +225,7 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
         <aside className="library-folders flex gap-1 overflow-x-auto border-b border-white/[0.07] bg-[#0b0f14] px-2 py-2">
           <FolderButton
             active={folderFilter === "all"}
-            label="Alla filer"
+            label="All files"
             count={media.length}
             icon={<FolderOpen size={12} />}
             onClick={() => setFolderFilter("all")}
@@ -233,7 +233,7 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
           />
           <FolderButton
             active={folderFilter === "unfiled"}
-            label="Osorterat"
+            label="Unfiled"
             count={media.filter((asset) => !asset.folderId).length}
             icon={<FolderInput size={12} />}
             onClick={() => setFolderFilter("unfiled")}
@@ -264,7 +264,7 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
                 value={newFolderName}
                 onChange={(event) => setNewFolderName(event.target.value)}
                 onBlur={() => !newFolderName.trim() && setCreatingFolder(false)}
-                placeholder="Namn"
+                placeholder="Folder name"
                 className="h-7 w-full rounded-md bg-white/[0.06] px-2 text-[9px] text-white outline-none ring-1 ring-[var(--timeline)]/40"
               />
             </form>
@@ -274,7 +274,7 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
               onClick={() => setCreatingFolder(true)}
               className="flex min-w-max items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-[9px] font-semibold text-[#667380] transition hover:bg-white/[0.04] hover:text-[#aab6c2]"
             >
-              <Plus size={11} /> Ny mapp
+              <Plus size={11} /> New folder
             </button>
           )}
         </aside>
@@ -329,7 +329,7 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
                 type="button"
                 onClick={() => setRenamingFolder(true)}
                 className="icon-button"
-                title="Byt namn"
+                title="Rename folder"
               >
                 <Pencil size={10} />
               </button>
@@ -340,7 +340,7 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
                   setFolderFilter("all");
                 }}
                 className="icon-button hover:!text-red-300"
-                title="Ta bort mappen; filerna blir osorterade"
+                title="Delete folder; files become unfiled"
               >
                 <Trash2 size={10} />
               </button>
@@ -393,7 +393,7 @@ export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void
           onClear={() => setSelectedIds([])}
           onMove={(folderId) => {
             moveMediaToFolder(selectedIds, folderId);
-            addToast("success", `${selectedIds.length} filer flyttades.`);
+            addToast("success", `${selectedIds.length} ${selectedIds.length === 1 ? "file" : "files"} moved.`);
           }}
           onTimeline={() => addSelectionToTimeline(false)}
           onSmart={() => addSelectionToTimeline(true)}
@@ -484,7 +484,7 @@ function AssetCard({
         type="button"
         onClick={onSelect}
         className={`${compact ? "h-11 w-[72px]" : "aspect-video w-full"} relative shrink-0 overflow-hidden rounded-lg bg-[#080b10]`}
-        aria-label={`${selected ? "Avmarkera" : "Markera"} ${asset.originalName}`}
+        aria-label={`${selected ? "Deselect" : "Select"} ${asset.originalName}`}
       >
         <AssetThumb asset={asset} />
         <span
@@ -498,7 +498,7 @@ function AssetCard({
         </span>
         {onTimeline && (
           <span className="absolute bottom-1.5 left-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-wide text-[var(--caption)]">
-            på tidslinjen
+            on timeline
           </span>
         )}
       </button>
@@ -509,12 +509,12 @@ function AssetCard({
         </p>
         <div className="mt-1 flex items-center gap-1 text-[8px] text-[#667381]">
           <KindIcon kind={kind} />
-          <span>{kind === "video" ? "Video" : kind === "audio" ? "Ljud" : "Bild"}</span>
+          <span>{kind === "video" ? "Video" : kind === "audio" ? "Audio" : "Image"}</span>
           {kind !== "image" && <><span>·</span><span className="font-mono">{formatTime(asset.duration)}</span></>}
           {asset.uploadState === "uploading" && (
             <span
               className="ml-auto inline-flex items-center gap-1 text-[var(--cut)]"
-              title="Filen fungerar redan i den här fliken och synkas till molnet i bakgrunden"
+              title="This file is ready to edit while its cloud copy syncs"
             >
               <CloudUpload size={9} className="animate-pulse" />
               {Math.round((asset.uploadProgress ?? 0) * 100)}%
@@ -523,20 +523,20 @@ function AssetCard({
           {asset.uploadState === "error" && (
             <span
               className="ml-auto inline-flex items-center gap-1 text-rose-300"
-              title={asset.uploadError ?? "Molnsynk misslyckades"}
+              title={asset.uploadError ?? "Cloud sync failed"}
             >
-              <AlertCircle size={9} /> endast lokalt
+              <AlertCircle size={9} /> local only
             </span>
           )}
-          {analyzing && <span className="ml-auto animate-pulse text-[var(--timeline)]">analyserar</span>}
+          {analyzing && <span className="ml-auto animate-pulse text-[var(--timeline)]">analyzing</span>}
         </div>
         <div className="mt-1.5 flex items-center gap-1 opacity-70 transition group-hover:opacity-100 group-focus-within:opacity-100">
           <button type="button" onClick={onAdd} className="asset-action">
-            <Plus size={9} /> {kind === "video" ? "Sekvens" : kind === "audio" ? "Musik" : "Lager"}
+            <Plus size={9} /> {kind === "video" ? "Sequence" : kind === "audio" ? "Music" : "Layer"}
           </button>
           {onPair && (
             <button type="button" onClick={onPair} className="asset-action">
-              <Link2 size={9} /> Synka
+              <Link2 size={9} /> Sync
             </button>
           )}
         </div>
@@ -603,12 +603,12 @@ function KindMenu({
         value={value}
         onChange={(event) => onChange(event.target.value as KindFilter)}
         className="h-8 appearance-none rounded-lg border-0 bg-[#080c11] pl-2.5 pr-6 text-[9px] font-semibold text-[#8995a2] outline-none ring-1 ring-white/[0.08] focus:ring-[var(--timeline)]/40"
-        aria-label="Filtrera filtyp"
+        aria-label="Filter file type"
       >
-        <option value="all">Alla</option>
+        <option value="all">All</option>
         <option value="video">Video</option>
-        <option value="audio">Ljud</option>
-        <option value="image">Bild</option>
+        <option value="audio">Audio</option>
+        <option value="image">Image</option>
       </select>
       <ChevronDown
         size={10}
@@ -668,10 +668,10 @@ function SelectionBar({
           {selected.length}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[9px] font-semibold text-[#d6dee5]">markerade filer</p>
-          <p className="text-[8px] text-[#667381]">{videoCount} kan läggas på huvudspåret</p>
+          <p className="text-[9px] font-semibold text-[#d6dee5]">selected files</p>
+          <p className="text-[8px] text-[#667381]">{videoCount} ready for the main track</p>
         </div>
-        <button type="button" onClick={onClear} className="icon-button" aria-label="Avmarkera alla">
+        <button type="button" onClick={onClear} className="icon-button" aria-label="Clear selection">
           <X size={11} />
         </button>
       </div>
@@ -685,10 +685,10 @@ function SelectionBar({
               event.target.value = "";
             }}
             className="secondary-compact h-8 w-full appearance-none pr-6"
-            aria-label="Flytta markerade filer"
+            aria-label="Move selected files"
           >
-            <option value="" disabled>Flytta till…</option>
-            <option value="__root">Osorterat</option>
+            <option value="" disabled>Move to…</option>
+            <option value="__root">Unfiled</option>
             {folders.map((folder) => (
               <option key={folder.id} value={folder.id}>{folder.name}</option>
             ))}
@@ -699,7 +699,7 @@ function SelectionBar({
           />
         </label>
         <button type="button" onClick={onTimeline} disabled={videoCount === 0} className="secondary-compact h-8 disabled:opacity-35">
-          <Plus size={11} /> Tidslinje
+          <Plus size={11} /> Timeline
         </button>
       </div>
       <button
@@ -708,7 +708,7 @@ function SelectionBar({
         disabled={videoCount === 0}
         className="mt-1.5 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-[linear-gradient(100deg,var(--timeline),var(--caption))] text-[10px] font-extrabold text-[#071017] transition hover:brightness-110 disabled:opacity-35"
       >
-        <Sparkles size={12} /> Bygg smart sekvens
+        <Clapperboard size={12} /> Build first cut
       </button>
     </div>
   );
@@ -724,21 +724,21 @@ function LibraryEmpty({
   folderName?: string;
 }) {
   return (
-    <div className="flex min-h-44 flex-col items-center justify-center rounded-2xl border border-dashed border-white/[0.09] px-5 text-center">
-      <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/[0.04] text-[#667482] ring-1 ring-white/[0.07]">
+    <div className="flex min-h-44 flex-col items-center justify-center rounded-lg border border-dashed border-white/[0.09] px-5 text-center">
+      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/[0.04] text-[#667482] ring-1 ring-white/[0.07]">
         {hasMedia ? <Search size={16} /> : <FolderOpen size={16} />}
       </div>
       <p className="mt-3 text-[11px] font-semibold text-[#aeb9c4]">
-        {hasMedia ? `Inget i ${folderName ?? "den här vyn"}` : "Biblioteket är tomt"}
+        {hasMedia ? `Nothing in ${folderName ?? "this view"}` : "Your library is empty"}
       </p>
       <p className="mt-1 max-w-44 text-[9px] leading-relaxed text-[#5c6875]">
         {hasMedia
-          ? "Byt mapp eller filter. Du kan dra filer direkt till en mapp."
-          : "Importera video, ljud och bilder. Flera videor kan bli en enda sekvens."}
+          ? "Change the folder or filter. You can drag files into any folder."
+          : "Import video, audio, or images to begin."}
       </p>
       {!hasMedia && (
         <button type="button" onClick={onImport} className="secondary-compact mt-3 px-3">
-          <Upload size={11} /> Välj filer
+          <Upload size={11} /> Choose files
         </button>
       )}
     </div>

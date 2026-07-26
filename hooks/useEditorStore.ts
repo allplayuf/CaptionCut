@@ -568,7 +568,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     resetToAutoEdit: () => {
       const version = get().versions.find((v) => v.kind === "auto-edit");
       if (!version) {
-        get().addToast("info", "No auto edit to reset to — run Create montage or Auto Edit first.");
+        get().addToast("info", "No first cut to restore yet.");
         return;
       }
       get().restoreVersion(version.id);
@@ -606,7 +606,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
 
     createMediaFolder: (name) => {
       const id = nanoid(8);
-      const cleanName = name.trim() || "Ny mapp";
+      const cleanName = name.trim() || "New folder";
       const colors = ["#63d9c6", "#78aef8", "#f5b86b", "#c49af6", "#f08ca0", "#9ed47a"];
       set((s) => ({
         mediaFolders: [
@@ -676,7 +676,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       if (added > 0) {
         get().addToast(
           "success",
-          `${added} ${added === 1 ? "klipp lades" : "klipp lades"} i en sammanhängande sekvens.`
+          `${added} ${added === 1 ? "clip" : "clips"} added as one sequence.`
         );
       }
     },
@@ -1702,12 +1702,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
     applyEditRecipe: (recipe) => {
       // Restore points around every auto edit: "pre-auto-edit" preserves the
       // raw timeline, "auto-edit" (saved below) powers "Reset to auto edit".
-      get().saveVersion("Before auto edit", "pre-auto-edit");
+      get().saveVersion("Before first cut", "pre-auto-edit");
       let applied = false;
       commit((s) => {
         const result = applyEditRecipeToTimeline(s.tracks, s.captions, recipe);
         if (!result) {
-          get().addToast("error", "Auto edit produced an empty timeline — skipped.");
+          get().addToast("error", "First cut found no usable timeline changes.");
           return {};
         }
         applied = true;
@@ -1730,7 +1730,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         };
       });
       if (!applied) return;
-      get().saveVersion(`Auto edit — ${recipe.style}`, "auto-edit");
+      get().saveVersion(`First cut — ${recipe.style}`, "auto-edit");
       get().addToast("success", recipe.reasoningSummary);
     },
 

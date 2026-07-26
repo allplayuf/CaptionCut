@@ -48,8 +48,6 @@ import {
   Music,
   RefreshCw,
   Scissors,
-  Sparkles,
-  Wand2,
   X,
   Zap,
 } from "lucide-react";
@@ -224,10 +222,10 @@ export default function AIPanel() {
         !(asset.id in s.analyses)
     );
     if (missing.length > 0) {
-      setStage(`Analyserar rörelse, ljud och klipptempo (${missing.length} ${missing.length === 1 ? "fil" : "filer"})…`);
+      setStage(`Analyzing motion, sound, and pacing (${missing.length} ${missing.length === 1 ? "file" : "files"})…`);
       try {
         const fresh = await fetchAnalyses(missing, ({ completed, total }) => {
-          setStage(`Analyserar rörelse, ljud och klipptempo (${completed}/${total})…`);
+          setStage(`Analyzing motion, sound, and pacing (${completed}/${total})…`);
         });
         s.mergeAnalyses(fresh);
       } catch {
@@ -343,7 +341,7 @@ export default function AIPanel() {
     } catch (err) {
       useEditorStore
         .getState()
-        .addToast("error", err instanceof Error ? err.message : "Something went wrong.");
+        .addToast("error", err instanceof Error ? err.message : "The first cut could not be created.");
     } finally {
       setBusy(null);
       setStage(null);
@@ -381,7 +379,7 @@ export default function AIPanel() {
     ) {
       useEditorStore
         .getState()
-        .addToast("info", "The sources or settings changed while AI was working. Build a fresh draft.");
+        .addToast("info", "The sources or settings changed. Build a fresh draft.");
       return false;
     }
     const current = useEditorStore.getState();
@@ -468,15 +466,15 @@ export default function AIPanel() {
     if (caps.length === 0 && !signals) {
       useEditorStore
         .getState()
-        .addToast("error", "AutoEdit behöver hörbart tal eller material som går att analysera.");
+        .addToast("error", "First cut needs audible speech or footage with enough visual detail.");
       return null;
     }
     if (caps.length === 0 && signals) {
       useEditorStore
         .getState()
-        .addToast("info", "Inget tal hittades — AutoEdit använder rörelse, ljudenergi och scener.");
+        .addToast("info", "No speech found. First cut will use motion, sound, and scene changes.");
     }
-    setStage("Tar bort pauser och bygger ett jämnare flow…");
+    setStage("Removing pauses and tightening the pacing…");
     const s = useEditorStore.getState();
     const recipe = generateEditRecipe({
       projectId: s.projectId,
@@ -509,7 +507,7 @@ export default function AIPanel() {
       ) {
         useEditorStore
           .getState()
-          .addToast("info", "Tidslinjen ändrades medan AutoEdit arbetade. Kör igen på den nya versionen.");
+          .addToast("info", "The timeline changed while the draft was being built. Run it again.");
         return;
       }
       useEditorStore.getState().applyEditRecipe(recipe);
@@ -611,7 +609,7 @@ export default function AIPanel() {
       const dur = tracksDuration(s.tracks);
       const dead = detectDeadSpace(signals);
       if (dead.length === 0) {
-        s.addToast("info", "No dead space found — the footage stays busy. 🎬");
+        s.addToast("info", "No dead space found.");
         return;
       }
       const removedSec = dead.reduce((sum, r) => sum + (r.end - r.start), 0);
@@ -629,7 +627,7 @@ export default function AIPanel() {
       const dur = tracksDuration(s.tracks);
       const fillers = fillerCutRanges(analyzeTranscript(caps));
       if (fillers.length === 0) {
-        s.addToast("info", "No filler words found — clean take! 👌");
+        s.addToast("info", "No filler words found.");
         return;
       }
       s.applyRearrange(invertRanges(fillers, dur), `Cut ${fillers.length} filler words 🧹`);
@@ -649,7 +647,7 @@ export default function AIPanel() {
     const kept: TimeRange[] = [range, { start: 0, end: range.start }, { start: range.end, end: dur }].filter(
       (r) => r.end - r.start > 0.05
     );
-    s.applyRearrange(kept, "Hook moved to the front 🎣");
+    s.applyRearrange(kept, "Opening moved to the front.");
   };
 
   const jumpTo = (time: number) => {
@@ -727,23 +725,22 @@ export default function AIPanel() {
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-3 [&>details]:shrink-0 [&>section]:shrink-0">
-      <section className="autoedit-hero overflow-hidden rounded-2xl bg-[linear-gradient(145deg,rgba(120,217,197,.13),rgba(120,184,237,.055)_55%,rgba(7,10,14,.2))] p-3.5 ring-1 ring-[var(--caption)]/25">
+      <section className="autoedit-hero overflow-hidden rounded-lg bg-[var(--caption)]/[0.055] p-3.5 ring-1 ring-[var(--caption)]/20">
         <div className="flex items-center justify-between gap-3">
-          <p className="panel-eyebrow text-[var(--caption)]">AutoEdit</p>
-          <span className="rounded-full bg-black/20 px-2 py-1 font-mono text-[8px] uppercase tracking-[0.1em] text-[#91a59f] ring-1 ring-white/[0.07]">
-            lokalt + ångra
+          <p className="panel-eyebrow text-[var(--caption)]">First cut</p>
+          <span className="rounded-md bg-black/20 px-2 py-1 font-mono text-[8px] uppercase tracking-[0.1em] text-[#91a59f] ring-1 ring-white/[0.07]">
+            reversible
           </span>
         </div>
         <h2 className="mt-2 text-[21px] font-semibold leading-tight tracking-[-0.04em] text-[#f1f6f4]">
-          Bättre flow, ett tryck.
+          Build a tighter first pass.
         </h2>
         <p className="mt-1.5 text-[10px] leading-relaxed text-[#91a09f]">
-          AutoEdit textar tal när det behövs, klipper pauser, utfyllnadsord och upprepningar
-          och kortar partier där inget händer.
+          Tighten pauses, filler words, repetition, and sections with little action.
         </p>
 
         <div className="mt-3 grid grid-cols-3 overflow-hidden rounded-xl bg-black/20 ring-1 ring-white/[0.07]">
-          {["Texta", "Rensa", "Skapa flow"].map((step, index) => (
+          {["Caption", "Clean", "Structure"].map((step, index) => (
             <div
               key={step}
               className="flex min-w-0 items-center justify-center gap-1 border-r border-white/[0.06] px-1.5 py-2 text-[8px] font-semibold text-[#a8b7b3] last:border-r-0"
@@ -757,17 +754,17 @@ export default function AIPanel() {
         </div>
         <p className="mt-1.5 text-center font-mono text-[8px] text-[#6f817c]">
           {!hasContent
-            ? "Lägg ett klipp på tidslinjen för att börja"
+            ? "Add a clip to the timeline to begin"
             : captionsReady
-              ? `${captions.length} textblock redo`
-              : "Textning skapas lokalt när AutoEdit startar"}
+              ? `${captions.length} caption blocks ready`
+              : "Captions are created on this device when needed"}
         </p>
 
         <div className="mt-2.5 grid grid-cols-3 gap-1 rounded-xl bg-black/20 p-1 ring-1 ring-white/[0.07]">
           {([
-            ["podcast", "Lugn"],
-            ["clean", "Balans"],
-            ["viral", "Tajt"],
+            ["podcast", "Relaxed"],
+            ["clean", "Balanced"],
+            ["viral", "Tight"],
           ] as Array<[EditStyle, string]>).map(([id, label]) => (
             <button
               key={id}
@@ -799,17 +796,17 @@ export default function AIPanel() {
             <>
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#0b1714]/20 border-t-[#0b1714]/80" />
               <span className="max-w-[240px] truncate">
-                {captionProgress?.detail ?? stage ?? "Analyserar materialet…"}
+                {captionProgress?.detail ?? stage ?? "Analyzing footage…"}
               </span>
             </>
           ) : (
             <>
-              <Wand2 size={17} /> Kör AutoEdit
+              <Clapperboard size={17} /> Build first cut
             </>
           )}
         </button>
         <p className="mt-2 text-center text-[9px] leading-snug text-[#697975]">
-          En återställningspunkt sparas före ändringen. Ctrl+Z fungerar direkt efteråt.
+          A restore point is saved first. Undo remains available.
         </p>
       </section>
 
@@ -821,13 +818,13 @@ export default function AIPanel() {
             <Clapperboard size={14} />
           </span>
           <span>
-            Avancerad klippning
+            Advanced edit
             <span className="mt-0.5 block text-[9px] font-normal text-zinc-600">
-              Montage, intervju och musikstyrda klipp
+              Montage, interviews, and beat-aware cuts
             </span>
           </span>
-          <span className="ml-auto font-mono text-[9px] text-zinc-600 group-open:hidden">Öppna</span>
-          <span className="ml-auto hidden font-mono text-[9px] text-zinc-600 group-open:inline">Stäng</span>
+          <span className="ml-auto font-mono text-[9px] text-zinc-600 group-open:hidden">Open</span>
+          <span className="ml-auto hidden font-mono text-[9px] text-zinc-600 group-open:inline">Close</span>
         </summary>
         <div className="space-y-4 border-t border-white/[0.07] p-3">
       <section>
@@ -853,7 +850,7 @@ export default function AIPanel() {
           />
         </div>
         <p className="mt-1.5 text-[10px] leading-snug text-zinc-600">
-          AI proposes a sequence first. Your timeline changes only after you review and apply it.
+          A draft is built first. Your timeline changes only after you review and apply it.
         </p>
       </section>
 
@@ -1058,7 +1055,7 @@ export default function AIPanel() {
           {busy === "montage" ? (
             <><span className="h-4 w-4 animate-spin rounded-full border-2 border-black/20 border-t-black/70" /> Building draft…</>
           ) : (
-            <><Sparkles size={16} /> Build draft from {workflow === "interview" ? speechSourceIds.length : includedSourceIds.length} selected clip{(workflow === "interview" ? speechSourceIds.length : includedSourceIds.length) === 1 ? "" : "s"}</>
+            <><Film size={16} /> Build draft from {workflow === "interview" ? speechSourceIds.length : includedSourceIds.length} selected clip{(workflow === "interview" ? speechSourceIds.length : includedSourceIds.length) === 1 ? "" : "s"}</>
           )}
         </button>
         {busy === "montage" && stage && (
@@ -1094,8 +1091,8 @@ export default function AIPanel() {
 
       <details className="group rounded-xl bg-white/[0.025] ring-1 ring-white/8">
         <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-[11px] font-semibold text-zinc-300">
-          <Wand2 size={13} className="text-fuchsia-300" />
-          Talky-video draft
+          <MessageSquareText size={13} className="text-fuchsia-300" />
+          Talking-head draft
           <span className="ml-auto text-[9px] font-normal text-zinc-600 group-open:hidden">optional</span>
         </summary>
         <div className="border-t border-white/8 p-2.5">
@@ -1124,7 +1121,7 @@ export default function AIPanel() {
             disabled={disabled}
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-fuchsia-500/15 px-3 py-2 text-[11px] font-bold text-fuchsia-100 ring-1 ring-fuchsia-400/25 transition hover:bg-fuchsia-500/25 disabled:opacity-40"
           >
-            {busy === "auto" || isTranscribing ? "Building draft…" : "Build talky-video draft"}
+            {busy === "auto" || isTranscribing ? "Building draft…" : "Build talking-head draft"}
           </button>
           <p className="mt-1.5 text-[9px] leading-snug text-zinc-600">
             Proposes silence cuts, a hook and punch-zooms. You still review the moments before applying.
@@ -1165,8 +1162,8 @@ export default function AIPanel() {
         </SectionLabel>
         {hooks.length === 0 ? (
           <p className="rounded-lg bg-white/3 px-2.5 py-2 text-[11px] leading-snug text-zinc-600 ring-1 ring-white/5">
-            Run Auto Captions first — hook detection reads the transcript.
-            (No speech? Auto Edit opens on the biggest detected moment instead.)
+            Create captions to rank spoken openings. Without speech, First cut uses the
+            strongest visual moment.
           </p>
         ) : (
           <div className="flex flex-col gap-1">
@@ -1195,7 +1192,7 @@ export default function AIPanel() {
       {/* smart cuts */}
       <section>
         <SectionLabel>
-          <Scissors size={11} /> Smart cuts
+          <Scissors size={11} /> Suggested cuts
         </SectionLabel>
         <div className="mb-1.5 grid grid-cols-3 gap-1">
           {(["light", "medium", "aggressive"] as const).map((level) => (
@@ -1214,7 +1211,7 @@ export default function AIPanel() {
             <Activity size={12} /> Trim dead space (no motion, no sound)
           </SmallAction>
           <SmallAction onClick={() => void runRemoveFillers()} disabled={disabled} busy={busy === "fillers"} wide>
-            <Zap size={12} /> Remove filler words (um, uh, typ, asså…)
+            <Zap size={12} /> Remove filler words (um, uh, like…)
           </SmallAction>
         </div>
       </section>
@@ -1222,7 +1219,7 @@ export default function AIPanel() {
       {/* best moments */}
       <section>
         <SectionLabel>
-          <Sparkles size={11} /> Best moments
+          <Crosshair size={11} /> Best moments
         </SectionLabel>
         <div className="grid grid-cols-3 gap-1">
           {[30, 45, 60].map((sec) => (
@@ -1460,7 +1457,7 @@ function DraftReview({
       <div className="flex items-start justify-between gap-2">
         <div>
           <p className="flex items-center gap-1.5 text-[11px] font-bold text-sky-100">
-            <Sparkles size={12} /> Draft ready for review
+            <Check size={12} /> Draft ready for review
           </p>
           <p className="mt-0.5 text-[9px] leading-snug text-sky-200/55">
             Keep, reject, preview or reorder each suggested moment.
@@ -1694,7 +1691,7 @@ function BeatControls({ musicAssetId }: { musicAssetId: string }) {
         <span className={`min-w-0 flex-1 truncate text-[10px] font-medium ${status.tone}`}>
           ♪ {status.label}
         </span>
-        <label className="flex shrink-0 cursor-pointer items-center gap-1 text-[10px] text-zinc-400" title="Off = auto edits ignore the beat grid">
+        <label className="flex shrink-0 cursor-pointer items-center gap-1 text-[10px] text-zinc-400" title="Off = First cut ignores the beat grid">
           <input
             type="checkbox"
             checked={enabled}

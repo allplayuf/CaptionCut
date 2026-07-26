@@ -22,7 +22,6 @@ const DEFAULT_SIDEBAR_WIDTH = 456;
 const COMFORTABLE_SIDEBAR_WIDTH = 520;
 const MAX_SIDEBAR_WIDTH = 760;
 const MIN_TIMELINE_HEIGHT = 150;
-const COMPACT_TIMELINE_HEIGHT = 154;
 const DEFAULT_TIMELINE_HEIGHT = 238;
 
 function clamp(value: number, min: number, max: number) {
@@ -294,7 +293,6 @@ export default function EditorPage() {
         onExport={() => setExportOpen(true)}
         onCommand={() => setCommandOpen(true)}
         onHelp={() => setHelpOpen(true)}
-        onOpenTool={openTool}
         onRetrySave={retryAutosave}
       />
 
@@ -305,24 +303,13 @@ export default function EditorPage() {
           onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
           activeTool={activeTool}
           onToolChange={selectTool}
-          onWidthChange={(width) =>
-            setSidebarWidth(clamp(width, MIN_SIDEBAR_WIDTH, maxSidebarWidth()))
-          }
-          timelineCompact={timelineHeight <= COMPACT_TIMELINE_HEIGHT + 8}
-          onToggleTimelineCompact={() =>
-            setTimelineHeight((height) =>
-              height <= COMPACT_TIMELINE_HEIGHT + 8
-                ? DEFAULT_TIMELINE_HEIGHT
-                : COMPACT_TIMELINE_HEIGHT
-            )
-          }
         />
 
         {!sidebarCollapsed && (
           <button
             type="button"
             role="separator"
-            aria-label="Ändra verktygspanelens bredd"
+            aria-label="Resize tools panel"
             aria-orientation="vertical"
             aria-valuemin={MIN_SIDEBAR_WIDTH}
             aria-valuemax={MAX_SIDEBAR_WIDTH}
@@ -344,7 +331,7 @@ export default function EditorPage() {
                 );
               }
             }}
-            title="Dra för större eller mindre verktyg · dubbelklicka för standard"
+            title="Drag to resize · double-click to reset"
           >
             <GripVertical size={12} />
           </button>
@@ -358,7 +345,7 @@ export default function EditorPage() {
       <button
         type="button"
         role="separator"
-        aria-label="Ändra tidslinjens höjd"
+        aria-label="Resize timeline"
         aria-orientation="horizontal"
         className="workspace-resizer workspace-resizer-horizontal"
         onPointerDown={beginTimelineResize}
@@ -375,7 +362,7 @@ export default function EditorPage() {
             );
           }
         }}
-        title="Dra upp för större tidslinje · dubbelklicka för standard"
+        title="Drag to resize · double-click to reset"
       >
         <GripHorizontal size={14} />
       </button>

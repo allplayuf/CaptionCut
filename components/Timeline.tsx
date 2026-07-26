@@ -57,17 +57,17 @@ const TRACK_COLORS: Record<Track["type"], string> = {
   effects: "from-[#517ca8]/70 to-[#314f72]/70",
 };
 
-const TRACK_LABELS_SV: Record<Track["type"], string> = {
-  video: "Huvudvideo",
+const TRACK_LABELS: Record<Track["type"], string> = {
+  video: "Main video",
   broll: "B-roll",
-  image: "Bilder",
+  image: "Images",
   caption: "Captions",
-  text: "Textgrafik",
+  text: "Text graphics",
   sticker: "Stickers",
-  music: "Musik",
-  sfx: "Ljudeffekter",
-  voice: "Berättarröst",
-  effects: "Effekter",
+  music: "Music",
+  sfx: "Sound effects",
+  voice: "Voiceover",
+  effects: "Effects",
 };
 
 const TRACK_DOTS: Record<Track["type"], string> = {
@@ -345,43 +345,43 @@ export default function Timeline() {
       {/* toolbar */}
       <div className="timeline-toolbar flex h-10 items-center gap-1 overflow-x-auto border-b border-white/[0.06] bg-[linear-gradient(90deg,rgba(120,184,237,.025),transparent_42%)] px-3">
         <span className="timeline-title mr-2 font-mono text-[9px] font-bold uppercase tracking-[0.18em] text-[#6d7986]">
-          Tidslinje
+          Timeline
         </span>
-        <ToolButton onClick={splitAtPlayhead} disabled={duration <= 0.001} title="Dela vid spelhuvudet (C)">
-          <Scissors size={13} /> Dela <ShortcutKey>C</ShortcutKey>
+        <ToolButton onClick={splitAtPlayhead} disabled={duration <= 0.001} title="Split at playhead (C)">
+          <Scissors size={13} /> Split <ShortcutKey>C</ShortcutKey>
         </ToolButton>
         <ToolButton
           onClick={deleteSelectedClips}
           disabled={selectedClipIds.length === 0 && !selectedClipId}
           title={
             selectedClipIds.length > 1
-              ? `Radera ${selectedClipIds.length} valda klipp`
-              : "Radera valt klipp (Backspace eller Delete)"
+              ? `Delete ${selectedClipIds.length} selected clips`
+              : "Delete selected clip (Backspace or Delete)"
           }
         >
-          <Trash2 size={13} /> Radera <ShortcutKey>⌫</ShortcutKey>
+          <Trash2 size={13} /> Delete <ShortcutKey>⌫</ShortcutKey>
           {selectedClipIds.length > 1 && <span>{selectedClipIds.length}</span>}
         </ToolButton>
         <ToolButton
           onClick={() => setSnapEnabled((value) => !value)}
-          title={snapEnabled ? "Fästning är på · Shift kringgår tillfälligt" : "Slå på fästning"}
+          title={snapEnabled ? "Snapping on · hold Shift to bypass" : "Turn snapping on"}
           ariaPressed={snapEnabled}
         >
           <Magnet size={13} className={snapEnabled ? "text-[var(--timeline)]" : ""} />
-          Fäst
+          Snap
         </ToolButton>
         <ToolButton
           onClick={() => setShowAllTracks((value) => !value)}
-          title={showAllTracks ? "Dölj tomma spår" : "Visa alla video-, ljud- och effektspår"}
+          title={showAllTracks ? "Hide empty tracks" : "Show every video, audio, and effect track"}
         >
           <Layers3 size={13} className={showAllTracks ? "text-[var(--caption)]" : ""} />
-          {showAllTracks ? "Aktiva spår" : "Alla spår"}
+          {showAllTracks ? "Active tracks" : "All tracks"}
         </ToolButton>
         <div className="timeline-zoom-controls ml-auto flex items-center gap-1">
           <ToolButton
             onClick={() => zoomBy(1 / 1.35)}
             disabled={duration <= 0.001 || pxPerSec <= fitPxPerSec * 1.001}
-            title="Zooma ut tidslinjen"
+            title="Zoom out timeline"
           >
             <ZoomOut size={13} />
           </ToolButton>
@@ -400,21 +400,21 @@ export default function Timeline() {
               zoomTo(fitPxPerSec * ratio);
             }}
             className="timeline-zoom-slider h-1 w-20 cursor-ew-resize accent-[#78b8ed] disabled:cursor-default disabled:opacity-30"
-            aria-label="Zoomnivå för tidslinjen"
+            aria-label="Timeline zoom"
             aria-valuetext={`${zoomPercent} procent`}
-            title="Dra för att zooma · Ctrl/Cmd + mushjul fungerar också"
+            title="Drag to zoom · Ctrl/Cmd + wheel also works"
           />
           <button
             onClick={() => zoomTo(fitPxPerSec)}
             className="rounded px-1.5 py-0.5 text-[10px] font-medium text-[#697583] transition hover:bg-white/[0.06] hover:text-[#c3ccd5]"
-            title="Visa hela tidslinjen (100 %)"
+            title="Fit the entire timeline (100%)"
           >
-            {zoomPercent === 100 ? "Anpassa" : `${zoomPercent}%`}
+            {zoomPercent === 100 ? "Fit" : `${zoomPercent}%`}
           </button>
           <ToolButton
             onClick={() => zoomBy(1.35)}
             disabled={duration <= 0.001 || pxPerSec >= maxPxPerSec * 0.999}
-            title="Zooma in tidslinjen"
+            title="Zoom in timeline"
           >
             <ZoomIn size={13} />
           </ToolButton>
@@ -437,7 +437,7 @@ export default function Timeline() {
             <TrackHeader key={track.id} track={track} />
           ))}
           <div className="flex items-center gap-1 px-2 text-[10px] font-medium text-[#9ce5c3]/80" style={{ height: 24 }}>
-            Text
+            Captions
           </div>
         </div>
 
@@ -597,7 +597,7 @@ export default function Timeline() {
                 style={{ left: PAD + snapGuideTime * pxPerSec }}
               >
                 <span className="absolute left-1 top-1 whitespace-nowrap rounded bg-[#17352f] px-1.5 py-0.5 font-mono text-[8px] font-bold text-[#9ce5d4] ring-1 ring-[#78d9c5]/35">
-                  Fäst {formatTime(snapGuideTime)}
+                  Snap {formatTime(snapGuideTime)}
                 </span>
               </div>
             )}
@@ -628,11 +628,11 @@ export default function Timeline() {
                 <div className="flex items-center gap-2 rounded-full bg-white/[0.025] px-3 py-1.5 ring-1 ring-white/[0.055]">
                   <Scissors size={11} className="text-[var(--cut)]" />
                   <span className="text-[9px] font-semibold text-[#74818d]">
-                    Tidslinjen väntar på material
+                    The timeline is empty
                   </span>
                 </div>
                 <p className="mt-2 text-[8px] text-[#4e5a66]">
-                  Importera i Bibliotek · dra klipp för att ordna · tryck C för att dela
+                  Import media · drag clips to reorder · press C to split
                 </p>
               </div>
             )}
@@ -670,11 +670,11 @@ function TrackHeader({ track }: { track: Track }) {
         style={{ backgroundColor: TRACK_DOTS[track.type], opacity: track.hidden ? 0.3 : 0.8 }}
       />
       <span className={`min-w-0 flex-1 truncate text-[9px] font-semibold ${track.hidden ? "text-zinc-600" : "text-zinc-400"}`}>
-        {TRACK_LABELS_SV[track.type]}
+            {TRACK_LABELS[track.type]}
       </span>
       <HeaderIcon
         onClick={() => toggleTrackLocked(track.id)}
-        title={track.locked ? "Lås upp spåret" : "Lås spåret"}
+        title={track.locked ? "Unlock track" : "Lock track"}
         active={track.locked}
       >
         {track.locked ? <Lock size={11} /> : <LockOpen size={11} />}
@@ -682,7 +682,7 @@ function TrackHeader({ track }: { track: Track }) {
       {audible && (
         <HeaderIcon
           onClick={() => toggleTrackMuted(track.id)}
-          title={track.muted ? "Slå på ljudet" : "Stäng av ljudet"}
+          title={track.muted ? "Unmute track" : "Mute track"}
           active={track.muted}
         >
           {track.muted ? <VolumeX size={11} /> : <Volume2 size={11} />}
@@ -691,7 +691,7 @@ function TrackHeader({ track }: { track: Track }) {
       {visual && (
         <HeaderIcon
           onClick={() => toggleTrackHidden(track.id)}
-          title={track.hidden ? "Visa spåret" : "Dölj spåret"}
+          title={track.hidden ? "Show track" : "Hide track"}
           active={track.hidden}
         >
           {track.hidden ? <EyeOff size={11} /> : <Eye size={11} />}

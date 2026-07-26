@@ -76,7 +76,7 @@ export function useTranscription() {
   ): Promise<Caption[] | null> => {
     const store = useEditorStore.getState();
     if (store.isTranscribing) {
-      store.addToast("info", "Captions kör redan. Vänta tills den pågående körningen är klar.");
+      store.addToast("info", "Captions are already running. Wait for the current pass to finish.");
       return null;
     }
     const clips = mainClips(store.tracks);

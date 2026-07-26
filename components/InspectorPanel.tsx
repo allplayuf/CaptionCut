@@ -349,13 +349,13 @@ function ClipInspector({ track, clip }: { track: Track; clip: TimelineClip }) {
                 }`}
                 title={
                   mode === "fill"
-                    ? "Cover-crop to the canvas (smart-cropped around the action)"
+                    ? "Cover-crop to the canvas (automatically centered on the action)"
                     : "Show the whole frame over a blurred copy of itself"
                 }
               >
                 <span className="block text-[11px] font-bold">{mode === "fill" ? "Fill" : "Fit"}</span>
                 <span className="block text-[9px] text-zinc-500">
-                  {mode === "fill" ? "smart crop" : "blur background"}
+                  {mode === "fill" ? "auto crop" : "blur background"}
                 </span>
               </button>
             ))}
@@ -413,7 +413,7 @@ function ClipInspector({ track, clip }: { track: Track; clip: TimelineClip }) {
           {(fxKind === "slow-zoom" || fxKind === "impact") && (
             <div className="mt-2">
               <p className="mb-1.5 flex items-center justify-between text-[10px] text-zinc-500">
-                Rörelsekurva
+                Motion curve
                 <span className="text-[9px] text-zinc-600">
                   {fxKind === "impact" ? "hur zoomen landar" : "hur zoomen accelererar"}
                 </span>
@@ -421,9 +421,9 @@ function ClipInspector({ track, clip }: { track: Track; clip: TimelineClip }) {
               <div className="grid grid-cols-3 gap-1">
                 {(
                   [
-                    ["smooth", "Mjuk"],
-                    ["snappy", "Snabb"],
-                    ["linear", "Linjär"],
+                    ["smooth", "Smooth"],
+                    ["snappy", "Snappy"],
+                    ["linear", "Linear"],
                   ] as const
                 ).map(([value, label]) => (
                   <button

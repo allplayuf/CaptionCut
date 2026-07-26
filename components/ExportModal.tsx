@@ -17,10 +17,10 @@ import {
   CheckCircle2,
   Download,
   Film,
+  Info,
   Layers3,
   LoaderCircle,
   ShieldCheck,
-  Sparkles,
   X,
 } from "lucide-react";
 
@@ -118,10 +118,10 @@ function forgetActiveExport(): void {
 }
 
 function exportPhaseLabel(phase?: ExportPhase): string {
-  if (phase === "queued") return "Återansluter till renderingen…";
-  if (phase === "preparing") return "Kontrollerar och förbereder källmaterialet…";
-  if (phase === "uploading") return "Slutför och sparar masterfilen…";
-  return "Klipp, effekter, ljud och captions renderas i den färdiga videon.";
+  if (phase === "queued") return "Reconnecting to the render…";
+  if (phase === "preparing") return "Checking and preparing source media…";
+  if (phase === "uploading") return "Finalizing and saving the master file…";
+  return "Rendering clips, effects, audio, and captions.";
 }
 
 export default function ExportModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -150,7 +150,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
         const statusResponse = await fetch(`/api/export/${jobId}`, { cache: "no-store" });
         if (!statusResponse.ok) {
           if (statusResponse.status === 404) forgetActiveExport();
-          throw new Error("Exportstatus saknas.");
+          throw new Error("Export status is unavailable.");
         }
         const status = (await statusResponse.json()) as ExportJobState & { error?: string };
         if (status.status === "done") {
@@ -160,7 +160,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
         }
         if (status.status === "error") {
           forgetActiveExport();
-          setPhase({ name: "error", message: status.error ?? "Renderingen misslyckades." });
+          setPhase({ name: "error", message: status.error ?? "The render failed." });
           return;
         }
         setPhase({
@@ -198,11 +198,11 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
     const notes: string[] = [];
     const stabilized = mainTrack.clips.filter((clip) => clip.stabilize).length;
     if (stabilized > 0) {
-      notes.push(`${stabilized} klipp stabiliseras och får den beskärning som visas i förhandsvisningen.`);
+      notes.push(`${stabilized} ${stabilized === 1 ? "clip is" : "clips are"} stabilized and use the crop shown in the preview.`);
     }
     const fitClips = mainTrack.clips.filter((clip) => clip.fit === "fit").length;
     if (fitClips > 0) {
-      notes.push(`${fitClips} klipp renderas med hela bilden över en mjuk, suddig bakgrund.`);
+      notes.push(`${fitClips} ${fitClips === 1 ? "clip uses" : "clips use"} a full-frame image over a soft blurred background.`);
     }
 
     let cancelled = false;
@@ -257,7 +257,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
         body: JSON.stringify(payload),
       });
       const body = (await response.json()) as ExportJobState & { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Renderingen kunde inte starta.");
+      if (!response.ok) throw new Error(body.error ?? "The render couldn’t start.");
 
       const jobId = body.id;
       const jobStartedAt = Date.now();
@@ -268,7 +268,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
     } catch (error) {
       setPhase({
         name: "error",
-        message: error instanceof Error ? error.message : "Renderingen misslyckades.",
+        message: error instanceof Error ? error.message : "The render failed.",
       });
     }
   };
@@ -295,22 +295,22 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
         aria-labelledby="export-title"
         aria-describedby="export-description"
         tabIndex={-1}
-        className="render-room relative max-h-[94dvh] w-full max-w-[680px] overflow-y-auto rounded-[28px] border border-white/[0.09] bg-[#0c1117] shadow-[0_34px_110px_rgba(0,0,0,.72)]"
+        className="render-room relative max-h-[94dvh] w-full max-w-[680px] overflow-y-auto rounded-xl border border-white/[0.09] bg-[#0c1117] shadow-[0_34px_110px_rgba(0,0,0,.72)]"
       >
         <div className="render-room-glow pointer-events-none absolute inset-x-0 top-0 h-40" />
 
         <header className="relative flex items-start justify-between gap-4 border-b border-white/[0.07] px-5 py-5 sm:px-7 sm:py-6">
           <div className="flex min-w-0 items-start gap-3">
-            <span className="render-icon mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl">
+            <span className="render-icon mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg">
               <Film size={19} />
             </span>
             <div className="min-w-0">
               <p className="panel-eyebrow text-[var(--cut)]">Render room</p>
               <h2 id="export-title" className="mt-1 text-[22px] font-semibold tracking-[-0.045em] text-[#f4f6f7]">
-                Exportera masterfil
+                Export master
               </h2>
               <p id="export-description" className="mt-1 text-[11px] leading-relaxed text-[#73808c]">
-                En ny MP4 byggs från tidslinjen. Captions, klipp, lager och effekter bränns in i filen.
+                Render the timeline, captions, layers, and effects into one MP4.
               </p>
             </div>
           </div>
@@ -320,8 +320,8 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
             onClick={onClose}
             disabled={!canClose}
             className="icon-button h-8 w-8 disabled:cursor-not-allowed disabled:opacity-25"
-            aria-label="Stäng export"
-            title="Stäng — exporten fortsätter"
+            aria-label="Close export"
+            title="Close — the export continues"
           >
             <X size={16} />
           </button>
@@ -332,7 +332,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
             <>
               <section>
                 <div className="mb-2 flex items-center justify-between">
-                  <p className="panel-eyebrow text-[#7a8793]">Leveransformat</p>
+                  <p className="panel-eyebrow text-[#7a8793]">Delivery format</p>
                   <span className="font-mono text-[9px] text-[#56626e]">H.264 · AAC · MP4</span>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
@@ -344,7 +344,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
                         type="button"
                         onClick={() => setPresetId(candidate.id)}
                         aria-pressed={selected}
-                        className={`render-preset group relative rounded-2xl px-3 py-3 text-left transition sm:px-4 ${
+                        className={`render-preset group relative rounded-lg px-3 py-3 text-left transition sm:px-4 ${
                           selected ? "render-preset-selected" : "hover:bg-white/[0.045]"
                         } ${candidate.id === "draft" ? "col-span-2 sm:col-span-1" : ""}`}
                       >
@@ -370,38 +370,38 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
 
               <section className="mt-5">
                 <div className="mb-2 flex items-center justify-between">
-                  <p className="panel-eyebrow text-[#7a8793]">Renderkvitto</p>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-[var(--caption)]/[0.08] px-2 py-1 text-[8px] font-bold uppercase tracking-[0.1em] text-[var(--caption)] ring-1 ring-[var(--caption)]/15">
-                    <ShieldCheck size={10} /> Förkontrollerad
+                  <p className="panel-eyebrow text-[#7a8793]">Render summary</p>
+                  <span className="inline-flex items-center gap-1 rounded-md bg-[var(--caption)]/[0.08] px-2 py-1 text-[8px] font-bold uppercase tracking-[0.1em] text-[var(--caption)] ring-1 ring-[var(--caption)]/15">
+                    <ShieldCheck size={10} /> Preflight passed
                   </span>
                 </div>
-                <div className="render-receipt grid grid-cols-2 gap-px overflow-hidden rounded-2xl bg-white/[0.075] sm:grid-cols-4">
-                  <Spec icon={<Film size={13} />} label="Klipp" value={String(mainClipCount)} />
-                  <Spec icon={<Captions size={13} />} label="Captions" value={captions.length ? `${captions.length} inbrända` : "Inga"} />
-                  <Spec icon={<Layers3 size={13} />} label="Lager" value={layerCount ? String(layerCount) : "Endast video"} />
-                  <Spec icon={<Sparkles size={13} />} label="Master" value={`${aspect} · ${formatTime(duration)}`} />
+                <div className="render-receipt grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-white/[0.075] sm:grid-cols-4">
+                  <Spec icon={<Film size={13} />} label="Clips" value={String(mainClipCount)} />
+                  <Spec icon={<Captions size={13} />} label="Captions" value={captions.length ? `${captions.length} burned in` : "None"} />
+                  <Spec icon={<Layers3 size={13} />} label="Layers" value={layerCount ? String(layerCount) : "Video only"} />
+                  <Spec icon={<Film size={13} />} label="Master" value={`${aspect} · ${formatTime(duration)}`} />
                 </div>
               </section>
 
               <div className="mt-4 space-y-2">
                 {preflight.missingMedia.length > 0 && (
                   <Notice tone="danger" icon={<AlertTriangle size={13} />}>
-                    <strong>Export blockerad.</strong> Lägg tillbaka eller radera: {preflight.missingMedia.join(", ")}.
+                    <strong>Export blocked.</strong> Restore or remove: {preflight.missingMedia.join(", ")}.
                   </Notice>
                 )}
                 {aspect !== format && (
                   <Notice tone="info" icon={<Layers3 size={13} />}>
-                    Projektet är {format}, men exporten är {aspect}. Bilden beskärs om och captions skalas till det nya formatet.
+                    The project is {format}, but the export is {aspect}. The frame and captions will adapt to the new format.
                   </Notice>
                 )}
                 {preflight.notes.map((note) => (
-                  <Notice key={note} tone="neutral" icon={<Sparkles size={13} />}>
+                  <Notice key={note} tone="neutral" icon={<Info size={13} />}>
                     {note}
                   </Notice>
                 ))}
                 {duration > 180 && (
                   <Notice tone="warning" icon={<AlertTriangle size={13} />}>
-                    Videon är över tre minuter. Molnrenderingen kan ta flera minuter.
+                    This video is over three minutes. Cloud rendering may take several minutes.
                   </Notice>
                 )}
               </div>
@@ -411,12 +411,12 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
                 data-testid="start-export"
                 onClick={() => void startExport()}
                 disabled={preflight.checking || preflight.missingMedia.length > 0}
-                className="render-primary mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-2xl px-5 text-[12px] font-extrabold transition active:translate-y-px disabled:cursor-not-allowed disabled:opacity-45"
+                className="render-primary mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-lg px-5 text-[12px] font-extrabold transition active:translate-y-px disabled:cursor-not-allowed disabled:opacity-45"
               >
                 {preflight.checking ? (
-                  <><LoaderCircle size={15} className="animate-spin" /> Kontrollerar material…</>
+                  <><LoaderCircle size={15} className="animate-spin" /> Checking media…</>
                 ) : (
-                  <><Sparkles size={15} /> Rendera med alla redigeringar</>
+                  <><Download size={15} /> Render final video</>
                 )}
               </button>
             </>
@@ -430,7 +430,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
               <div className="mx-auto mt-6 max-w-[460px] text-center">
                 <p className="panel-eyebrow text-[var(--cut)]">Master render</p>
                 <h3 className="mt-2 text-xl font-semibold tracking-[-0.035em] text-[#eef2f5]">
-                  Bygger din färdiga video
+                  Building the final video
                 </h3>
                 <p className="mt-2 text-[11px] leading-relaxed text-[#71808c]">
                   {phase.detail ?? exportPhaseLabel(phase.phase)}
@@ -438,13 +438,13 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
               </div>
               <div className="mx-auto mt-7 max-w-[500px]">
                 <div className="mb-2 flex items-center justify-between text-[10px]">
-                  <span className="font-semibold text-[#8f9aa5]">Renderar</span>
+                  <span className="font-semibold text-[#8f9aa5]">Rendering</span>
                   <span className="font-mono text-[var(--cut)]">{Math.round(phase.progress * 100)}%</span>
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-white/[0.07] ring-1 ring-white/[0.05]">
                   <div
                     role="progressbar"
-                    aria-label="Renderingsförlopp"
+                    aria-label="Render progress"
                     aria-valuemin={0}
                     aria-valuemax={100}
                     aria-valuenow={Math.round(phase.progress * 100)}
@@ -453,7 +453,7 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
                   />
                 </div>
                 <p className="mt-3 text-center font-mono text-[9px] text-[#5e6b76]">
-                  Exporten fortsätter om du stänger rutan eller laddar om{remainingLabel(phase.progress, startedAt)}
+                  The export continues if you close this window or reload{remainingLabel(phase.progress, startedAt)}
                 </p>
               </div>
             </div>
@@ -466,18 +466,18 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
               </div>
               <p className="panel-eyebrow mt-6 text-[var(--caption)]">Render complete</p>
               <h3 className="mt-2 text-2xl font-semibold tracking-[-0.045em] text-[#f1f4f6]">
-                Masterfilen är klar.
+                Your master is ready.
               </h3>
               <p className="mx-auto mt-2 max-w-[430px] text-[11px] leading-relaxed text-[#74818c]">
-                Den nedladdade MP4-filen innehåller {captions.length} inbrända captions och {layerCount} redigeringslager.
+                The MP4 includes {captions.length} burned-in captions and {layerCount} edit layers.
               </p>
               <a
                 data-testid="download-export"
                 href={`/api/export/${phase.jobId}?download=1`}
                 download
-                className="render-primary mx-auto mt-6 flex h-12 w-full max-w-[440px] items-center justify-center gap-2 rounded-2xl px-5 text-[12px] font-extrabold transition hover:brightness-105 active:translate-y-px"
+                className="render-primary mx-auto mt-6 flex h-12 w-full max-w-[440px] items-center justify-center gap-2 rounded-lg px-5 text-[12px] font-extrabold transition hover:brightness-105 active:translate-y-px"
               >
-                <Download size={16} /> Ladda ner färdig MP4
+                <Download size={16} /> Download MP4
               </a>
               <button
                 type="button"
@@ -487,10 +487,10 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
                 }}
                 className="secondary-compact mt-3 h-10 w-full max-w-[440px] rounded-xl"
               >
-                Exportera en ny version
+                Export another version
               </button>
               <button type="button" onClick={onClose} className="mt-3 text-[10px] font-semibold text-[#6f7b86] transition hover:text-[#c8d0d7]">
-                Tillbaka till editorn
+                Back to editor
               </button>
             </div>
           )}
@@ -498,14 +498,14 @@ function ExportDialog({ onClose }: { onClose: () => void }) {
           {phase.name === "error" && (
             <div className="py-3 sm:py-5" role="alert">
               <Notice tone="danger" icon={<AlertTriangle size={14} />}>
-                <strong>Renderingen avbröts.</strong> {phase.message}
+                <strong>The render stopped.</strong> {phase.message}
               </Notice>
               <button
                 type="button"
                 onClick={() => void startExport()}
                 className="secondary-compact mt-4 h-11 w-full rounded-xl"
               >
-                Försök igen
+                Try again
               </button>
             </div>
           )}
@@ -529,8 +529,8 @@ function remainingLabel(progress: number, startedAt: number): string {
   const remaining = Math.round((elapsed / progress) * (1 - progress));
   if (remaining < 3) return "";
   return remaining >= 90
-    ? ` · cirka ${Math.round(remaining / 60)} min kvar`
-    : ` · cirka ${remaining} s kvar`;
+    ? ` · about ${Math.round(remaining / 60)} min left`
+    : ` · about ${remaining}s left`;
 }
 
 function Spec({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {

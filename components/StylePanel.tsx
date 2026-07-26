@@ -171,7 +171,7 @@ export default function StylePanel() {
           </div>
         </Row>
         <p className="-mt-2 text-[10px] leading-snug text-zinc-600">
-          Highlights the currently spoken word (needs word timestamps from Auto Captions).
+          Highlights the current word when detailed timing is available.
         </p>
       </section>
 

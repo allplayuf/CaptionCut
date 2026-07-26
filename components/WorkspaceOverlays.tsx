@@ -7,10 +7,12 @@ import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { tracksDuration } from "@/lib/timeline/tracks";
 import { formatTime } from "@/lib/video/timeline";
 import {
+  Aperture,
   ArrowRight,
   Captions,
   Check,
   CircleHelp,
+  Clapperboard,
   Download,
   FolderOpen,
   Keyboard,
@@ -21,9 +23,7 @@ import {
   Scissors,
   Search,
   SlidersHorizontal,
-  Sparkles,
   Undo2,
-  WandSparkles,
   X,
 } from "lucide-react";
 
@@ -36,7 +36,7 @@ interface CommandAction {
   id: string;
   label: string;
   detail: string;
-  group: "Gå till" | "Redigera" | "Projekt";
+  group: "Navigate" | "Edit" | "Project";
   shortcut?: string;
   icon: typeof Search;
   disabled?: boolean;
@@ -85,59 +85,59 @@ export function CommandPalette({
     () => [
       {
         id: "media",
-        label: "Öppna bibliotek",
-        detail: "Importera, sortera och välj källmaterial",
-        group: "Gå till",
+        label: "Open media",
+        detail: "Import, organize, and select source files",
+        group: "Navigate",
         shortcut: "M",
         icon: FolderOpen,
         run: () => onOpenTool("media"),
       },
       {
         id: "cut",
-        label: "Öppna klippverktyg",
-        detail: "Pauser, transcript och manuella klipp",
-        group: "Gå till",
+        label: "Open cut tools",
+        detail: "Pauses, transcript, and manual edits",
+        group: "Navigate",
         shortcut: "C",
         icon: Scissors,
         run: () => onOpenTool("cut"),
       },
       {
         id: "captions",
-        label: "Öppna captions",
-        detail: `${captions.length} textrader i projektet`,
-        group: "Gå till",
+        label: "Open captions",
+        detail: `${captions.length} caption ${captions.length === 1 ? "line" : "lines"}`,
+        group: "Navigate",
         icon: Captions,
         run: () => onOpenTool("captions"),
       },
       {
         id: "effects",
-        label: "Öppna effekter",
-        detail: "Zoom, rörelse, impact och filmisk finish",
-        group: "Gå till",
-        icon: WandSparkles,
+        label: "Open effects",
+        detail: "Zoom, motion, impact, and finish",
+        group: "Navigate",
+        icon: Aperture,
         run: () => onOpenTool("effects"),
       },
       {
         id: "smart",
-        label: "Smart redigering",
-        detail: "Bygg eller regenerera ett komplett första klipp",
-        group: "Gå till",
-        icon: Sparkles,
+        label: "Build first cut",
+        detail: "Create a structured first pass",
+        group: "Navigate",
+        icon: Clapperboard,
         run: () => onOpenTool("smart"),
       },
       {
         id: "inspect",
-        label: "Justera valt klipp",
-        detail: "Timing, hastighet, ljud och position",
-        group: "Gå till",
+        label: "Inspect selected clip",
+        detail: "Timing, speed, audio, and position",
+        group: "Navigate",
         icon: SlidersHorizontal,
         run: () => onOpenTool("adjust"),
       },
       {
         id: "play",
-        label: isPlaying ? "Pausa uppspelning" : "Spela upp",
-        detail: duration > 0 ? `${formatTime(duration)} på tidslinjen` : "Tidslinjen är tom",
-        group: "Redigera",
+        label: isPlaying ? "Pause playback" : "Play",
+        detail: duration > 0 ? `${formatTime(duration)} on the timeline` : "Timeline is empty",
+        group: "Edit",
         shortcut: "Space",
         icon: Play,
         disabled: duration <= 0,
@@ -145,9 +145,9 @@ export function CommandPalette({
       },
       {
         id: "split",
-        label: "Dela vid spelhuvudet",
-        detail: "Skapar ett rent klipp på nuvarande tid",
-        group: "Redigera",
+        label: "Split at playhead",
+        detail: "Create a cut at the current time",
+        group: "Edit",
         shortcut: "C",
         icon: Scissors,
         disabled: duration <= 0,
@@ -155,9 +155,9 @@ export function CommandPalette({
       },
       {
         id: "undo",
-        label: "Ångra senaste ändringen",
-        detail: "Går ett steg tillbaka",
-        group: "Redigera",
+        label: "Undo",
+        detail: "Go back one step",
+        group: "Edit",
         shortcut: "Ctrl Z",
         icon: Undo2,
         disabled: !canUndo,
@@ -165,9 +165,9 @@ export function CommandPalette({
       },
       {
         id: "redo",
-        label: "Gör om",
-        detail: "Återställer den ångrade ändringen",
-        group: "Redigera",
+        label: "Redo",
+        detail: "Restore the last undone change",
+        group: "Edit",
         shortcut: "Ctrl ⇧ Z",
         icon: Redo2,
         disabled: !canRedo,
@@ -175,17 +175,17 @@ export function CommandPalette({
       },
       {
         id: "safe",
-        label: "Visa eller dölj säker yta",
-        detail: "Kontrollera att text inte täcks i sociala appar",
-        group: "Projekt",
+        label: "Toggle safe areas",
+        detail: "Check text placement for social platforms",
+        group: "Project",
         icon: LayoutTemplate,
         run: toggleSafeZones,
       },
       {
         id: "export",
-        label: "Exportera video",
-        detail: "Välj format och renderingskvalitet",
-        group: "Projekt",
+        label: "Export video",
+        detail: "Choose format and render quality",
+        group: "Project",
         shortcut: "Ctrl E",
         icon: Download,
         disabled: duration <= 0,
@@ -193,9 +193,9 @@ export function CommandPalette({
       },
       {
         id: "help",
-        label: "Öppna snabbguiden",
-        detail: "Arbetsflöde, status och kortkommandon",
-        group: "Projekt",
+        label: "Open quick guide",
+        detail: "Workflow and keyboard shortcuts",
+        group: "Project",
         shortcut: "?",
         icon: CircleHelp,
         run: onHelp,
@@ -219,10 +219,10 @@ export function CommandPalette({
   );
 
   const filtered = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase("sv-SE");
+    const needle = query.trim().toLocaleLowerCase("en-US");
     if (!needle) return actions;
     return actions.filter((action) =>
-      `${action.label} ${action.detail} ${action.group}`.toLocaleLowerCase("sv-SE").includes(needle)
+      `${action.label} ${action.detail} ${action.group}`.toLocaleLowerCase("en-US").includes(needle)
     );
   }, [actions, query]);
 
@@ -239,9 +239,9 @@ export function CommandPalette({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Kommandopalett"
+        aria-label="Command palette"
         tabIndex={-1}
-        className="w-full max-w-[620px] overflow-hidden rounded-[22px] bg-[#11171e] shadow-[0_32px_100px_rgba(0,0,0,.62)] ring-1 ring-white/[0.12]"
+        className="w-full max-w-[620px] overflow-hidden rounded-xl bg-[#11171e] shadow-[0_32px_100px_rgba(0,0,0,.62)] ring-1 ring-white/[0.12]"
       >
         <div className="flex items-center gap-3 border-b border-white/[0.075] px-4">
           <Search size={17} className="shrink-0 text-[var(--timeline)]" />
@@ -267,7 +267,7 @@ export function CommandPalette({
                 if (action && !action.disabled) finish(action.run);
               }
             }}
-            placeholder="Sök verktyg eller handling…"
+            placeholder="Search tools and actions…"
             className="h-14 min-w-0 flex-1 bg-transparent text-[14px] font-medium text-[#edf2f5] outline-none placeholder:text-[#596672]"
           />
           <kbd className="!px-1.5 !py-0.5 !text-[9px]">Esc</kbd>
@@ -285,12 +285,12 @@ export function CommandPalette({
                   disabled={action.disabled}
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => finish(action.run)}
-                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${
+                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition ${
                     active ? "bg-white/[0.075]" : "hover:bg-white/[0.045]"
                   } disabled:opacity-35`}
                 >
                   <span
-                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${
                       active
                         ? "bg-[var(--timeline)]/15 text-[#a9d2f3]"
                         : "bg-white/[0.035] text-[#778491]"
@@ -317,17 +317,17 @@ export function CommandPalette({
             <div className="flex min-h-36 flex-col items-center justify-center text-center">
               <Search size={18} className="text-[#4f5b67]" />
               <p className="mt-3 text-[11px] font-semibold text-[#9ba7b2]">
-                Inget matchar “{query}”
+                No results for “{query}”
               </p>
-              <p className="mt-1 text-[9px] text-[#5e6a76]">Prova ett verktyg eller en handling.</p>
+              <p className="mt-1 text-[9px] text-[#5e6a76]">Try a tool or action.</p>
             </div>
           )}
         </div>
 
         <div className="flex items-center gap-3 border-t border-white/[0.065] bg-[#0c1117] px-4 py-2 text-[8px] text-[#56636f]">
-          <span><kbd>↑↓</kbd> välj</span>
-          <span><kbd>Enter</kbd> öppna</span>
-          <span className="ml-auto">CaptionCut kommandon</span>
+          <span><kbd>↑↓</kbd> select</span>
+          <span><kbd>Enter</kbd> open</span>
+          <span className="ml-auto">CaptionCut commands</span>
         </div>
       </div>
     </div>
@@ -357,36 +357,36 @@ export function HelpDrawer({
 
   const steps = [
     {
-      title: "Samla material",
-      text: `${media.length} filer i biblioteket`,
+      title: "Import media",
+      text: `${media.length} ${media.length === 1 ? "file" : "files"}`,
       done: media.length > 0,
       icon: FolderOpen,
       action: () => onOpenTool("media"),
-      label: "Öppna bibliotek",
+      label: "Open media",
     },
     {
-      title: "Bygg berättelsen",
-      text: `${mainClips} klipp · ${formatTime(duration)}`,
+      title: "Shape the cut",
+      text: `${mainClips} ${mainClips === 1 ? "clip" : "clips"} · ${formatTime(duration)}`,
       done: mainClips > 0,
       icon: Scissors,
       action: () => onOpenTool(mainClips > 3 ? "smart" : "cut"),
-      label: mainClips > 3 ? "Smart redigering" : "Öppna klipp",
+      label: mainClips > 3 ? "Build first cut" : "Open cut tools",
     },
     {
-      title: "Gör den tydlig",
-      text: `${captions.length} captions · ${effects} effekter`,
+      title: "Add clarity",
+      text: `${captions.length} captions · ${effects} effects`,
       done: captions.length > 0,
       icon: Captions,
       action: () => onOpenTool("captions"),
-      label: "Öppna captions",
+      label: "Open captions",
     },
     {
-      title: "Leverera",
-      text: duration > 0 ? "Redo för exportkontroll" : "Behöver video på tidslinjen",
+      title: "Deliver",
+      text: duration > 0 ? "Ready for export preflight" : "Add video to the timeline",
       done: false,
       icon: Download,
       action: onExport,
-      label: "Öppna export",
+      label: "Open export",
       disabled: duration <= 0,
     },
   ];
@@ -405,13 +405,13 @@ export function HelpDrawer({
         className="flex h-full w-full max-w-[410px] flex-col border-l border-white/[0.09] bg-[#10161d] shadow-[-28px_0_80px_rgba(0,0,0,.45)]"
       >
         <header className="flex items-start gap-3 border-b border-white/[0.07] px-5 py-5">
-          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--timeline)]/12 text-[#9cc9ed] ring-1 ring-[var(--timeline)]/20">
+          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--timeline)]/12 text-[#9cc9ed] ring-1 ring-[var(--timeline)]/20">
             <CircleHelp size={17} />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="panel-eyebrow text-[var(--timeline)]">Snabbguide</p>
+            <p className="panel-eyebrow text-[var(--timeline)]">Quick guide</p>
             <h2 id="quick-guide-title" className="mt-1 text-[18px] font-semibold tracking-[-0.03em]">
-              Från råmaterial till färdig video
+              From media to master
             </h2>
           </div>
           <button
@@ -419,7 +419,7 @@ export function HelpDrawer({
             type="button"
             onClick={onClose}
             className="icon-button"
-            aria-label="Stäng snabbguiden"
+            aria-label="Close quick guide"
           >
             <X size={14} />
           </button>
@@ -432,11 +432,11 @@ export function HelpDrawer({
               return (
                 <div
                   key={step.title}
-                  className="group grid grid-cols-[28px_36px_minmax(0,1fr)] items-center gap-2 rounded-2xl bg-white/[0.028] p-3 ring-1 ring-white/[0.07]"
+                  className="group grid grid-cols-[28px_36px_minmax(0,1fr)] items-center gap-2 rounded-lg bg-white/[0.028] p-3 ring-1 ring-white/[0.07]"
                 >
                   <span className="font-mono text-[9px] text-[#53606c]">{index + 1}</span>
                   <span
-                    className={`flex h-9 w-9 items-center justify-center rounded-xl ${
+                    className={`flex h-9 w-9 items-center justify-center rounded-md ${
                       step.done
                         ? "bg-[var(--caption)]/12 text-[var(--caption)]"
                         : "bg-white/[0.04] text-[#71808d]"
@@ -465,21 +465,21 @@ export function HelpDrawer({
           </div>
 
           <section className="mt-5">
-            <p className="panel-eyebrow text-[#687581]">Kortkommandon</p>
+            <p className="panel-eyebrow text-[#687581]">Keyboard shortcuts</p>
             <div className="mt-2 grid grid-cols-2 gap-1.5">
               {[
-                ["Spela / pausa", "Space"],
-                ["Dela klipp", "C"],
-                ["Radera klipp", "⌫"],
-                ["Ångra", "Ctrl Z"],
-                ["Duplicera", "Ctrl D"],
-                ["En bildruta", "← →"],
-                ["Tio bildrutor", "⇧ ← →"],
-                ["Kommandon", "Ctrl K"],
+                ["Play / pause", "Space"],
+                ["Split clip", "C"],
+                ["Delete clip", "⌫"],
+                ["Undo", "Ctrl Z"],
+                ["Duplicate", "Ctrl D"],
+                ["One frame", "← →"],
+                ["Ten frames", "⇧ ← →"],
+                ["Commands", "Ctrl K"],
               ].map(([label, shortcut]) => (
                 <div
                   key={label}
-                  className="flex items-center justify-between rounded-xl bg-[#0a0f14] px-3 py-2 ring-1 ring-white/[0.06]"
+                  className="flex items-center justify-between rounded-md bg-[#0a0f14] px-3 py-2 ring-1 ring-white/[0.06]"
                 >
                   <span className="text-[9px] text-[#7b8793]">{label}</span>
                   <kbd>{shortcut}</kbd>
@@ -488,20 +488,19 @@ export function HelpDrawer({
             </div>
           </section>
 
-          <section className="mt-5 rounded-2xl border border-[var(--cut)]/12 bg-[var(--cut)]/[0.035] p-4">
+          <section className="mt-5 rounded-lg border border-[var(--cut)]/12 bg-[var(--cut)]/[0.035] p-4">
             <p className="flex items-center gap-1.5 text-[10px] font-semibold text-[#e4bd8d]">
-              <PanelLeftClose size={12} /> Anpassa arbetsytan efter uppgiften
+              <PanelLeftClose size={12} /> Resize the workspace
             </p>
             <p className="mt-1.5 text-[9px] leading-relaxed text-[#77838e]">
-              Dra kanten vid verktygen eller handtaget ovanför tidslinjen. Dubbelklicka ett handtag
-              för standardstorlek. Dina mått sparas automatiskt på enheten.
+              Drag either divider to resize the tools or timeline. Double-click to reset.
             </p>
           </section>
         </div>
 
         <footer className="flex items-center gap-2 border-t border-white/[0.07] bg-[#0c1117] px-5 py-3 text-[9px] text-[#5f6b77]">
           <Keyboard size={12} />
-          Tryck <kbd>Ctrl K</kbd> när du vet vad du vill göra men inte var det finns.
+          Press <kbd>Ctrl K</kbd> to find any tool or action.
         </footer>
       </aside>
     </div>

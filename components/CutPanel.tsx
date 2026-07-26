@@ -20,13 +20,14 @@ import { formatTime } from "@/lib/video/timeline";
 import {
   Check,
   ChevronRight,
+  Eraser,
+  FileText,
   LoaderCircle,
   Pause,
   Play,
   Scissors,
-  Sparkles,
   Trash2,
-  Wand2,
+  ScanSearch,
 } from "lucide-react";
 
 type View = "pauses" | "transcript";
@@ -36,9 +37,9 @@ const LEVELS: Array<{
   label: string;
   note: string;
 }> = [
-  { id: "light", label: "Lugn", note: "bara långa pauser" },
-  { id: "medium", label: "Balanserad", note: "bra för de flesta" },
-  { id: "aggressive", label: "Tajt", note: "snabbt tempo" },
+  { id: "light", label: "Light", note: "long pauses only" },
+  { id: "medium", label: "Balanced", note: "recommended" },
+  { id: "aggressive", label: "Tight", note: "faster pacing" },
 ];
 
 /**
@@ -134,12 +135,12 @@ export default function CutPanel() {
       setChosen(new Set(ranges.map((_, index) => index)));
       setScanRevision(state.revision);
       if (ranges.length === 0) {
-        state.addToast("info", "Inga pauser att klippa hittades på den här nivån.");
+        state.addToast("info", "No pauses found at this level.");
       }
     } catch (error) {
       useEditorStore
         .getState()
-        .addToast("error", error instanceof Error ? error.message : "Kunde inte hitta pauser.");
+        .addToast("error", error instanceof Error ? error.message : "Couldn’t find pauses.");
     } finally {
       setBusy(null);
     }
@@ -147,12 +148,12 @@ export default function CutPanel() {
 
   const applyPauseCuts = () => {
     if (chosenRanges.length === 0) {
-      addToast("info", "Välj minst en paus först.");
+      addToast("info", "Select at least one pause.");
       return;
     }
     applyRearrange(
       invertRanges(chosenRanges, duration),
-      `${chosenRanges.length} paus${chosenRanges.length === 1 ? "" : "er"} borttagna · ${removedDuration.toFixed(1)} s kortare`
+      `${chosenRanges.length} ${chosenRanges.length === 1 ? "pause" : "pauses"} removed · ${removedDuration.toFixed(1)}s shorter`
     );
   };
 
@@ -164,12 +165,12 @@ export default function CutPanel() {
       const state = useEditorStore.getState();
       const ranges = fillerCutRanges(analyzeTranscript(currentCaptions));
       if (ranges.length === 0) {
-        state.addToast("info", "Inga tydliga utfyllnadsord hittades.");
+        state.addToast("info", "No clear filler words found.");
         return;
       }
       state.applyRearrange(
         invertRanges(ranges, tracksDuration(state.tracks)),
-        `${ranges.length} utfyllnadsord borttagna`
+        `${ranges.length} filler ${ranges.length === 1 ? "word" : "words"} removed`
       );
     } finally {
       setBusy(null);
@@ -188,44 +189,44 @@ export default function CutPanel() {
         [{ start: Math.max(0, caption.startTime - 0.04), end: caption.endTime + 0.04 }],
         currentDuration
       ),
-      "Meningen togs bort från videon"
+      "Section removed from the video"
     );
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#10141b]">
+    <div className="flex h-full min-h-0 flex-col bg-[#101216]">
       <div className="border-b border-white/[0.07] px-4 pb-3 pt-4">
-        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#ffb45b]">
-          Klippverktyg
+        <p className="panel-eyebrow text-[var(--cut)]">
+          Cut
         </p>
         <h2 className="mt-1 text-[19px] font-semibold tracking-[-0.025em] text-[#f4f6f8]">
-          Ta bort det som inte ska med.
+          Keep what matters.
         </h2>
-        <p className="mt-1 text-xs leading-relaxed text-[#8893a2]">
-          Hitta pauser automatiskt eller klipp direkt i det som sägs.
+        <p className="mt-1 text-[11px] leading-relaxed text-[#838b95]">
+          Review pauses or cut directly from the transcript.
         </p>
 
-        <div className="mt-4 grid grid-cols-2 rounded-xl bg-[#080b10] p-1 ring-1 ring-white/[0.07]">
+        <div className="mt-4 grid grid-cols-2 rounded-lg bg-[#080a0d] p-1 ring-1 ring-white/[0.07]">
           <ViewButton active={view === "pauses"} onClick={() => setView("pauses")}>
-            Pauser
+            Pauses
           </ViewButton>
           <ViewButton active={view === "transcript"} onClick={() => setView("transcript")}>
-            Transkript
+            Transcript
           </ViewButton>
         </div>
       </div>
 
       {view === "pauses" ? (
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
-          <div className="rounded-2xl bg-[#151a22] p-3.5 ring-1 ring-white/[0.08]">
+          <div className="rounded-lg bg-[#15181d] p-3.5 ring-1 ring-white/[0.08]">
             <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#ffb45b]/12 text-[#ffb45b]">
+              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--cut)]/12 text-[var(--cut)]">
                 <Pause size={15} fill="currentColor" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-[#eef1f4]">Hitta tystnad</p>
+                <p className="text-sm font-semibold text-[#eef1f0]">Find pauses</p>
                 <p className="mt-0.5 text-[11px] leading-relaxed text-[#7e8998]">
-                  Inget tas bort förrän du granskat förslagen.
+                  Nothing changes until you apply the selection.
                 </p>
               </div>
             </div>
@@ -241,7 +242,7 @@ export default function CutPanel() {
                   }}
                   className={`rounded-lg px-2 py-2 text-left transition ${
                     level === item.id
-                      ? "bg-[#ffb45b] text-[#17110a]"
+                      ? "bg-[var(--cut)] text-[#17110a]"
                       : "bg-white/[0.045] text-[#b7c0cb] hover:bg-white/[0.075]"
                   }`}
                 >
@@ -260,14 +261,14 @@ export default function CutPanel() {
             <button
               onClick={() => void scanPauses()}
               disabled={duration <= 0 || busy !== null || isTranscribing}
-              className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[#edf1f5] text-xs font-bold text-[#10141b] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-35"
+              className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#edf1f5] text-xs font-bold text-[#10141b] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-35"
             >
               {busy === "scan" || isTranscribing ? (
                 <LoaderCircle size={14} className="animate-spin" />
               ) : (
-                <Sparkles size={14} />
+                <ScanSearch size={14} />
               )}
-              {isTranscribing ? "Lyssnar på videon…" : "Hitta pauser"}
+              {isTranscribing ? "Reading the audio…" : "Find pauses"}
             </button>
           </div>
 
@@ -275,7 +276,7 @@ export default function CutPanel() {
             <section className="mt-4">
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-xs font-semibold text-[#d9dfe6]">
-                  {visiblePauses.length} hittade pauser
+                  {visiblePauses.length} {visiblePauses.length === 1 ? "pause" : "pauses"}
                 </p>
                 <button
                   onClick={() =>
@@ -285,9 +286,9 @@ export default function CutPanel() {
                         : new Set(visiblePauses.map((_, index) => index))
                     )
                   }
-                  className="text-[10px] font-medium text-[#ffb45b] hover:text-[#ffd099]"
+                  className="text-[10px] font-medium text-[var(--cut)] hover:text-[#ffd099]"
                 >
-                  {chosen.size === visiblePauses.length ? "Avmarkera alla" : "Välj alla"}
+                  {chosen.size === visiblePauses.length ? "Clear" : "Select all"}
                 </button>
               </div>
 
@@ -299,7 +300,7 @@ export default function CutPanel() {
                   return (
                     <div
                       key={`${range.start}-${range.end}`}
-                      className={`flex items-center gap-2 rounded-xl px-2.5 py-2 ring-1 transition ${
+                      className={`flex items-center gap-2 rounded-md px-2.5 py-2 ring-1 transition ${
                         active
                           ? "bg-[#26303b] ring-[#7db8ff]/35"
                           : "bg-white/[0.035] ring-white/[0.06]"
@@ -314,10 +315,10 @@ export default function CutPanel() {
                             return next;
                           })
                         }
-                        aria-label={checked ? "Behåll pausen" : "Ta bort pausen"}
+                        aria-label={checked ? "Keep pause" : "Remove pause"}
                         className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md ring-1 transition ${
                           checked
-                            ? "bg-[#ffb45b] text-[#181108] ring-[#ffb45b]"
+                            ? "bg-[var(--cut)] text-[#181108] ring-[var(--cut)]"
                             : "bg-transparent text-transparent ring-white/20"
                         }`}
                       >
@@ -332,7 +333,7 @@ export default function CutPanel() {
                           {formatTime(range.start)}
                         </span>
                         <span className="truncate text-[11px] text-[#6f7a89]">
-                          tyst i {(range.end - range.start).toFixed(1)} s
+                          silent for {(range.end - range.start).toFixed(1)}s
                         </span>
                       </button>
                     </div>
@@ -343,12 +344,12 @@ export default function CutPanel() {
               <button
                 onClick={applyPauseCuts}
                 disabled={chosenRanges.length === 0}
-                className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#ffb45b] text-xs font-extrabold text-[#191209] shadow-[0_8px_24px_rgba(255,180,91,0.16)] transition hover:bg-[#ffc477] disabled:opacity-35"
+                className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[var(--cut)] text-xs font-extrabold text-[#191209] transition hover:bg-[#ffc477] disabled:opacity-35"
               >
                 <Scissors size={14} />
-                Ta bort {chosenRanges.length} paus{chosenRanges.length === 1 ? "" : "er"}
+                Remove {chosenRanges.length} {chosenRanges.length === 1 ? "pause" : "pauses"}
                 <span className="font-mono font-medium opacity-60">
-                  −{removedDuration.toFixed(1)} s
+                  −{removedDuration.toFixed(1)}s
                 </span>
               </button>
             </section>
@@ -359,27 +360,27 @@ export default function CutPanel() {
           <button
             onClick={() => void removeFillers()}
             disabled={duration <= 0 || busy !== null}
-            className="group flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left transition hover:bg-white/[0.04] disabled:opacity-35"
+            className="group flex w-full items-center gap-3 rounded-md px-2 py-2.5 text-left transition hover:bg-white/[0.04] disabled:opacity-35"
           >
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#9ce5c3]/10 text-[#9ce5c3]">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#9ce5c3]/10 text-[#9ce5c3]">
               {busy === "fillers" ? (
                 <LoaderCircle size={14} className="animate-spin" />
               ) : (
-                <Wand2 size={14} />
+                <Eraser size={14} />
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold text-[#dbe1e8]">Rensa utfyllnadsord</p>
+              <p className="text-xs font-semibold text-[#dbe1e8]">Remove filler words</p>
               <p className="mt-0.5 truncate text-[10px] text-[#707b89]">
-                Öh, typ, liksom, um och upprepningar
+                Um, uh, like, and repeated phrases
               </p>
             </div>
             <ChevronRight size={14} className="text-[#4e5864] transition group-hover:translate-x-0.5" />
           </button>
 
-          <div className="mt-3 rounded-xl border border-dashed border-white/[0.09] p-3">
+          <div className="mt-3 rounded-lg border border-dashed border-white/[0.09] p-3">
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#66717f]">
-              Manuellt
+              Manual
             </p>
             <div className="mt-2 grid grid-cols-2 gap-2">
               <button
@@ -387,14 +388,14 @@ export default function CutPanel() {
                 disabled={duration <= 0}
                 className="flex items-center justify-center gap-1.5 rounded-lg bg-white/[0.055] py-2 text-[11px] font-semibold text-[#c9d1da] transition hover:bg-white/[0.09] disabled:opacity-30"
               >
-                <Scissors size={12} /> Dela <kbd>S</kbd>
+                <Scissors size={12} /> Split <kbd>S</kbd>
               </button>
               <button
                 onClick={deleteSelectedClips}
                 disabled={!hasSelection}
                 className="flex items-center justify-center gap-1.5 rounded-lg bg-white/[0.055] py-2 text-[11px] font-semibold text-[#c9d1da] transition hover:bg-[#ff6b6b]/10 hover:text-[#ff9a9a] disabled:opacity-30"
               >
-                <Trash2 size={12} /> Radera <kbd>⌫</kbd>
+                <Trash2 size={12} /> Delete <kbd>⌫</kbd>
               </button>
             </div>
           </div>
@@ -415,7 +416,7 @@ export default function CutPanel() {
 
       <div className="border-t border-white/[0.07] px-4 py-2.5">
         <div className="flex items-center justify-between font-mono text-[10px] text-[#65707e]">
-          <span>{mainTrack.clips.length} klipp</span>
+          <span>{mainTrack.clips.length} {mainTrack.clips.length === 1 ? "clip" : "clips"}</span>
           <span>{formatTime(duration)}</span>
         </div>
       </div>
@@ -447,24 +448,24 @@ function TranscriptView({
   if (captions.length === 0) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-7 text-center">
-        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#7db8ff]/10 text-[#7db8ff]">
+        <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-[#7db8ff]/10 text-[#7db8ff]">
           <Scissors size={18} />
         </div>
-        <h3 className="mt-4 text-sm font-semibold text-[#e8edf2]">Klipp som ett textdokument</h3>
+        <h3 className="mt-4 text-sm font-semibold text-[#e8edf2]">Edit like a document</h3>
         <p className="mt-1.5 text-[11px] leading-relaxed text-[#74808e]">
-          Skapa ett transcript, klicka på en mening för att spela den och ta bort den direkt ur videon.
+          Create a transcript, preview any line, and remove it from the video.
         </p>
         <button
           onClick={onTranscribe}
           disabled={duration <= 0 || isTranscribing}
-          className="mt-4 flex h-10 items-center gap-2 rounded-xl bg-[#edf1f5] px-4 text-xs font-bold text-[#10141b] transition hover:bg-white disabled:opacity-35"
+          className="mt-4 flex h-10 items-center gap-2 rounded-lg bg-[#edf1f5] px-4 text-xs font-bold text-[#10141b] transition hover:bg-white disabled:opacity-35"
         >
           {isTranscribing ? (
             <LoaderCircle size={14} className="animate-spin" />
           ) : (
-            <Sparkles size={14} />
+            <FileText size={14} />
           )}
-          {isTranscribing ? "Skapar transcript…" : "Skapa transcript"}
+          {isTranscribing ? "Creating transcript…" : "Create transcript"}
         </button>
       </div>
     );
@@ -473,9 +474,9 @@ function TranscriptView({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-3 border-b border-white/[0.07] px-4 py-2.5 font-mono text-[9px] uppercase tracking-[0.12em] text-[#687380]">
-        <span>{wordCount} ord</span>
-        <span>{Math.round(speechSeconds)} s tal</span>
-        <span className="ml-auto">Klicka för att lyssna</span>
+        <span>{wordCount} words</span>
+        <span>{Math.round(speechSeconds)}s speech</span>
+        <span className="ml-auto">Click to preview</span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         {captions.map((caption) => {
@@ -483,7 +484,7 @@ function TranscriptView({
           return (
             <div
               key={caption.id}
-              className={`group mb-1 flex items-start gap-2 rounded-xl px-2 py-2 ring-1 transition ${
+              className={`group mb-1 flex items-start gap-2 rounded-md px-2 py-2 ring-1 transition ${
                 active
                   ? "bg-[#7db8ff]/10 ring-[#7db8ff]/25"
                   : "bg-transparent ring-transparent hover:bg-white/[0.035]"
@@ -502,7 +503,7 @@ function TranscriptView({
               </button>
               <button
                 onClick={() => onRemove(caption)}
-                title="Ta bort den här delen ur videon"
+                title="Remove this section from the video"
                 className="mt-1 rounded-lg p-1.5 text-[#596471] opacity-0 transition hover:bg-[#ff6b6b]/10 hover:text-[#ff9696] group-hover:opacity-100 group-focus-within:opacity-100"
               >
                 <Trash2 size={13} />

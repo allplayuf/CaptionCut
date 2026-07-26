@@ -18,15 +18,16 @@
 
 :root {
   color-scheme: dark;
-  --ink: #06090d;
-  --panel: #0d1319;
-  --panel-raised: #131b23;
-  --panel-deep: #080c11;
-  --text: #f0f3f5;
-  --muted: #788693;
-  --cut: #ffb45b;
-  --timeline: #73b9ef;
-  --caption: #83dec9;
+  --ink: #08090b;
+  --panel: #101216;
+  --panel-raised: #16191e;
+  --panel-deep: #0b0d10;
+  --text: #f3f4f2;
+  --muted: #808892;
+  --cut: #f2a65a;
+  --timeline: #79aee8;
+  --caption: #78cdb7;
+  --danger: #f07878;
   --border: rgba(255, 255, 255, 0.075);
 }
 
@@ -46,7 +47,7 @@ body {
     sans-serif;
   font-feature-settings: "ss01" 1, "cv02" 1;
   text-rendering: optimizeLegibility;
-  letter-spacing: -0.006em;
+  letter-spacing: -0.008em;
 }
 
 button,
@@ -54,6 +55,16 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+button,
+[role="button"] {
+  cursor: pointer;
+}
+
+button:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
 }
 
 button:focus-visible,
@@ -72,7 +83,7 @@ textarea:focus-visible {
 kbd {
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-bottom-color: rgba(255, 255, 255, 0.16);
-  border-radius: 4px;
+  border-radius: 3px;
   background: rgba(255, 255, 255, 0.04);
   padding: 0 4px;
   font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
@@ -87,9 +98,7 @@ kbd {
 
 .captioncut-shell {
   isolation: isolate;
-  background:
-    radial-gradient(circle at 68% 24%, rgba(66, 129, 176, 0.075), transparent 34%),
-    var(--ink);
+  background: var(--ink);
 }
 
 .captioncut-shell::before {
@@ -101,31 +110,30 @@ kbd {
   height: 1px;
   content: "";
   pointer-events: none;
-  background: linear-gradient(90deg, transparent 4%, rgba(255, 180, 91, 0.7) 32%, rgba(131, 222, 201, 0.45) 70%, transparent 96%);
-  opacity: 0.65;
+  background: linear-gradient(90deg, transparent 2%, var(--cut) 18%, transparent 38%);
+  opacity: 0.7;
 }
 
 .preview-stage {
   position: relative;
   background:
-    linear-gradient(rgba(255, 255, 255, 0.014) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.014) 1px, transparent 1px),
-    radial-gradient(circle at 50% 40%, rgba(120, 184, 237, 0.045), transparent 48%),
-    #080c11;
-  background-size: 36px 36px, 36px 36px, auto, auto;
+    linear-gradient(rgba(255, 255, 255, 0.012) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.012) 1px, transparent 1px),
+    #0a0c0f;
+  background-size: 40px 40px, 40px 40px, auto;
 }
 
 .app-header {
-  background: color-mix(in srgb, #0b1016 94%, transparent);
-  box-shadow: 0 1px rgba(255, 255, 255, 0.045), 0 10px 34px rgba(0, 0, 0, 0.16);
-  backdrop-filter: blur(18px);
+  background: rgba(12, 14, 17, 0.97);
+  box-shadow: 0 1px rgba(255, 255, 255, 0.035), 0 8px 24px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(16px);
 }
 
 .panel-eyebrow {
   font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.17em;
+  letter-spacing: 0.15em;
   text-transform: uppercase;
 }
 
@@ -138,13 +146,53 @@ kbd {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: 10px;
-  background:
-    linear-gradient(145deg, #f7c47f, var(--cut));
-  color: #1b140b;
+  border-radius: 7px;
+  background: var(--cut);
+  color: #17120d;
   box-shadow:
-    0 8px 20px rgba(242, 182, 109, 0.12),
-    inset 0 1px rgba(255, 255, 255, 0.28);
+    0 6px 16px rgba(242, 166, 90, 0.12),
+    inset 0 1px rgba(255, 255, 255, 0.24);
+}
+
+.brand-film-line {
+  position: absolute;
+  right: -2px;
+  bottom: -5px;
+  width: 8px;
+  height: 25px;
+  transform: rotate(24deg);
+  background: #17120d;
+  opacity: 0.92;
+}
+
+.surface-panel,
+.surface-menu {
+  border: 1px solid rgba(255, 255, 255, 0.085);
+  border-radius: 10px;
+  background: #111318;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.42);
+}
+
+.surface-menu {
+  background: rgba(20, 23, 28, 0.98);
+  backdrop-filter: blur(18px);
+}
+
+.menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  border-radius: 6px;
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background-color 120ms ease;
+}
+
+.menu-item:hover {
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .header-utility,
@@ -152,8 +200,8 @@ kbd {
 .command-trigger {
   align-items: center;
   justify-content: center;
-  border-radius: 9px;
-  color: #778491;
+  border-radius: 6px;
+  color: #747d87;
   transition:
     background-color 120ms ease,
     color 120ms ease,
@@ -161,10 +209,11 @@ kbd {
 }
 
 .header-utility {
-  height: 30px;
+  display: inline-flex;
+  height: 32px;
   gap: 4px;
   padding: 0 8px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -187,12 +236,12 @@ kbd {
 
 .command-trigger {
   display: inline-flex;
-  height: 32px;
+  height: 34px;
   gap: 6px;
-  padding: 0 7px;
+  padding: 0 9px;
   background: rgba(255, 255, 255, 0.025);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.065);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 650;
 }
 
@@ -208,9 +257,9 @@ kbd {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border-radius: 9px;
+  border-radius: 7px;
   padding: 0 10px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 750;
   transition:
     background-color 140ms ease,
@@ -221,8 +270,8 @@ kbd {
 
 .primary-compact {
   background: var(--cut);
-  color: #1b140b;
-  box-shadow: 0 8px 24px rgba(242, 182, 109, 0.1);
+  color: #17120d;
+  box-shadow: 0 8px 22px rgba(242, 166, 90, 0.1);
 }
 
 .primary-compact:hover {
@@ -246,19 +295,17 @@ kbd {
 }
 
 .library-card {
-  border-radius: 12px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.028);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
   transition:
     background-color 140ms ease,
-    box-shadow 140ms ease,
-    transform 140ms ease;
+    box-shadow 140ms ease;
 }
 
 .library-card:hover {
   background: rgba(255, 255, 255, 0.05);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
-  transform: translateY(-1px);
 }
 
 .library-card-selected {
@@ -284,7 +331,7 @@ kbd {
   height: 21px;
   align-items: center;
   gap: 3px;
-  border-radius: 6px;
+  border-radius: 5px;
   background: rgba(255, 255, 255, 0.04);
   padding: 0 6px;
   font-size: 8px;
@@ -305,7 +352,7 @@ kbd {
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border-radius: 7px;
+  border-radius: 5px;
   color: #65727f;
   transition: 120ms ease;
 }
@@ -320,20 +367,18 @@ kbd {
   width: 100%;
   align-items: center;
   gap: 11px;
-  border-radius: 15px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.026);
   padding: 10px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.065);
   transition:
     background-color 150ms ease,
-    box-shadow 150ms ease,
-    transform 150ms ease;
+    box-shadow 150ms ease;
 }
 
 .effect-card:hover {
   background: rgba(255, 255, 255, 0.052);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.11);
-  transform: translateX(2px);
 }
 
 .effect-card:disabled {
@@ -454,7 +499,7 @@ kbd {
 }
 
 .workspace-resizer-vertical {
-  width: 11px;
+  width: 9px;
   cursor: col-resize;
   background: #090d12;
   box-shadow:
@@ -468,7 +513,7 @@ kbd {
 }
 
 .workspace-resizer-horizontal {
-  height: 9px;
+  height: 8px;
   width: 100%;
   cursor: row-resize;
   background: #0a0e13;
@@ -501,10 +546,24 @@ kbd {
 
 .start-grid {
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: linear-gradient(to bottom, black, transparent 80%);
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: linear-gradient(115deg, black, transparent 72%);
+}
+
+.start-screen {
+  background:
+    linear-gradient(90deg, transparent 0 18px, rgba(242, 166, 90, 0.85) 18px 20px, transparent 20px),
+    #090a0c;
+}
+
+.start-title {
+  font-family:
+    "CaptionCut Archivo Black",
+    "Arial Black",
+    sans-serif;
+  font-weight: 900;
 }
 
 /* Phone workspace: preview first, a compact touch timeline, and the editor
@@ -730,13 +789,13 @@ kbd {
   }
 
   .start-import {
-    order: 1;
+    order: 2;
     width: 100%;
-    border-radius: 22px;
+    border-radius: 12px;
   }
 
   .start-intro {
-    order: 2;
+    order: 1;
     width: 100%;
     padding: 4px 3px 24px;
   }

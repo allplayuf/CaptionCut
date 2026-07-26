@@ -97,7 +97,7 @@ export function useProjectAutosave({
         .then(async (response) => {
           if (!response.ok) {
             const body = (await response.json().catch(() => null)) as { error?: string } | null;
-            throw new Error(body?.error ?? "Projektet kunde inte sparas.");
+            throw new Error(body?.error ?? "The project couldn’t be saved.");
           }
           retryAttemptRef.current = 0;
           clearTimer(retryRef);

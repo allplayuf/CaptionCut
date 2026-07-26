@@ -542,7 +542,7 @@ export function generateMontageRecipe(input: GenerateMontageInput): EditRecipe {
           ? "Keep music under the speaker so every answer stays clear."
           : musicSync
             ? "Cuts are locked to your music's beats. Swapped the song? Regenerate to re-sync."
-            : "Add music (AI Edit panel or Media bin) — the next montage locks its cuts to the song's beat.",
+            : "Add music in First cut or the media library to time the next montage to its beat.",
       },
     ],
     hooks: [],

@@ -4,19 +4,17 @@ import { useState } from "react";
 import dynamic from "next/dynamic";
 import type { EditorTool } from "@/lib/ui/editorTools";
 import {
+  Aperture,
   Captions,
+  Clapperboard,
   FolderOpen,
   LayoutTemplate,
-  Maximize2,
-  Minimize2,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   Scissors,
   SlidersHorizontal,
-  Sparkles,
   SwatchBook,
-  WandSparkles,
 } from "lucide-react";
 import CutPanel from "./CutPanel";
 
@@ -35,18 +33,12 @@ const PRIMARY_TOOLS: Array<{
   label: string;
   icon: typeof Scissors;
 }> = [
-  { id: "cut", label: "Klipp", icon: Scissors },
-  { id: "smart", label: "Auto", icon: Sparkles },
-  { id: "captions", label: "Text", icon: Captions },
-  { id: "media", label: "Bibliotek", icon: FolderOpen },
-  { id: "effects", label: "Effekter", icon: WandSparkles },
+  { id: "cut", label: "Cut", icon: Scissors },
+  { id: "smart", label: "First cut", icon: Clapperboard },
+  { id: "captions", label: "Captions", icon: Captions },
+  { id: "media", label: "Media", icon: FolderOpen },
+  { id: "effects", label: "Effects", icon: Aperture },
 ];
-
-const PANEL_WIDTH_PRESETS = [
-  { label: "Smal", value: 368 },
-  { label: "Bekväm", value: 520 },
-  { label: "Stor", value: 680 },
-] as const;
 
 export default function WorkspaceSidebar({
   width = 408,
@@ -54,18 +46,12 @@ export default function WorkspaceSidebar({
   onToggleCollapsed,
   activeTool,
   onToolChange,
-  onWidthChange,
-  timelineCompact = false,
-  onToggleTimelineCompact,
 }: {
   width?: number;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   activeTool?: EditorTool;
   onToolChange?: (tool: EditorTool) => void;
-  onWidthChange?: (width: number) => void;
-  timelineCompact?: boolean;
-  onToggleTimelineCompact?: () => void;
 }) {
   const [localTool, setLocalTool] = useState<EditorTool>("cut");
   const tool = activeTool ?? localTool;
@@ -77,13 +63,13 @@ export default function WorkspaceSidebar({
 
   return (
     <aside
-      className="workspace-sidebar flex min-h-0 shrink-0 border-r border-white/[0.07] bg-[#0a0e13] shadow-[12px_0_35px_rgba(0,0,0,.08)] transition-[width] duration-150"
+      className="workspace-sidebar flex min-h-0 shrink-0 border-r border-white/[0.07] bg-[#0c0e11] transition-[width] duration-150"
       data-collapsed={collapsed}
-      style={{ width: collapsed ? 62 : width }}
+      style={{ width: collapsed ? 66 : width }}
     >
       <nav
-        className="workspace-tool-rail flex w-[62px] shrink-0 flex-col overflow-y-auto border-r border-white/[0.07] px-1.5 py-2"
-        aria-label="Redigeringsverktyg"
+        className="workspace-tool-rail flex w-[66px] shrink-0 flex-col overflow-y-auto border-r border-white/[0.07] px-1.5 py-2"
+        aria-label="Editing tools"
       >
         <div className="space-y-1">
           {PRIMARY_TOOLS.map(({ id, label, icon: Icon }) => (
@@ -100,14 +86,14 @@ export default function WorkspaceSidebar({
           <RailButton
             active={["more", "adjust", "sequence", "style"].includes(tool)}
             icon={<MoreHorizontal size={18} />}
-            label="Mer"
+            label="More"
             onClick={() => pickTool("more")}
           />
           {onToggleCollapsed && (
             <RailButton
               active={false}
               icon={collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
-              label={collapsed ? "Öppna" : "Dölj"}
+              label={collapsed ? "Open" : "Hide"}
               onClick={onToggleCollapsed}
             />
           )}
@@ -116,63 +102,6 @@ export default function WorkspaceSidebar({
 
       {!collapsed && (
         <div className="workspace-panel-shell flex min-h-0 min-w-0 flex-1 flex-col">
-          {onWidthChange && (
-            <div className="workspace-panel-sizebar flex h-10 shrink-0 items-center gap-2 border-b border-white/[0.07] bg-[#0c1117] px-2.5">
-              <div className="min-w-0 flex-1">
-                <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-[#697583]">
-                  Panelbredd
-                </span>
-                <span className="block font-mono text-[8px] text-[#4f5b68]">
-                  {Math.round(width)} px · dra kanten
-                </span>
-              </div>
-              <div
-                className="flex shrink-0 items-center rounded-lg bg-black/25 p-0.5 ring-1 ring-white/[0.07]"
-                aria-label="Välj verktygspanelens bredd"
-              >
-                {PANEL_WIDTH_PRESETS.map((preset) => {
-                  const active = Math.abs(width - preset.value) < 18;
-                  return (
-                    <button
-                      key={preset.value}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => onWidthChange(preset.value)}
-                      className={`h-7 rounded-md px-2 text-[9px] font-semibold transition ${
-                        active
-                          ? "bg-[var(--timeline)]/16 text-[var(--timeline)] ring-1 ring-[var(--timeline)]/20"
-                          : "text-[#7c8793] hover:bg-white/[0.05] hover:text-[#d4dbe2]"
-                      }`}
-                      title={`Gör verktygspanelen ${preset.label.toLocaleLowerCase("sv-SE")}`}
-                    >
-                      {preset.label}
-                    </button>
-                  );
-                })}
-              </div>
-              {onToggleTimelineCompact && (
-                <button
-                  type="button"
-                  aria-pressed={timelineCompact}
-                  onClick={onToggleTimelineCompact}
-                  className={`flex h-7 shrink-0 items-center gap-1 rounded-lg px-2 text-[9px] font-semibold ring-1 transition ${
-                    timelineCompact
-                      ? "bg-[var(--caption)]/12 text-[var(--caption)] ring-[var(--caption)]/20"
-                      : "bg-white/[0.035] text-[#7c8793] ring-white/[0.07] hover:bg-white/[0.06] hover:text-[#d4dbe2]"
-                  }`}
-                  title={
-                    timelineCompact
-                      ? "Återställ tidslinjens höjd"
-                      : "Ge verktygspanelen mer höjd"
-                  }
-                >
-                  {timelineCompact ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
-                  Fokus
-                </button>
-              )}
-            </div>
-          )}
-
           <div className="workspace-tool-panel min-h-0 min-w-0 flex-1">
             {tool === "cut" && <CutPanel />}
             {tool === "captions" && <CaptionsPanel />}
@@ -192,10 +121,10 @@ export default function WorkspaceSidebar({
 
 function PanelLoading() {
   return (
-    <div className="flex h-full items-center justify-center bg-[#10141b]" role="status">
-      <span className="flex items-center gap-2 text-[10px] font-semibold text-[#71808d]">
+    <div className="flex h-full items-center justify-center bg-[#101216]" role="status">
+      <span className="flex items-center gap-2 text-[11px] font-semibold text-[#747d87]">
         <span className="h-3 w-3 animate-spin rounded-full border border-white/15 border-t-[var(--cut)]" />
-        Öppnar verktyget…
+        Opening tool…
       </span>
     </div>
   );
@@ -217,14 +146,14 @@ function RailButton({
       onClick={onClick}
       type="button"
       aria-pressed={active}
-      className={`relative flex w-full flex-col items-center gap-1 rounded-xl py-1.5 text-[9px] font-semibold transition ${
+      className={`relative flex w-full flex-col items-center gap-1 rounded-md py-2 text-[9px] font-semibold transition ${
         active
-          ? "bg-[var(--cut)]/10 text-[#f6c98f]"
-          : "text-[#65717f] hover:bg-white/[0.04] hover:text-[#b8c1cb]"
+          ? "bg-white/[0.055] text-[#f2c38a]"
+          : "text-[#69717b] hover:bg-white/[0.035] hover:text-[#b9bec4]"
       }`}
     >
       {active && (
-        <span className="absolute -left-2 top-2 h-5 w-[3px] rounded-r-full bg-[var(--cut)] shadow-[0_0_12px_rgba(242,182,109,.35)]" />
+        <span className="absolute -left-1.5 top-2 h-6 w-0.5 rounded-r-full bg-[var(--cut)]" />
       )}
       {icon}
       <span>{label}</span>
@@ -237,58 +166,57 @@ function MoreTools({ onPick }: { onPick: (tool: EditorTool) => void }) {
     {
       id: "adjust" as const,
       icon: SlidersHorizontal,
-      title: "Justera",
-      text: "Storlek, ljud, position och inställningar för det valda klippet.",
+      title: "Inspector",
+      text: "Transform, audio, crop, and clip settings.",
       tone: "text-[#c49af6] bg-[#c49af6]/10",
     },
     {
       id: "smart" as const,
-      icon: Sparkles,
-      title: "Smart redigering",
-      text: "Bygg ett helt redigeringsförslag från materialet.",
+      icon: Clapperboard,
+      title: "First cut",
+      text: "Build a structured first pass from your footage.",
       tone: "text-[#7db8ff] bg-[#7db8ff]/10",
     },
     {
       id: "sequence" as const,
       icon: LayoutTemplate,
-      title: "Bygg sekvens",
-      text: "Ordna hook, svar och klipp i en tydlig struktur.",
-      tone: "text-[#ffb45b] bg-[#ffb45b]/10",
+      title: "Sequence",
+      text: "Arrange hooks, answers, and supporting shots.",
+      tone: "text-[var(--cut)] bg-[var(--cut)]/10",
     },
     {
       id: "style" as const,
       icon: SwatchBook,
-      title: "Stil & grafik",
-      text: "Färg, textlager och visuellt uttryck.",
+      title: "Style & graphics",
+      text: "Color, text layers, and frame styling.",
       tone: "text-[#9ce5c3] bg-[#9ce5c3]/10",
     },
   ];
 
   return (
-    <div className="h-full overflow-y-auto bg-[#10141b] p-4">
-      <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#6b7684]">
-        Fler verktyg
-      </p>
-      <h2 className="mt-1 text-lg font-semibold tracking-[-0.02em] text-[#edf1f5]">
-        När grundklippet sitter.
+    <div className="h-full overflow-y-auto bg-[#101216] p-4">
+      <p className="panel-eyebrow text-[#6b737d]">More tools</p>
+      <h2 className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[#edf0ef]">
+        Finish the cut.
       </h2>
-      <p className="mt-1 text-xs leading-relaxed text-[#7b8694]">
-        De här verktygen finns kvar, men stör inte det dagliga klipparbetet.
+      <p className="mt-1 text-[11px] leading-relaxed text-[#7b838d]">
+        Fine-tune clips, build sequences, and style the frame.
       </p>
 
       <div className="mt-5 space-y-2">
         {tools.map(({ id, icon: Icon, title, text, tone }) => (
           <button
             key={id}
+            type="button"
             onClick={() => onPick(id)}
-            className="group flex w-full items-start gap-3 rounded-2xl bg-white/[0.035] p-3.5 text-left ring-1 ring-white/[0.07] transition hover:bg-white/[0.06] hover:ring-white/[0.12]"
+            className="group flex w-full items-start gap-3 rounded-lg bg-white/[0.025] p-3.5 text-left ring-1 ring-white/[0.07] transition hover:bg-white/[0.05] hover:ring-white/[0.12]"
           >
-            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${tone}`}>
+            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${tone}`}>
               <Icon size={16} />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block text-xs font-semibold text-[#e0e6ec]">{title}</span>
-              <span className="mt-1 block text-[10px] leading-relaxed text-[#737f8d]">{text}</span>
+              <span className="block text-xs font-semibold text-[#e0e3e3]">{title}</span>
+              <span className="mt-1 block text-[10px] leading-relaxed text-[#737b85]">{text}</span>
             </span>
           </button>
         ))}

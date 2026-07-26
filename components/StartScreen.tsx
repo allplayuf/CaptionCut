@@ -7,33 +7,32 @@ import { UPLOAD_ACCEPT, useMediaUpload } from "@/hooks/useMediaUpload";
 import GoogleDriveButton from "@/components/GoogleDriveButton";
 import {
   ArrowRight,
+  Captions,
   Check,
   Cloud,
+  Download,
   FileVideo2,
   FolderOpen,
-  Gauge,
+  LoaderCircle,
   Scissors,
-  ShieldCheck,
-  Sparkles,
   Upload,
-  Zap,
 } from "lucide-react";
 
 const STEPS = [
   {
-    icon: Upload,
-    title: "Importera",
-    text: "Videon öppnas direkt medan en säker kopia synkas.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Texta lokalt",
-    text: "Whisper körs på din enhet. Videon skickas aldrig till en AI-tjänst.",
-  },
-  {
     icon: Scissors,
-    title: "Klipp klart",
-    text: "Rensa pauser, redigera i texten och exportera.",
+    title: "Cut from the transcript",
+    text: "Remove a sentence and the video follows.",
+  },
+  {
+    icon: Captions,
+    title: "Caption on device",
+    text: "Speech stays in your browser.",
+  },
+  {
+    icon: Download,
+    title: "Export the final cut",
+    text: "One finished MP4, ready to publish.",
   },
 ];
 
@@ -62,71 +61,57 @@ export default function StartScreen({ onSkip }: { onSkip: () => void }) {
       if (!response.ok) throw new Error();
       loadProject((await response.json()) as Project);
     } catch {
-      addToast("error", "Projektet gick inte att öppna.");
+      addToast("error", "Couldn’t open that project.");
     }
   };
 
   return (
-    <div className="start-screen absolute inset-0 z-40 overflow-y-auto bg-[#080b10]">
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute left-[-8rem] top-[-11rem] h-[26rem] w-[26rem] rounded-full bg-[#7db8ff]/[0.07] blur-3xl" />
-        <div className="absolute bottom-[-13rem] right-[-8rem] h-[30rem] w-[30rem] rounded-full bg-[#ffb45b]/[0.08] blur-3xl" />
-        <div className="start-grid absolute inset-0 opacity-30" />
-      </div>
+    <div className="start-screen absolute inset-0 z-40 overflow-y-auto">
+      <div className="start-grid pointer-events-none absolute inset-0 opacity-25" />
 
-      <div className="start-layout relative mx-auto grid min-h-full w-full max-w-[1160px] grid-cols-1 items-center gap-12 px-7 py-10 lg:grid-cols-[1fr_460px] lg:px-12">
+      <div className="start-layout relative mx-auto grid min-h-full w-full max-w-[1180px] grid-cols-1 items-center gap-14 px-7 py-10 lg:grid-cols-[1fr_440px] lg:px-12">
         <section className="start-intro">
-          <div className="mb-8 flex items-center gap-2.5">
-            <div className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl bg-[#ffb45b] text-[#181108]">
+          <div className="mb-10 flex items-center gap-2.5">
+            <div className="brand-mark h-9 w-9">
               <FileVideo2 size={17} strokeWidth={2.4} />
-              <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-[#7db8ff]" />
+              <span className="brand-film-line" />
             </div>
-            <span className="text-sm font-extrabold tracking-[-0.035em] text-[#eef2f5]">
+            <span className="text-sm font-black tracking-[-0.04em] text-[#f4f4f1]">
               CaptionCut
-            </span>
-            <span className="rounded-full bg-white/[0.04] px-2 py-1 font-mono text-[8px] uppercase tracking-[0.14em] text-[#697583] ring-1 ring-white/[0.07]">
-              Video editor
             </span>
           </div>
 
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#ffb45b]">
-            Snabbt in. Lokalt textat. Klart.
+          <p className="panel-eyebrow text-[var(--cut)]">
+            Transcript-first video editor
           </p>
-          <h1 className="mt-3 max-w-[650px] text-[clamp(2.8rem,5.8vw,5.4rem)] font-semibold leading-[0.92] tracking-[-0.065em] text-[#f3f5f7]">
-            Klipp videon i orden du säger.
+          <h1 className="start-title mt-4 max-w-[650px] text-[clamp(3rem,6vw,5.7rem)] font-black leading-[0.88] tracking-[-0.07em] text-[#f4f4f1]">
+            Make the cut.
           </h1>
-          <p className="mt-6 max-w-xl text-[15px] leading-7 text-[#8a95a3]">
-            CaptionCut gör råvideo till en tydlig tidslinje och privata captions — utan
-            konto, API-nyckel eller väntan på en AI-server.
+          <p className="mt-6 max-w-xl text-base leading-7 text-[#9299a2]">
+            Import footage, edit from the transcript, and export a finished video.
           </p>
 
-          <div className="mt-9 grid max-w-2xl grid-cols-1 gap-3 sm:grid-cols-3">
-            {STEPS.map(({ icon: Icon, title, text }, index) => (
+          <div className="mt-10 max-w-xl border-y border-white/[0.08]">
+            {STEPS.map(({ icon: Icon, title, text }) => (
               <div
                 key={title}
-                className="rounded-2xl bg-white/[0.025] p-4 ring-1 ring-white/[0.07]"
+                className="grid grid-cols-[32px_1fr] gap-x-3 border-b border-white/[0.07] py-4 last:border-b-0 sm:grid-cols-[32px_180px_1fr]"
               >
-                <div className="flex items-center justify-between">
-                  <Icon
-                    size={15}
-                    className={
-                      index === 0
-                        ? "text-[#7db8ff]"
-                        : index === 1
-                          ? "text-[#9ce5c3]"
-                          : "text-[#ffb45b]"
-                    }
-                  />
-                  <span className="font-mono text-[9px] text-[#4f5a67]">0{index + 1}</span>
-                </div>
-                <p className="mt-4 text-xs font-semibold text-[#dce2e8]">{title}</p>
-                <p className="mt-1 text-[10px] leading-relaxed text-[#717c89]">{text}</p>
+                <Icon size={15} className="mt-0.5 text-[var(--cut)]" />
+                <p className="text-xs font-semibold text-[#dcdfdf]">{title}</p>
+                <p className="col-start-2 mt-1 text-[11px] leading-relaxed text-[#737b85] sm:col-start-3 sm:mt-0">
+                  {text}
+                </p>
               </div>
             ))}
           </div>
         </section>
 
-        <section className="start-import rounded-[28px] bg-[#10151c]/95 p-3 shadow-2xl shadow-black/40 ring-1 ring-white/[0.09] backdrop-blur">
+        <section className="start-import surface-panel p-3">
+          <div className="px-2 pb-3 pt-1">
+            <p className="text-sm font-semibold text-[#eceeec]">Start a project</p>
+            <p className="mt-1 text-[11px] text-[#727a84]">Add video, audio, or still images.</p>
+          </div>
           <input
             ref={inputRef}
             type="file"
@@ -139,6 +124,7 @@ export default function StartScreen({ onSkip }: { onSkip: () => void }) {
             }}
           />
           <button
+            type="button"
             onClick={() => inputRef.current?.click()}
             onDragOver={(event) => {
               event.preventDefault();
@@ -151,113 +137,93 @@ export default function StartScreen({ onSkip }: { onSkip: () => void }) {
               if (event.dataTransfer.files.length) void handleFiles(event.dataTransfer.files);
             }}
             disabled={uploading !== null}
-            className={`flex min-h-[245px] w-full flex-col items-center justify-center rounded-[22px] border border-dashed px-8 py-10 text-center transition ${
+            className={`flex min-h-[230px] w-full flex-col items-center justify-center rounded-lg border border-dashed px-8 py-9 text-center transition ${
               dragOver
-                ? "border-[#ffb45b] bg-[#ffb45b]/[0.08]"
-                : "border-white/[0.13] bg-[#090c11] hover:border-[#7db8ff]/50 hover:bg-[#0c1016]"
+                ? "border-[var(--cut)] bg-[var(--cut)]/[0.07]"
+                : "border-white/[0.14] bg-[#090a0c] hover:border-white/25 hover:bg-[#0c0e11]"
             }`}
           >
             {uploading ? (
               <div className="w-full max-w-xs">
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#7db8ff]/10 text-[#7db8ff]">
-                  <Sparkles size={20} className="animate-pulse" />
+                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-lg bg-white/[0.05] text-[var(--cut)]">
+                  <LoaderCircle size={19} className="animate-spin" />
                 </div>
-                <p className="mt-4 truncate text-sm font-semibold text-[#e0e6ec]">
+                <p className="mt-4 truncate text-sm font-semibold text-[#e0e3e3]">
                   {uploading.name}
                 </p>
-                <p className="mt-1 font-mono text-[10px] text-[#6d7885]">
+                <p className="mt-1 font-mono text-[10px] text-[#6d747d]">
                   {uploading.total > 1 && `${uploading.index}/${uploading.total} · `}
                   {Math.round(uploading.progress * 100)}%
                 </p>
-                <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
+                <div className="mt-4 h-1 overflow-hidden rounded-full bg-white/[0.08]">
                   <div
-                    className="h-full rounded-full bg-[#ffb45b] transition-all"
+                    className="h-full rounded-full bg-[var(--cut)] transition-all"
                     style={{ width: `${Math.round(uploading.progress * 100)}%` }}
                   />
                 </div>
               </div>
             ) : (
               <>
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#ffb45b] text-[#181108] shadow-[0_12px_35px_rgba(255,180,91,0.18)]">
-                  <Upload size={21} strokeWidth={2.3} />
+                <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--cut)] text-[#17120d]">
+                  <Upload size={19} strokeWidth={2.3} />
                 </div>
-                <p className="mt-5 text-base font-semibold tracking-[-0.02em] text-[#edf1f5]">
-                  Släpp en video här
+                <p className="mt-5 text-sm font-semibold tracking-[-0.01em] text-[#edf0ed]">
+                  Drop media here
                 </p>
-                <p className="mt-1.5 text-xs text-[#74808e]">
-                  eller klicka för att öppna direkt från datorn
+                <p className="mt-1.5 text-[11px] text-[#78808a]">
+                  or browse your device
                 </p>
-                <div className="mt-5 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 font-mono text-[9px] uppercase tracking-[0.1em] text-[#56616e]">
-                  <span className="flex items-center gap-1"><Check size={9} /> video</span>
-                  <span className="flex items-center gap-1"><Check size={9} /> ljud</span>
-                  <span className="flex items-center gap-1"><Check size={9} /> bilder</span>
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] text-[#5f6872]">
+                  <span className="flex items-center gap-1"><Check size={9} /> Video</span>
+                  <span className="flex items-center gap-1"><Check size={9} /> Audio</span>
+                  <span className="flex items-center gap-1"><Check size={9} /> Images</span>
                 </div>
               </>
             )}
           </button>
 
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <div className="flex items-center gap-2 rounded-xl bg-[#7db8ff]/[0.055] px-3 py-2.5 ring-1 ring-[#7db8ff]/10">
-              <Zap size={13} className="shrink-0 text-[#7db8ff]" />
-              <div>
-                <p className="text-[9px] font-bold text-[#c8d9ea]">Öppnas direkt</p>
-                <p className="text-[8px] text-[#687788]">synk i bakgrunden</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 rounded-xl bg-[#9ce5c3]/[0.055] px-3 py-2.5 ring-1 ring-[#9ce5c3]/10">
-              <Gauge size={13} className="shrink-0 text-[#9ce5c3]" />
-              <div>
-                <p className="text-[9px] font-bold text-[#cce9dd]">Whisper lokalt</p>
-                <p className="text-[8px] text-[#687b74]">laddas ner automatiskt</p>
-              </div>
-            </div>
-          </div>
-
           <div className="my-3 flex items-center gap-3 px-2">
             <span className="h-px flex-1 bg-white/[0.07]" />
-            <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-[#56616e]">
-              eller
-            </span>
+            <span className="text-[10px] text-[#59616b]">or</span>
             <span className="h-px flex-1 bg-white/[0.07]" />
           </div>
 
           <GoogleDriveButton
             disabled={uploading !== null}
-            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-white/[0.045] px-4 py-3 text-xs font-semibold text-[#cdd5de] ring-1 ring-white/[0.08] transition hover:bg-white/[0.075] hover:ring-[#7db8ff]/25 disabled:opacity-50"
+            className="secondary-compact min-h-11 w-full px-4 text-xs"
           >
-            <Cloud size={14} className="text-[#7db8ff]" /> Välj från Google Drive
+            <Cloud size={14} /> Choose from Google Drive
           </GoogleDriveButton>
 
-          <div className="mt-3 flex items-center justify-center gap-3 font-mono text-[8px] uppercase tracking-[0.1em] text-[#5f6a77]">
-            <span className="flex items-center gap-1"><Check size={9} /> privat textning</span>
-            <span className="flex items-center gap-1"><Check size={9} /> autosparning</span>
-            <span className="flex items-center gap-1"><Check size={9} /> inget konto</span>
-          </div>
+          <p className="mt-3 text-center text-[10px] text-[#5f6872]">
+            Captions run on this device. Projects save automatically.
+          </p>
 
           {recent.length > 0 && (
             <div className="mt-5 border-t border-white/[0.07] px-1 pt-4">
-              <p className="mb-2 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.13em] text-[#64707e]">
-                <FolderOpen size={11} /> Senaste projekt
+              <p className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold text-[#69727c]">
+                <FolderOpen size={11} /> Recent projects
               </p>
               <div className="space-y-1">
                 {recent.map((project) => (
                   <button
                     key={project.id}
+                    type="button"
                     onClick={() => void openProject(project.id)}
-                    className="group flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-left transition hover:bg-white/[0.04]"
+                    className="group flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left transition hover:bg-white/[0.04]"
                   >
                     <div className="min-w-0">
-                      <p className="truncate text-[11px] font-semibold text-[#cfd7df]">
+                      <p className="truncate text-xs font-semibold text-[#cfd3d4]">
                         {project.name}
                       </p>
-                      <p className="mt-0.5 text-[9px] text-[#5f6a77]">
-                        {project.clipCount} klipp ·{" "}
-                        {new Date(project.updatedAt).toLocaleDateString("sv-SE")}
+                      <p className="mt-0.5 text-[10px] text-[#5f6872]">
+                        {project.clipCount} {project.clipCount === 1 ? "clip" : "clips"} ·{" "}
+                        {new Date(project.updatedAt).toLocaleDateString("en-US")}
                       </p>
                     </div>
                     <ArrowRight
                       size={13}
-                      className="text-[#4f5965] transition group-hover:translate-x-0.5 group-hover:text-[#ffb45b]"
+                      className="text-[#4f5965] transition group-hover:translate-x-0.5 group-hover:text-[var(--cut)]"
                     />
                   </button>
                 ))}
@@ -266,10 +232,11 @@ export default function StartScreen({ onSkip }: { onSkip: () => void }) {
           )}
 
           <button
+            type="button"
             onClick={onSkip}
-            className="mx-auto mt-3 block rounded-lg px-3 py-1.5 text-[10px] font-medium text-[#596471] transition hover:bg-white/[0.04] hover:text-[#8e99a6]"
+            className="mx-auto mt-3 block rounded-md px-3 py-1.5 text-[10px] font-medium text-[#626a74] transition hover:bg-white/[0.04] hover:text-[#a0a6ad]"
           >
-            Öppna tom redigerare
+            Open empty editor
           </button>
         </section>
       </div>

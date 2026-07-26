@@ -17,7 +17,7 @@ import {
   Link2,
   Music,
   Plus,
-  Sparkles,
+  RefreshCw,
   Unlink2,
   Upload,
   X,
@@ -38,16 +38,16 @@ export default function MediaPanel() {
   const images = media.filter((m) => assetKind(m) === "image");
 
   return (
-    <div className="flex h-full flex-col gap-3 bg-[#10141b] p-4">
+    <div className="flex h-full flex-col gap-3 bg-[#101216] p-4">
       <div className="mb-1">
         <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#7db8ff]">
           Media
         </p>
         <h2 className="mt-1 text-[19px] font-semibold tracking-[-0.025em] text-[#f0f3f6]">
-          Ditt material
+          Source media
         </h2>
         <p className="mt-1 text-[11px] leading-relaxed text-[#778391]">
-          Lägg videor på huvudspåret. Ljud och bilder hamnar i egna lager.
+          Video goes to the main track. Audio and images use their own layers.
         </p>
       </div>
       <input
@@ -73,7 +73,7 @@ export default function MediaPanel() {
           setDragOver(false);
           if (e.dataTransfer.files.length) void handleFiles(e.dataTransfer.files);
         }}
-        className={`rounded-2xl border border-dashed p-3 transition ${
+        className={`rounded-lg border border-dashed p-3 transition ${
           dragOver
             ? "border-[#ffb45b] bg-[#ffb45b]/10"
             : "border-white/[0.12] bg-[#0b0e13] hover:border-[#7db8ff]/45 hover:bg-[#0d1117]"
@@ -99,7 +99,7 @@ export default function MediaPanel() {
         ) : (
           <>
             <p className="mb-2 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-[#66717f]">
-              Lägg till
+              Add media
             </p>
             <div className="grid grid-cols-2 gap-1.5">
               <button
@@ -107,14 +107,14 @@ export default function MediaPanel() {
                 onClick={() => inputRef.current?.click()}
                 className="flex items-center justify-center gap-1.5 rounded-lg bg-[#ffb45b] px-2 py-2 text-[10px] font-bold text-[#191209] transition hover:bg-[#ffc477]"
               >
-                <Upload size={12} /> Dator
+                <Upload size={12} /> Device
               </button>
               <GoogleDriveButton className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg bg-white/8 px-2 py-2 text-[10px] font-semibold text-zinc-200 ring-1 ring-white/10 transition hover:bg-white/12 disabled:opacity-50">
                 <Cloud size={12} className="text-[#7db8ff]" /> Drive
               </GoogleDriveButton>
             </div>
             <p className="mt-2 text-center text-[9px] leading-snug text-zinc-600">
-              Släpp här · video, ljud eller bilder
+              Drop video, audio, or images here
             </p>
           </>
         )}
@@ -124,15 +124,15 @@ export default function MediaPanel() {
         <MediaGroup icon={<Film size={11} />} label="Video" items={videos}>
           {(m) => <VideoActions asset={m} onPair={() => setPairingVideo(m)} />}
         </MediaGroup>
-        <MediaGroup icon={<Music size={11} />} label="Ljud" items={audios}>
+        <MediaGroup icon={<Music size={11} />} label="Audio" items={audios}>
           {(m) => <AudioActions asset={m} />}
         </MediaGroup>
-        <MediaGroup icon={<ImageIcon size={11} />} label="Bilder" items={images}>
+        <MediaGroup icon={<ImageIcon size={11} />} label="Images" items={images}>
           {(m) => <ImageActions asset={m} />}
         </MediaGroup>
         {media.length === 0 && (
           <p className="mt-4 px-2 text-center text-[10px] leading-relaxed text-zinc-600">
-            Importerade klipp visas här och kan läggas direkt på tidslinjen.
+            Imported media appears here, ready for the timeline.
           </p>
         )}
       </div>
@@ -573,7 +573,7 @@ export function PairAudioModal({
                         : "Audio analysis is still preparing"
                     }
                   >
-                    <Sparkles size={11} /> Auto-sync sound
+                    <RefreshCw size={11} /> Auto-sync sound
                   </button>
                 </div>
 

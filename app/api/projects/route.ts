@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
   try {
     await saveProject(await workspaceId(), {
       ...project,
-      name: project.name.trim() || "Namnlöst projekt",
+      name: project.name.trim() || "Untitled project",
       updatedAt: Date.now(),
     });
     return NextResponse.json({ ok: true });

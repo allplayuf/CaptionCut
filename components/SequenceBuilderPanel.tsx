@@ -26,8 +26,8 @@ import {
   Mic2,
   Plus,
   Radio,
+  RefreshCw,
   Scissors,
-  Sparkles,
 } from "lucide-react";
 
 type BuilderMode = "sequence" | "interview";
@@ -274,7 +274,7 @@ export default function SequenceBuilderPanel() {
             {finding || isTranscribing ? (
               <><LoaderCircle size={14} className="animate-spin" /> Listening for answers…</>
             ) : (
-              <><Sparkles size={14} /> Find clean answers</>
+              <><RefreshCw size={14} /> Find clean answers</>
             )}
           </button>
 
@@ -495,7 +495,7 @@ function InterviewReview({
       <div className="p-2.5">
         {stale ? (
           <button type="button" onClick={onRefresh} className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-amber-500/15 px-3 py-2 text-[10px] font-bold text-amber-300 ring-1 ring-amber-400/20">
-            <Sparkles size={11} /> Timeline changed — find again
+            <RefreshCw size={11} /> Timeline changed — find again
           </button>
         ) : (
           <button

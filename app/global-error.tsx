@@ -14,7 +14,7 @@ export default function GlobalError({
   }, [error]);
 
   return (
-    <html lang="sv">
+    <html lang="en">
       <body
         style={{
           margin: 0,
@@ -39,7 +39,7 @@ export default function GlobalError({
             boxShadow: "0 28px 80px rgba(0,0,0,.45)",
           }}
         >
-          <title>CaptionCut kunde inte starta</title>
+          <title>CaptionCut couldn’t start</title>
           <div
             aria-hidden="true"
             style={{ fontSize: 30, color: "#fda4af", lineHeight: 1 }}
@@ -47,10 +47,10 @@ export default function GlobalError({
             !
           </div>
           <h1 style={{ margin: "18px 0 0", fontSize: 22 }}>
-            CaptionCut kunde inte starta
+            CaptionCut couldn’t start
           </h1>
           <p style={{ margin: "10px 0 0", color: "#82909c", lineHeight: 1.6 }}>
-            Ladda om arbetsytan. Dina sparade projekt påverkas inte.
+            Reload the workspace. Your saved projects are unaffected.
           </p>
           <button
             type="button"
@@ -68,11 +68,11 @@ export default function GlobalError({
               cursor: "pointer",
             }}
           >
-            Försök igen
+            Try again
           </button>
           {error.digest && (
             <p style={{ margin: "14px 0 0", color: "#53606c", fontSize: 11 }}>
-              Felkod {error.digest}
+              Error code {error.digest}
             </p>
           )}
         </main>

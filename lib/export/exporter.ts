@@ -96,7 +96,7 @@ export async function startExportJob(
     status: "processing",
     progress: 0,
     phase: "preparing",
-    detail: "Förbereder källmaterial",
+    detail: "Preparing source media",
   };
   await writeJobState(state);
 
@@ -175,7 +175,7 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
       status: "processing",
       progress: 0.03,
       phase: "preparing",
-      detail: `${usedIds.size} källor kontrollerade`,
+      detail: `${usedIds.size} ${usedIds.size === 1 ? "source" : "sources"} checked`,
     });
 
     const assetFile = (id: string): { asset: MediaAsset; file: string } => {
@@ -648,7 +648,7 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
       status: "processing",
       progress: 0.97,
       phase: "uploading",
-      detail: "Slutför masterfilen",
+      detail: "Finalizing master file",
     });
     const downloadUrl = await persistExport(jobId, outPath);
     await writeJobState({
@@ -656,7 +656,7 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
       status: "done",
       progress: 1,
       phase: "done",
-      detail: "Masterfilen är klar",
+      detail: "Master file ready",
       downloadUrl,
     });
   } finally {

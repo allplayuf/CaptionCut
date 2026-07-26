@@ -13,21 +13,21 @@ The main workflow is intentionally short:
 1. Import video.
 2. Organize source files in searchable project folders.
 3. Select many clips and append them as one contiguous sequence.
-4. Find and review pauses, or open Smart editing for a complete first cut.
+4. Find and review pauses, or open First cut for a complete draft.
 5. Cut by clicking the transcript or splitting the timeline.
 6. Add polished motion effects, generate captions and export an MP4.
 
-The editor still includes advanced sequence, styling and auto-edit tools under
-**Mer**, but they no longer compete with the core cutting workflow.
+Advanced sequence, styling and finishing tools live under **More**, away from
+the core cutting workflow.
 
 The workspace is adjustable: drag the divider beside the tool panel or above
 the timeline to give the current task more room. Sizes persist on the device,
 the tool panel can collapse to its rail, and the timeline can switch between
 active tracks and every available layer.
 
-The header mirrors the full workflow from **Material** to **Export** and shows
-which stages are ready. Press `Ctrl+K` to search tools and actions from anywhere,
-or `?` for a project-aware guide with progress, next steps and shortcuts.
+The header keeps project, version and export controls close without repeating
+the workspace navigation. Press `Ctrl+K` to search tools and actions from
+anywhere, or `?` for a concise project guide and shortcuts.
 
 ## Local development
 
@@ -48,12 +48,13 @@ separate desktop setup or transcription key.
 1. Import this repository into Vercel or run `npx vercel`.
 2. Create and connect a Vercel Blob store. Confirm that
    `BLOB_READ_WRITE_TOKEN` is available to Production.
-3. No AI service or transcription secret is required. Each browser downloads
+3. Set `NEXT_PUBLIC_SITE_URL` to the production origin.
+4. No transcription service or secret is required. Each browser downloads
    and caches its own free Whisper model on first use.
-4. Google Drive works without credentials: visitors can choose Drive from
+5. Google Drive works without credentials: visitors can choose Drive from
    their device file browser or paste an “Anyone with the link” file URL.
    Optionally configure the variables below to add Google's signed-in Picker.
-5. Deploy, then open `/api/health`. A launch-ready deployment returns HTTP 200
+6. Deploy, then open `/api/health`. A launch-ready deployment returns HTTP 200
    with Blob storage and both media tools ready.
 
 Uploads go directly from the browser to Blob and are capped at 500 MB. Projects,
@@ -79,6 +80,7 @@ browser/IP.
 ```env
 # Required in production
 BLOB_READ_WRITE_TOKEN=
+NEXT_PUBLIC_SITE_URL=https://your-domain.com
 
 # Optional signed-in Google Drive Picker (keyless file/link import still works)
 GOOGLE_DRIVE_CLIENT_ID=...apps.googleusercontent.com
@@ -107,7 +109,9 @@ Vercel.
 
 ```bash
 npm run lint
+npm run typecheck
 npm run build
+npm run verify
 npx tsx scripts/verify-editor-workflows.ts
 npx tsx scripts/verify-pipeline.ts
 npx tsx scripts/verify-montage.ts
