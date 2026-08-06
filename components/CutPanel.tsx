@@ -16,6 +16,8 @@ import {
   mainVideoTrack,
   tracksDuration,
 } from "@/lib/timeline/tracks";
+import { activeCaptionIndex } from "@/lib/captions/active";
+import { useCoarseTime } from "@/lib/ui/playhead";
 import { formatTime } from "@/lib/video/timeline";
 import {
   Check,
@@ -50,7 +52,13 @@ export default function CutPanel() {
   const tracks = useEditorStore((state) => state.tracks);
   const captions = useEditorStore((state) => state.captions);
   const revision = useEditorStore((state) => state.revision);
-  const currentTime = useEditorStore((state) => state.currentTime);
+  // Highlights only: a ten-per-second clock for the pause rows, and the id of
+  // the caption on screen. Neither needs the raw 60fps playhead.
+  const coarseTime = useCoarseTime();
+  const activeCaptionId = useEditorStore((state) => {
+    const index = activeCaptionIndex(state.captions, state.currentTime);
+    return index === -1 ? null : state.captions[index].id;
+  });
   const selectedClipIds = useEditorStore((state) => state.selectedClipIds);
   const selectedClipId = useEditorStore((state) => state.selectedClipId);
   const isTranscribing = useEditorStore((state) => state.isTranscribing);
@@ -295,7 +303,7 @@ export default function CutPanel() {
               <div className="space-y-1.5">
                 {visiblePauses.map((range, index) => {
                   const active =
-                    currentTime >= range.start && currentTime < range.end;
+                    coarseTime >= range.start && coarseTime < range.end;
                   const checked = chosen.has(index);
                   return (
                     <div
@@ -410,7 +418,7 @@ export default function CutPanel() {
           onTranscribe={() => void runTranscription({ scope: "timeline" })}
           onJump={jumpTo}
           onRemove={removeCaptionSection}
-          currentTime={currentTime}
+          activeCaptionId={activeCaptionId}
         />
       )}
 
@@ -433,7 +441,7 @@ function TranscriptView({
   onTranscribe,
   onJump,
   onRemove,
-  currentTime,
+  activeCaptionId,
 }: {
   captions: Caption[];
   duration: number;
@@ -443,7 +451,7 @@ function TranscriptView({
   onTranscribe: () => void;
   onJump: (time: number) => void;
   onRemove: (caption: Caption) => void;
-  currentTime: number;
+  activeCaptionId: string | null;
 }) {
   if (captions.length === 0) {
     return (
@@ -480,7 +488,7 @@ function TranscriptView({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         {captions.map((caption) => {
-          const active = currentTime >= caption.startTime && currentTime < caption.endTime;
+          const active = caption.id === activeCaptionId;
           return (
             <div
               key={caption.id}

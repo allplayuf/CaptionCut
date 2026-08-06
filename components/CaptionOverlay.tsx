@@ -1,17 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import type { Caption, CaptionStyle } from "@/types";
+import type { CaptionStyle } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
+import { usePlayheadFrame } from "@/lib/ui/playhead";
 import { FORMATS } from "@/lib/video/formats";
 import { captionPreviewFontFamily } from "@/lib/captions/fonts";
+import { activeCaptionIndex, activeWordIndex } from "@/lib/captions/active";
+import { captionAnimationAt, captionWordScale } from "@/lib/captions/animation";
 
 /**
  * Renders the active caption over the preview using the same geometry as the
  * ASS export: style values live on the 1080x1920 reference canvas and scale
  * onto the current format's canvas (x by width/1080, y and font sizes by
  * height/1920), so what you see is what gets burned in — for every format.
+ *
+ * It deliberately never subscribes to `currentTime`. The playhead moves ~60
+ * times a second but the caption on screen changes a couple of times a second,
+ * so the store selectors below resolve straight to the caption index and the
+ * spoken-word index: zustand compares those numbers and skips every frame that
+ * would have re-rendered identical text.
  */
 
 /** Must match POSITION_MARGIN_V in lib/export/ass.ts. */
@@ -25,12 +34,39 @@ export default function CaptionOverlay({ scale }: { scale: number }) {
   const captions = useEditorStore((s) => s.captions);
   const style = useEditorStore((s) => s.style);
   const format = useEditorStore((s) => s.format);
-  const currentTime = useEditorStore((s) => s.currentTime);
   const selectedCaptionId = useEditorStore((s) => s.selectedCaptionId);
+  // Derived indices, not the raw playhead — see the note above.
+  const captionIndex = useEditorStore((s) => activeCaptionIndex(s.captions, s.currentTime));
+  const activeWordIdx = useEditorStore((s) => {
+    // Word position only changes what's drawn when it recolors a word or gives
+    // it the animation's scale beat. Otherwise don't wake the component at all.
+    const animated = captionWordScale(s.style.animation ?? "none") > 1;
+    if (!s.style.highlightColor && !animated) return -1;
+    const index = activeCaptionIndex(s.captions, s.currentTime);
+    return index === -1 ? -1 : activeWordIndex(s.captions[index], s.currentTime);
+  });
   /** Live position while the caption is being dragged between slots. */
   const [dragPosition, setDragPosition] = useState<CaptionStyle["position"] | null>(null);
+  const textRef = useRef<HTMLSpanElement>(null);
 
-  const active = findActiveCaption(captions, currentTime);
+  const active = captionIndex === -1 ? null : captions[captionIndex];
+  const animation = style.animation ?? "none";
+  const captionStart = active?.startTime ?? 0;
+
+  /**
+   * The entrance runs off the playhead rather than a CSS animation, so it is
+   * correct when scrubbing or paused and evaluates the very same keyframes the
+   * exporter turns into libass `\t` transforms. Writing it straight to the node
+   * also keeps the whole entrance free of React renders.
+   */
+  usePlayheadFrame((time) => {
+    const el = textRef.current;
+    if (!el) return;
+    const at = captionAnimationAt(animation, time - captionStart);
+    el.style.transform = `scale(${at.scale.toFixed(4)})`;
+    el.style.opacity = at.opacity.toFixed(3);
+  });
+
   if (!active) return null;
 
   // Mirrors buildAss(): horizontal by width, vertical + fonts by height.
@@ -115,24 +151,27 @@ export default function CaptionOverlay({ scale }: { scale: number }) {
       : {}),
   };
 
-  const activeWordIndex =
-    style.highlightColor && active.words ? findActiveWordIndex(active, currentTime) : -1;
   const hasEmphasis = active.words?.some((w) => w.emphasis) ?? false;
+  const wordScale = captionWordScale(animation);
 
   return (
     <div style={containerStyle}>
       <span
+        ref={textRef}
         style={{
           ...textStyle,
           pointerEvents: "auto",
           cursor: dragPosition ? "grabbing" : "grab",
           outline: selected || dragPosition ? "1.5px dashed rgba(255,255,255,0.6)" : undefined,
           outlineOffset: 4,
+          // libass scales the line about its alignment anchor: the baseline for
+          // bottom-anchored captions, the middle for centered ones.
+          transformOrigin: isCenter ? "center center" : "center bottom",
         }}
         onPointerDown={onPointerDown}
         title="Drag up/down to move captions between the safe positions"
       >
-        {active.words && (activeWordIndex >= 0 || hasEmphasis) ? (
+        {active.words && (activeWordIdx >= 0 || hasEmphasis) ? (
           active.words.map((w, i) => {
             const wordStyle: CSSProperties = {};
             if (w.emphasis) {
@@ -140,8 +179,14 @@ export default function CaptionOverlay({ scale }: { scale: number }) {
               if (style.emphasisColor) wordStyle.color = style.emphasisColor;
             }
             // Spoken-word highlight wins over emphasis color.
-            if (i === activeWordIndex && style.highlightColor) {
+            if (i === activeWordIdx && style.highlightColor) {
               wordStyle.color = style.highlightColor;
+            }
+            // The scale beat is applied as font-size, not a transform: ASS's
+            // \fscx widens the glyph's advance too, so the line has to reflow
+            // here the same way it does in the burn-in.
+            if (i === activeWordIdx && wordScale > 1) {
+              wordStyle.fontSize = style.fontSize * yScale * wordScale;
             }
             return (
               <span key={i} style={wordStyle}>
@@ -156,30 +201,6 @@ export default function CaptionOverlay({ scale }: { scale: number }) {
       </span>
     </div>
   );
-}
-
-function findActiveCaption(captions: Caption[], time: number): Caption | null {
-  // Later captions win on overlap, matching how ASS layers render.
-  let found: Caption | null = null;
-  for (const cap of captions) {
-    if (time >= cap.startTime && time < cap.endTime) found = cap;
-  }
-  return found;
-}
-
-/**
- * Mirrors the export's word-frame logic (lib/export/ass.ts): frame k runs
- * from word[k-1].end to word[k].end, so exactly one word is active at a time.
- */
-function findActiveWordIndex(caption: Caption, time: number): number {
-  const words = caption.words;
-  if (!words || words.length === 0) return -1;
-  for (let k = 0; k < words.length; k++) {
-    const start = k === 0 ? caption.startTime : words[k - 1].endTime;
-    const end = k === words.length - 1 ? caption.endTime : words[k].endTime;
-    if (time >= start && time < end) return k;
-  }
-  return words.length - 1;
 }
 
 function hexToRgba(hex: string, opacity: number): string {

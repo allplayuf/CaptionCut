@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import type { MediaAsset, TimelineClip } from "@/types";
+import { useShallow } from "zustand/react/shallow";
+import type { MediaAsset, TimelineClip, TrackType } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
+import { usePlayheadFrame } from "@/lib/ui/playhead";
 import { mediaUrl } from "@/lib/video/client";
 import { clipsAt, findTrack } from "@/lib/timeline/tracks";
 
@@ -28,22 +30,49 @@ interface LayerProps {
   canvasH: number;
 }
 
-export function VisualOverlays({ scale, canvasW, canvasH }: LayerProps) {
-  const tracks = useEditorStore((s) => s.tracks);
-  const media = useEditorStore((s) => s.media);
-  const currentTime = useEditorStore((s) => s.currentTime);
+/** Shared empty result so an inactive track keeps a stable selector identity. */
+const NO_CLIPS: TimelineClip[] = [];
 
-  const layers: React.ReactNode[] = [];
-  for (const type of ["broll", "image"] as const) {
-    const track = findTrack(tracks, type);
-    if (!track || track.hidden) continue;
-    for (const clip of clipsAt(track, currentTime)) {
-      const asset = media.find((m) => m.id === clip.assetId);
-      if (!asset) continue;
-      layers.push(
-        type === "broll" ? (
-          <BrollVideo key={clip.id} clip={clip} asset={asset} muted={track.muted} />
-        ) : (
+/**
+ * The clips of `type` that are live at the playhead.
+ *
+ * The selector resolves all the way down to clip objects owned by the store,
+ * so `useShallow` compares the same references on every playback frame where
+ * the visible set hasn't changed — and the caller doesn't re-render. That is
+ * the whole reason these layers no longer subscribe to `currentTime` directly.
+ */
+function useActiveClips(type: TrackType, respectHidden: boolean): TimelineClip[] {
+  return useEditorStore(
+    useShallow((s) => {
+      const track = findTrack(s.tracks, type);
+      if (!track || (respectHidden && track.hidden)) return NO_CLIPS;
+      return clipsAt(track, s.currentTime);
+    })
+  );
+}
+
+function useTrackMuted(type: TrackType): boolean {
+  return useEditorStore((s) => findTrack(s.tracks, type)?.muted ?? false);
+}
+
+export function VisualOverlays({ scale, canvasW, canvasH }: LayerProps) {
+  const media = useEditorStore((s) => s.media);
+  const brollMuted = useTrackMuted("broll");
+  const broll = useActiveClips("broll", true);
+  const images = useActiveClips("image", true);
+
+  // B-roll first, images above it — the export composites them in this order.
+  return (
+    <>
+      {broll.map((clip) => {
+        const asset = media.find((m) => m.id === clip.assetId);
+        return asset ? (
+          <BrollVideo key={clip.id} clip={clip} asset={asset} muted={brollMuted} />
+        ) : null;
+      })}
+      {images.map((clip) => {
+        const asset = media.find((m) => m.id === clip.assetId);
+        return asset ? (
           <ImageOverlay
             key={clip.id}
             clip={clip}
@@ -52,53 +81,67 @@ export function VisualOverlays({ scale, canvasW, canvasH }: LayerProps) {
             canvasW={canvasW}
             canvasH={canvasH}
           />
-        )
-      );
-    }
-  }
-  return <>{layers}</>;
+        ) : null;
+      })}
+    </>
+  );
 }
 
 export function TextOverlays({ scale, canvasW, canvasH }: LayerProps) {
-  const tracks = useEditorStore((s) => s.tracks);
-  const currentTime = useEditorStore((s) => s.currentTime);
+  const text = useActiveClips("text", true);
+  const stickers = useActiveClips("sticker", true);
 
-  const layers: React.ReactNode[] = [];
-  for (const type of ["text", "sticker"] as const) {
-    const track = findTrack(tracks, type);
-    if (!track || track.hidden) continue;
-    for (const clip of clipsAt(track, currentTime)) {
-      layers.push(
+  return (
+    <>
+      {text.map((clip) => (
         <TextSticker
           key={clip.id}
           clip={clip}
           scale={scale}
           canvasW={canvasW}
           canvasH={canvasH}
-          sticker={type === "sticker"}
+          sticker={false}
         />
-      );
-    }
-  }
-  return <>{layers}</>;
+      ))}
+      {stickers.map((clip) => (
+        <TextSticker
+          key={clip.id}
+          clip={clip}
+          scale={scale}
+          canvasW={canvasW}
+          canvasH={canvasH}
+          sticker
+        />
+      ))}
+    </>
+  );
 }
 
 export function AudioTracks() {
-  const tracks = useEditorStore((s) => s.tracks);
   const media = useEditorStore((s) => s.media);
-  const currentTime = useEditorStore((s) => s.currentTime);
+  // Audio keeps playing under a hidden track — only `muted` silences it.
+  const music = useActiveClips("music", false);
+  const sfx = useActiveClips("sfx", false);
+  const voice = useActiveClips("voice", false);
+  const musicMuted = useTrackMuted("music");
+  const sfxMuted = useTrackMuted("sfx");
+  const voiceMuted = useTrackMuted("voice");
 
-  const players: React.ReactNode[] = [];
-  for (const type of ["music", "sfx", "voice"] as const) {
-    const track = findTrack(tracks, type);
-    if (!track) continue;
-    for (const clip of clipsAt(track, currentTime)) {
+  const players = (clips: TimelineClip[], muted: boolean) =>
+    clips.map((clip) => {
       const asset = media.find((m) => m.id === clip.assetId);
-      if (!asset) continue;
-      players.push(<AudioClipPlayer key={clip.id} clip={clip} asset={asset} muted={track.muted} />);
-    }
-  }
-  return <>{players}</>;
+      return asset ? (
+        <AudioClipPlayer key={clip.id} clip={clip} asset={asset} muted={muted} />
+      ) : null;
+    });
+
+  return (
+    <>
+      {players(music, musicMuted)}
+      {players(sfx, sfxMuted)}
+      {players(voice, voiceMuted)}
+    </>
+  );
 }
 
 /* ---------------------------------------------------------------- */
@@ -110,7 +153,6 @@ function useMediaSync(
   opts: { volume: number; muted: boolean }
 ) {
   const isPlaying = useEditorStore((s) => s.isPlaying);
-  const currentTime = useEditorStore((s) => s.currentTime);
 
   useEffect(() => {
     const el = ref.current;
@@ -119,15 +161,18 @@ function useMediaSync(
     el.muted = opts.muted || opts.volume <= 0.001;
   }, [ref, opts.volume, opts.muted]);
 
-  useEffect(() => {
+  // Drift correction watches every playback frame but never re-renders: the
+  // element already advances on its own clock and only needs a nudge when it
+  // has genuinely slipped away from the timeline.
+  usePlayheadFrame((time) => {
     const el = ref.current;
     if (!el) return;
-    const want = (clip.sourceStart ?? 0) + (currentTime - clip.startTime);
+    const want = (clip.sourceStart ?? 0) + (time - clip.startTime);
     // Reseek only on real drift so smooth playback isn't interrupted.
     if (Math.abs(el.currentTime - want) > 0.25) {
       el.currentTime = Math.max(0, want);
     }
-  }, [ref, currentTime, clip.sourceStart, clip.startTime]);
+  });
 
   useEffect(() => {
     const el = ref.current;

@@ -8,7 +8,7 @@ import { assetKind } from "@/lib/timeline/tracks";
 import { filmstripUrl, localMediaUrl, mediaUrl } from "@/lib/video/client";
 import { formatTime } from "@/lib/video/timeline";
 import GoogleDriveButton from "./GoogleDriveButton";
-import { PairAudioModal } from "./MediaPanel";
+import { PairAudioModal } from "./PairAudioModal";
 import {
   AlertCircle,
   Check,
@@ -38,6 +38,7 @@ type KindFilter = "all" | AssetKind;
 type ViewMode = "grid" | "list";
 
 export default function LibraryPanel({ onOpenSmart }: { onOpenSmart?: () => void }) {
+  // `onOpenSmart` now lands on the Montage tool — the one-tap build lives there.
   const media = useEditorStore((state) => state.media);
   const folders = useEditorStore((state) => state.mediaFolders);
   const tracks = useEditorStore((state) => state.tracks);
@@ -708,7 +709,7 @@ function SelectionBar({
         disabled={videoCount === 0}
         className="mt-1.5 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-[linear-gradient(100deg,var(--timeline),var(--caption))] text-[10px] font-extrabold text-[#071017] transition hover:brightness-110 disabled:opacity-35"
       >
-        <Clapperboard size={12} /> Build first cut
+        <Clapperboard size={12} /> Add + build montage
       </button>
     </div>
   );

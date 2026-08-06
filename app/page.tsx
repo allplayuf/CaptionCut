@@ -40,7 +40,7 @@ export default function EditorPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [activeTool, setActiveTool] = useState<EditorTool>("cut");
+  const [activeTool, setActiveTool] = useState<EditorTool>("montage");
   const revision = useEditorStore((s) => s.revision);
   const projectId = useEditorStore((s) => s.projectId);
   const mediaCount = useEditorStore((s) => s.media.length);

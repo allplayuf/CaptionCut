@@ -120,7 +120,7 @@ function fitVersionHistory(versions: EditVersion[]): EditVersion[] {
 /** One-click football effect presets. */
 export type EffectPresetId = "goal-impact" | "reaction" | "ending-freeze";
 
-interface EditorState {
+export interface EditorState {
   // project
   projectId: string;
   projectName: string;

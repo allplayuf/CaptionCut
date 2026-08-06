@@ -1,5 +1,10 @@
 /** Core shared types for CaptionCut. */
 
+import type { CaptionAnimation } from "@/lib/captions/animation";
+import type { TransitionKind } from "@/lib/timeline/transitions";
+
+export type { CaptionAnimation, TransitionKind };
+
 /** Word-level timing inside a caption chunk. Times are in seconds on the timeline. */
 export interface WordTiming {
   word: string;
@@ -101,6 +106,8 @@ export interface Clip {
   fit?: ClipFit;
   /** Apply shake reduction (deshake + slight over-zoom) on export. */
   stabilize?: boolean;
+  /** Treatment of the cut INTO this clip; ignored on the first clip. */
+  transition?: TransitionKind;
 }
 
 /**
@@ -207,6 +214,11 @@ export interface TimelineClip {
   fit?: ClipFit;
   /** Main-track shake reduction: deshake on export, matched framing in preview. */
   stabilize?: boolean;
+  /**
+   * How the cut INTO this main-track clip is treated. Ignored on the first
+   * clip, which has no incoming cut. See lib/timeline/transitions.ts.
+   */
+  transition?: TransitionKind;
   metadata?: Record<string, unknown>;
 }
 
@@ -469,6 +481,11 @@ export interface CaptionStyle {
   highlightColor: string | null;
   /** Color for emphasized words (auto-bolded important words). null = bold only. */
   emphasisColor?: string | null;
+  /**
+   * Entrance motion. Defined once in lib/captions/animation.ts and evaluated by
+   * both the preview and the ASS export. Undefined = "none" (legacy projects).
+   */
+  animation?: CaptionAnimation;
 }
 
 /**

@@ -1,7 +1,7 @@
 # CaptionCut
 
-A transcript-first video editor for removing pauses, cutting unwanted parts,
-creating captions and exporting social video without fighting a crowded UI.
+A montage editor for short-form video: drop in a shoot's worth of raw clips,
+get a finished cut in one tap, then caption it and export it.
 
 Captions run entirely inside each visitor's browser with multilingual Whisper.
 The small model downloads automatically after the first media import, is cached
@@ -10,15 +10,29 @@ is never sent to an AI transcription API.
 
 The main workflow is intentionally short:
 
-1. Import video.
-2. Organize source files in searchable project folders.
-3. Select many clips and append them as one contiguous sequence.
-4. Find and review pauses, or open First cut for a complete draft.
-5. Cut by clicking the transcript or splitting the timeline.
-6. Add polished motion effects, generate captions and export an MP4.
+1. Import video and append every clip as one contiguous sequence.
+2. Open **Montage**, pick a style and a length, and press build. The engine
+   ranks the moments inside each clip, drops dead time and repeated-looking
+   shots, orders what is left into hook → action → reaction → ender, and locks
+   the cuts to your music's beat.
+3. Not quite right? Ask for another take, or nudge it faster, calmer, fewer
+   effects, more action, more reactions.
+4. Generate captions and give them an entrance — **Pop**, **Pump** or **Fade**.
+   The motion is defined once and evaluated by both the preview and the ASS
+   export, so the animation you scrub through is the one that burns in.
+5. Select any clip to get its actions on the clip itself: split, speed, freeze,
+   framing, stabilize, transition, volume, duplicate, delete.
+6. Export an MP4.
 
-Advanced sequence, styling and finishing tools live under **More**, away from
-the core cutting workflow.
+Cuts are hard by default. Any clip can instead **Dip** through black or
+**Flash** through white on the way in — rendered as a veil overlaid after the
+main concat, which is the only shape the exporter can produce without the
+split/concat fan-out that deadlocks ffmpeg's scheduler. A cross dissolve needs
+two clips decoding at once, so it is deliberately not offered.
+
+The rail carries the five tools that make a video — Montage, Media, Captions,
+Style, Effects. Manual cutting, the clip inspector, interview edits and the
+hand-ordered sequence builder live under **More**, away from the one-tap path.
 
 The workspace is adjustable: drag the divider beside the tool panel or above
 the timeline to give the current task more room. Sizes persist on the device,
@@ -115,6 +129,8 @@ npm run verify
 npx tsx scripts/verify-editor-workflows.ts
 npx tsx scripts/verify-pipeline.ts
 npx tsx scripts/verify-montage.ts
+npx tsx scripts/verify-montage-many.ts
+npx tsx scripts/verify-transitions.ts
 npx tsx scripts/verify-layers.ts
 npx tsx scripts/verify-formats.ts
 npx tsx scripts/verify-effects.ts

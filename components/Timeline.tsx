@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Caption, MediaAsset, Track, TimelineClip } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
+import { usePlayheadFrame, useCoarseTime } from "@/lib/ui/playhead";
 import { filmstripUrl, mediaUrl } from "@/lib/video/client";
 import { placeholderPeaks, queueWaveformPeaks } from "@/lib/audio/waveform";
 import { formatTime } from "@/lib/video/timeline";
@@ -14,6 +15,7 @@ import {
   tracksDuration,
 } from "@/lib/timeline/tracks";
 import { timelineBeatMarkers } from "@/lib/autoEdit/signals";
+import ClipToolbar from "./ClipToolbar";
 import {
   Eye,
   EyeOff,
@@ -87,7 +89,6 @@ export default function Timeline() {
   const tracks = useEditorStore((s) => s.tracks);
   const media = useEditorStore((s) => s.media);
   const captions = useEditorStore((s) => s.captions);
-  const currentTime = useEditorStore((s) => s.currentTime);
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const selectedClipIds = useEditorStore((s) => s.selectedClipIds);
   const waveforms = useEditorStore((s) => s.waveforms);
@@ -115,6 +116,7 @@ export default function Timeline() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const headerScrollRef = useRef<HTMLDivElement>(null);
+  const playheadRef = useRef<HTMLDivElement>(null);
   const [viewportW, setViewportW] = useState(800);
   const [zoom, setZoom] = useState<number | null>(null); // px per second; null = fit
   const [showAllTracks, setShowAllTracks] = useState(false);
@@ -236,7 +238,14 @@ export default function Timeline() {
     captionId?: string;
     excludeEdge?: "start" | "end" | "both";
   }) => {
-    const targets = snapTargets(tracks, captions, currentTime, options);
+    // Read at gesture time rather than subscribing: the playhead moves 60x a
+    // second and this only ever runs from a pointer handler.
+    const targets = snapTargets(
+      tracks,
+      captions,
+      useEditorStore.getState().currentTime,
+      options
+    );
     if (beatInfo) targets.push(...beatInfo.beats);
     return targets;
   };
@@ -245,11 +254,34 @@ export default function Timeline() {
   const visibleTracks = showAllTracks
     ? tracks
     : tracks.filter((t) => t.type === "video" || t.clips.length > 0);
-  const playheadX = PAD + currentTime * pxPerSec;
+
+  // The playhead is the one thing here that has to move every frame, so it is
+  // positioned straight on the DOM node instead of through a re-render.
+  usePlayheadFrame((time) => {
+    const el = playheadRef.current;
+    if (el) el.style.left = `${PAD + time * pxPerSec}px`;
+  });
 
   // Vertical lane geometry inside the content div (ruler is 20px tall) —
   // used to map the marquee rectangle onto clips.
   const laneGeometry = computeLaneGeometry(visibleTracks);
+
+  /**
+   * The clip whose actions are on screen. Only a single selection gets a
+   * toolbar: with several clips picked the per-clip controls (speed, framing,
+   * volume) have no unambiguous target, and the keyboard/track controls
+   * already cover bulk work.
+   */
+  const toolbarTarget = (() => {
+    if (selectedClipIds.length > 1) return null;
+    const id = selectedClipId ?? selectedClipIds[0];
+    if (!id) return null;
+    for (const lane of laneGeometry) {
+      const clip = lane.track.clips.find((c) => c.id === id);
+      if (clip) return { clip, track: lane.track, top: lane.top };
+    }
+    return null;
+  })();
 
   /**
    * Pointer-down on empty lane space: a plain click scrubs to that time, a
@@ -317,7 +349,8 @@ export default function Timeline() {
       return;
     }
     const rect = el.getBoundingClientRect();
-    const playheadInViewport = PAD + currentTime * pxPerSec - el.scrollLeft;
+    const playheadInViewport =
+      PAD + useEditorStore.getState().currentTime * pxPerSec - el.scrollLeft;
     const anchorX =
       anchorClientX === undefined
         ? playheadInViewport >= 0 && playheadInViewport <= rect.width
@@ -418,9 +451,7 @@ export default function Timeline() {
           >
             <ZoomIn size={13} />
           </ToolButton>
-          <span className="ml-2 font-mono text-[10px] tabular-nums text-[#697583]">
-            {formatTime(currentTime)} / {formatTime(duration)}
-          </span>
+          <TimelineClock duration={duration} />
         </div>
       </div>
 
@@ -637,11 +668,23 @@ export default function Timeline() {
               </div>
             )}
 
+            {/* contextual actions for a single selected clip */}
+            {toolbarTarget && (
+              <ClipToolbar
+                key={toolbarTarget.clip.id}
+                clip={toolbarTarget.clip}
+                track={toolbarTarget.track}
+                left={PAD + toolbarTarget.clip.startTime * pxPerSec}
+                laneTop={toolbarTarget.top}
+              />
+            )}
+
             {/* playhead */}
             {duration > 0.001 && (
               <div
+                ref={playheadRef}
                 className="pointer-events-none absolute top-0 bottom-0 z-10 w-px bg-[#ffb45b]"
-                style={{ left: playheadX }}
+                style={{ left: PAD }}
               >
                 <div className="absolute -left-[5px] top-0 h-0 w-0 border-x-[5px] border-t-[7px] border-x-transparent border-t-[#ffb45b]" />
               </div>
@@ -1152,6 +1195,16 @@ function ToolButton({
     >
       {children}
     </button>
+  );
+}
+
+/** Toolbar clock. Isolated so the ticking time never re-renders the tracks. */
+function TimelineClock({ duration }: { duration: number }) {
+  const time = useCoarseTime();
+  return (
+    <span className="ml-2 font-mono text-[10px] tabular-nums text-[#697583]">
+      {formatTime(time)} / {formatTime(duration)}
+    </span>
   );
 }
 

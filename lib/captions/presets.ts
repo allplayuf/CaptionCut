@@ -1,5 +1,6 @@
 import type { CaptionStyle } from "@/types";
 
+
 /**
  * Caption style presets. Font names must exist both as CSS fonts (preview)
  * and as installed system fonts (FFmpeg/libass export) — stick to
@@ -20,6 +21,7 @@ export const DEFAULT_STYLE: CaptionStyle = {
   allCaps: false,
   highlightColor: null,
   emphasisColor: "#FFD400",
+  animation: "pop",
 };
 
 export interface CaptionPreset {
@@ -36,6 +38,7 @@ export const CAPTION_PRESETS: CaptionPreset[] = [
     name: "Clean White",
     style: {
       ...base,
+      animation: "fade",
       fontFamily: "Segoe UI",
       fontSize: 62,
       fontWeight: 700,
@@ -51,6 +54,7 @@ export const CAPTION_PRESETS: CaptionPreset[] = [
     name: "TikTok Bold",
     style: {
       ...base,
+      animation: "pop",
       fontFamily: "Arial",
       fontSize: 72,
       fontWeight: 900,
@@ -65,6 +69,7 @@ export const CAPTION_PRESETS: CaptionPreset[] = [
     name: "Hormozi Style",
     style: {
       ...base,
+      animation: "pump",
       fontFamily: "Arial Black",
       fontSize: 78,
       fontWeight: 900,
@@ -80,6 +85,7 @@ export const CAPTION_PRESETS: CaptionPreset[] = [
     name: "MrBeast Style",
     style: {
       ...base,
+      animation: "pump",
       fontFamily: "Arial Black",
       fontSize: 84,
       fontWeight: 900,
@@ -95,6 +101,7 @@ export const CAPTION_PRESETS: CaptionPreset[] = [
     name: "Podcast Pro",
     style: {
       ...base,
+      animation: "fade",
       fontFamily: "Verdana",
       fontSize: 60,
       fontWeight: 700,
@@ -112,6 +119,7 @@ export const CAPTION_PRESETS: CaptionPreset[] = [
     name: "Sports Hype",
     style: {
       ...base,
+      animation: "pump",
       fontFamily: "Impact",
       fontSize: 82,
       fontWeight: 700,
@@ -129,6 +137,7 @@ export const CAPTION_PRESETS: CaptionPreset[] = [
     name: "Meme Subtitle",
     style: {
       ...base,
+      animation: "none",
       fontFamily: "Impact",
       fontSize: 78,
       fontWeight: 700,
@@ -145,6 +154,7 @@ export const CAPTION_PRESETS: CaptionPreset[] = [
     name: "Minimal Creator",
     style: {
       ...base,
+      animation: "fade",
       fontFamily: "Trebuchet MS",
       fontSize: 56,
       fontWeight: 600,
@@ -161,6 +171,7 @@ export const CAPTION_PRESETS: CaptionPreset[] = [
     name: "Yellow Highlight",
     style: {
       ...base,
+      animation: "pop",
       fontFamily: "Arial",
       fontSize: 68,
       fontWeight: 900,
@@ -179,6 +190,7 @@ export const CAPTION_PRESETS: CaptionPreset[] = [
     name: "Red Flag Words",
     style: {
       ...base,
+      animation: "pop",
       fontFamily: "Arial",
       fontSize: 70,
       fontWeight: 900,

@@ -14,15 +14,15 @@ import {
   FileVideo2,
   FolderOpen,
   LoaderCircle,
-  Scissors,
   Upload,
+  Wand2,
 } from "lucide-react";
 
 const STEPS = [
   {
-    icon: Scissors,
-    title: "Cut from the transcript",
-    text: "Remove a sentence and the video follows.",
+    icon: Wand2,
+    title: "Drop in every clip",
+    text: "One tap ranks the best moments and cuts the montage.",
   },
   {
     icon: Captions,
@@ -82,13 +82,14 @@ export default function StartScreen({ onSkip }: { onSkip: () => void }) {
           </div>
 
           <p className="panel-eyebrow text-[var(--cut)]">
-            Transcript-first video editor
+            Montage editor for short-form
           </p>
           <h1 className="start-title mt-4 max-w-[650px] text-[clamp(3rem,6vw,5.7rem)] font-black leading-[0.88] tracking-[-0.07em] text-[#f4f4f1]">
             Make the cut.
           </h1>
           <p className="mt-6 max-w-xl text-base leading-7 text-[#9299a2]">
-            Import footage, edit from the transcript, and export a finished video.
+            Drop in your raw clips and get a finished montage in one tap — then
+            caption it, style it, and export.
           </p>
 
           <div className="mt-10 max-w-xl border-y border-white/[0.08]">

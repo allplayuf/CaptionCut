@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Caption } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { tracksDuration } from "@/lib/timeline/tracks";
+import { activeCaptionIndex } from "@/lib/captions/active";
 import { useTranscription } from "@/hooks/useTranscription";
 import {
   AlertTriangle,
@@ -26,7 +27,12 @@ export default function CaptionsPanel() {
   const captions = useEditorStore((s) => s.captions);
   const tracks = useEditorStore((s) => s.tracks);
   const selectedClipIds = useEditorStore((s) => s.selectedClipIds);
-  const currentTime = useEditorStore((s) => s.currentTime);
+  // The id of the caption on screen, not the raw playhead — this list would
+  // otherwise re-render on all sixty frames a second of playback.
+  const activeCaptionId = useEditorStore((s) => {
+    const index = activeCaptionIndex(s.captions, s.currentTime);
+    return index === -1 ? null : s.captions[index].id;
+  });
   const selectedCaptionId = useEditorStore((s) => s.selectedCaptionId);
   const isTranscribing = useEditorStore((s) => s.isTranscribing);
 
@@ -288,7 +294,7 @@ export default function CaptionsPanel() {
                 key={cap.id}
                 caption={cap}
                 isLast={captions[captions.length - 1]?.id === cap.id}
-                active={currentTime >= cap.startTime && currentTime < cap.endTime}
+                active={cap.id === activeCaptionId}
                 selected={cap.id === selectedCaptionId}
               />
             ))}

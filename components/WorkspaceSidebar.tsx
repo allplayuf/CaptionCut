@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import dynamic from "next/dynamic";
-import type { EditorTool } from "@/lib/ui/editorTools";
+import { isSecondaryTool, type EditorTool } from "@/lib/ui/editorTools";
 import {
   Aperture,
   Captions,
@@ -15,11 +15,13 @@ import {
   Scissors,
   SlidersHorizontal,
   SwatchBook,
+  Wand2,
 } from "lucide-react";
-import CutPanel from "./CutPanel";
+import MontagePanel from "./MontagePanel";
 
 const AIPanel = dynamic(() => import("./AIPanel"), { loading: PanelLoading });
 const CaptionsPanel = dynamic(() => import("./CaptionsPanel"), { loading: PanelLoading });
+const CutPanel = dynamic(() => import("./CutPanel"), { loading: PanelLoading });
 const EffectsPanel = dynamic(() => import("./EffectsPanel"), { loading: PanelLoading });
 const InspectorPanel = dynamic(() => import("./InspectorPanel"), { loading: PanelLoading });
 const LibraryPanel = dynamic(() => import("./LibraryPanel"), { loading: PanelLoading });
@@ -28,15 +30,19 @@ const SequenceBuilderPanel = dynamic(() => import("./SequenceBuilderPanel"), {
 });
 const StylePanel = dynamic(() => import("./StylePanel"), { loading: PanelLoading });
 
+/**
+ * The rail, in the order a video actually gets made: build the cut, then feed
+ * it footage, then caption it, then style it, then garnish it.
+ */
 const PRIMARY_TOOLS: Array<{
   id: EditorTool;
   label: string;
   icon: typeof Scissors;
 }> = [
-  { id: "cut", label: "Cut", icon: Scissors },
-  { id: "smart", label: "First cut", icon: Clapperboard },
-  { id: "captions", label: "Captions", icon: Captions },
+  { id: "montage", label: "Montage", icon: Wand2 },
   { id: "media", label: "Media", icon: FolderOpen },
+  { id: "captions", label: "Captions", icon: Captions },
+  { id: "style", label: "Style", icon: SwatchBook },
   { id: "effects", label: "Effects", icon: Aperture },
 ];
 
@@ -53,7 +59,7 @@ export default function WorkspaceSidebar({
   activeTool?: EditorTool;
   onToolChange?: (tool: EditorTool) => void;
 }) {
-  const [localTool, setLocalTool] = useState<EditorTool>("cut");
+  const [localTool, setLocalTool] = useState<EditorTool>("montage");
   const tool = activeTool ?? localTool;
   const setTool = onToolChange ?? setLocalTool;
   const pickTool = (nextTool: EditorTool) => {
@@ -84,7 +90,7 @@ export default function WorkspaceSidebar({
         </div>
         <div className="mt-auto space-y-1">
           <RailButton
-            active={["more", "adjust", "sequence", "style"].includes(tool)}
+            active={tool === "more" || isSecondaryTool(tool)}
             icon={<MoreHorizontal size={18} />}
             label="More"
             onClick={() => pickTool("more")}
@@ -103,14 +109,15 @@ export default function WorkspaceSidebar({
       {!collapsed && (
         <div className="workspace-panel-shell flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="workspace-tool-panel min-h-0 min-w-0 flex-1">
-            {tool === "cut" && <CutPanel />}
+            {tool === "montage" && <MontagePanel onOpenAdvanced={() => setTool("more")} />}
+            {tool === "media" && <LibraryPanel onOpenSmart={() => setTool("montage")} />}
             {tool === "captions" && <CaptionsPanel />}
-            {tool === "media" && <LibraryPanel onOpenSmart={() => setTool("smart")} />}
+            {tool === "style" && <StylePanel />}
             {tool === "effects" && <EffectsPanel />}
+            {tool === "cut" && <CutPanel />}
             {tool === "adjust" && <InspectorPanel />}
             {tool === "smart" && <AIPanel />}
             {tool === "sequence" && <SequenceBuilderPanel />}
-            {tool === "style" && <StylePanel />}
             {tool === "more" && <MoreTools onPick={setTool} />}
           </div>
         </div>
@@ -164,6 +171,13 @@ function RailButton({
 function MoreTools({ onPick }: { onPick: (tool: EditorTool) => void }) {
   const tools = [
     {
+      id: "cut" as const,
+      icon: Scissors,
+      title: "Cut by hand",
+      text: "Trim pauses and filler, or edit against the transcript.",
+      tone: "text-[var(--cut)] bg-[var(--cut)]/10",
+    },
+    {
       id: "adjust" as const,
       icon: SlidersHorizontal,
       title: "Inspector",
@@ -173,22 +187,15 @@ function MoreTools({ onPick }: { onPick: (tool: EditorTool) => void }) {
     {
       id: "smart" as const,
       icon: Clapperboard,
-      title: "First cut",
-      text: "Build a structured first pass from your footage.",
+      title: "Interviews & first cut",
+      text: "Speech-led edits with B-roll, and per-clip source roles.",
       tone: "text-[#7db8ff] bg-[#7db8ff]/10",
     },
     {
       id: "sequence" as const,
       icon: LayoutTemplate,
       title: "Sequence",
-      text: "Arrange hooks, answers, and supporting shots.",
-      tone: "text-[var(--cut)] bg-[var(--cut)]/10",
-    },
-    {
-      id: "style" as const,
-      icon: SwatchBook,
-      title: "Style & graphics",
-      text: "Color, text layers, and frame styling.",
+      text: "Arrange hooks, answers, and supporting shots by hand.",
       tone: "text-[#9ce5c3] bg-[#9ce5c3]/10",
     },
   ];
@@ -197,10 +204,11 @@ function MoreTools({ onPick }: { onPick: (tool: EditorTool) => void }) {
     <div className="h-full overflow-y-auto bg-[#101216] p-4">
       <p className="panel-eyebrow text-[#6b737d]">More tools</p>
       <h2 className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[#edf0ef]">
-        Finish the cut.
+        Take manual control.
       </h2>
       <p className="mt-1 text-[11px] leading-relaxed text-[#7b838d]">
-        Fine-tune clips, build sequences, and style the frame.
+        The montage handles pacing and effects for you. Reach for these when you
+        want to place every cut yourself.
       </p>
 
       <div className="mt-5 space-y-2">

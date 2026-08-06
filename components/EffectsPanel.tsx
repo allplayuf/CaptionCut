@@ -3,6 +3,7 @@
 import type { ClipEffect } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { tracksDuration } from "@/lib/timeline/tracks";
+import { useCoarseTime } from "@/lib/ui/playhead";
 import { formatTime } from "@/lib/video/timeline";
 import {
   Aperture,
@@ -117,23 +118,28 @@ const EFFECTS: EffectChoice[] = [
 
 export default function EffectsPanel() {
   const tracks = useEditorStore((state) => state.tracks);
-  const currentTime = useEditorStore((state) => state.currentTime);
   const addEffectClip = useEditorStore((state) => state.addEffectClip);
   const applyEffectPreset = useEditorStore((state) => state.applyEffectPreset);
   const addToast = useEditorStore((state) => state.addToast);
   const duration = tracksDuration(tracks);
   const hasVideo = duration > 0.05;
-  const activeCount =
-    tracks.find((track) => track.type === "effects")?.clips.filter(
-      (clip) => currentTime >= clip.startTime && currentTime < clip.endTime
-    ).length ?? 0;
+  // A count, not the playhead: this changes only when an effect starts or ends.
+  const activeCount = useEditorStore(
+    (state) =>
+      state.tracks.find((track) => track.type === "effects")?.clips.filter(
+        (clip) => state.currentTime >= clip.startTime && state.currentTime < clip.endTime
+      ).length ?? 0
+  );
 
   const apply = (choice: EffectChoice) => {
     if (!hasVideo) {
       addToast("info", "Add a video to the timeline first.");
       return;
     }
-    const start = Math.min(currentTime, Math.max(0, duration - 0.08));
+    const start = Math.min(
+      useEditorStore.getState().currentTime,
+      Math.max(0, duration - 0.08)
+    );
     const wanted =
       choice.duration === "remaining"
         ? Math.min(6, Math.max(0.4, duration - start))
@@ -162,7 +168,7 @@ export default function EffectsPanel() {
               : "bg-white/[0.035] text-[#667280] ring-white/[0.07]"
           }`}
         >
-          {activeCount ? `${activeCount} active` : formatTime(currentTime)}
+          {activeCount ? `${activeCount} active` : <PlayheadClock />}
         </span>
       </div>
       <p className="mt-2 text-[10px] leading-relaxed text-[var(--muted)]">
@@ -262,6 +268,11 @@ function PresetButton({
       {label}
     </button>
   );
+}
+
+/** Playhead position badge, isolated from the effect grid's render. */
+function PlayheadClock() {
+  return <>{formatTime(useCoarseTime())}</>;
 }
 
 function PlusMark() {

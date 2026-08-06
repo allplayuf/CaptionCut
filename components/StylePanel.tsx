@@ -3,6 +3,7 @@
 import type { CaptionPosition } from "@/types";
 import { useEditorStore } from "@/hooks/useEditorStore";
 import { CAPTION_PRESETS } from "@/lib/captions/presets";
+import { CAPTION_ANIMATIONS } from "@/lib/captions/animation";
 import { captionPreviewFontFamily } from "@/lib/captions/fonts";
 
 const FONT_OPTIONS = [
@@ -99,6 +100,32 @@ export default function StylePanel() {
         <Row label="ALL CAPS">
           <Toggle checked={style.allCaps} onChange={(v) => setStyle({ allCaps: v })} />
         </Row>
+      </section>
+
+      {/* animation */}
+      <section className="flex flex-col gap-2">
+        <SectionLabel>Animation</SectionLabel>
+        <div className="grid grid-cols-2 gap-1.5">
+          {CAPTION_ANIMATIONS.map(({ id, name, hint }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setStyle({ animation: id })}
+              aria-pressed={(style.animation ?? "none") === id}
+              title={hint}
+              className={`rounded-md px-2.5 py-2 text-left text-[10px] font-semibold ring-1 transition ${
+                (style.animation ?? "none") === id
+                  ? "bg-[var(--caption)]/12 text-[#9ce5c3] ring-[var(--caption)]/35"
+                  : "bg-white/[0.03] text-[#8d949e] ring-white/[0.07] hover:text-[#c3c9d1]"
+              }`}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] leading-relaxed text-[#6f7883]">
+          Plays in the preview exactly as it burns into the export.
+        </p>
       </section>
 
       {/* effects */}

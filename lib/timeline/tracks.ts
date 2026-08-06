@@ -90,6 +90,7 @@ export function mainClips(tracks: Track[]): Clip[] {
     speed: c.speed,
     fit: c.fit,
     stabilize: c.stabilize,
+    transition: c.transition,
   }));
 }
 

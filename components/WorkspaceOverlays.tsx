@@ -24,6 +24,7 @@ import {
   Search,
   SlidersHorizontal,
   Undo2,
+  Wand2,
   X,
 } from "lucide-react";
 
@@ -84,6 +85,14 @@ export function CommandPalette({
   const actions = useMemo<CommandAction[]>(
     () => [
       {
+        id: "montage",
+        label: "Build a montage",
+        detail: "Cut every clip into one tight edit",
+        group: "Navigate",
+        icon: Wand2,
+        run: () => onOpenTool("montage"),
+      },
+      {
         id: "media",
         label: "Open media",
         detail: "Import, organize, and select source files",
@@ -119,8 +128,8 @@ export function CommandPalette({
       },
       {
         id: "smart",
-        label: "Build first cut",
-        detail: "Create a structured first pass",
+        label: "Open interviews & first cut",
+        detail: "Speech-led edits and per-clip source roles",
         group: "Navigate",
         icon: Clapperboard,
         run: () => onOpenTool("smart"),
@@ -368,9 +377,9 @@ export function HelpDrawer({
       title: "Shape the cut",
       text: `${mainClips} ${mainClips === 1 ? "clip" : "clips"} · ${formatTime(duration)}`,
       done: mainClips > 0,
-      icon: Scissors,
-      action: () => onOpenTool(mainClips > 3 ? "smart" : "cut"),
-      label: mainClips > 3 ? "Build first cut" : "Open cut tools",
+      icon: Wand2,
+      action: () => onOpenTool("montage"),
+      label: "Build a montage",
     },
     {
       title: "Add clarity",

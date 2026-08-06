@@ -1,4 +1,10 @@
 import type { Caption, CaptionStyle, WordTiming } from "@/types";
+import {
+  captionAnimationAt,
+  captionAnimationDuration,
+  captionAnimationRemainder,
+  captionWordScale,
+} from "@/lib/captions/animation";
 
 /**
  * Builds an .ass subtitle file that FFmpeg's libass filter burns into the
@@ -128,9 +134,61 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   const displayText = (w: string) => escapeAss(style.allCaps ? w.toUpperCase() : w);
   const primaryTag = assColorTag(style.textColor);
   const styleBold = style.fontWeight >= 700;
+  const animation = style.animation ?? "none";
+  const wordScale = captionWordScale(animation);
+  const animationDuration = captionAnimationDuration(animation);
 
-  /** Render one word with emphasis (bold + emphasis color) and optional highlight. */
-  const renderWord = (w: WordTiming, highlighted: boolean): string => {
+  /**
+   * Scale tags for one run of text, `multiplier` times the entrance scale.
+   *
+   * `elapsed` is how far into the caption's entrance this event starts, so an
+   * event that begins mid-animation picks it up rather than restarting it —
+   * which is what keeps a word-by-word caption's entrance smooth. Times inside
+   * `\t` are milliseconds relative to the event, exactly how libass reads them.
+   */
+  const scaleTags = (elapsed: number, multiplier: number): string => {
+    if (animationDuration <= 0 && multiplier === 1) return "";
+    const at = captionAnimationAt(animation, elapsed);
+    const pct = (value: number) => round1(value * multiplier * 100);
+    let tags = `\\fscx${pct(at.scale)}\\fscy${pct(at.scale)}`;
+    let from = 0;
+    for (const frame of captionAnimationRemainder(animation, elapsed)) {
+      const to = Math.round(frame.t * 1000);
+      tags += `\\t(${from},${to},\\fscx${pct(frame.scale)}\\fscy${pct(frame.scale)})`;
+      from = to;
+    }
+    return tags;
+  };
+
+  /** Alpha tags for the caption's fade-in, if the animation has one. */
+  const alphaTags = (elapsed: number): string => {
+    if (animationDuration <= 0) return "";
+    const at = captionAnimationAt(animation, elapsed);
+    const alphaOf = (opacity: number) => `&H${toHex(Math.round((1 - opacity) * 255))}&`;
+    let tags = `\\alpha${alphaOf(at.opacity)}`;
+    let from = 0;
+    let moved = at.opacity < 1;
+    for (const frame of captionAnimationRemainder(animation, elapsed)) {
+      const to = Math.round(frame.t * 1000);
+      tags += `\\t(${from},${to},\\alpha${alphaOf(frame.opacity)})`;
+      if (frame.opacity < 1) moved = true;
+      from = to;
+    }
+    return moved ? tags : "";
+  };
+
+  /**
+   * Render one word with emphasis (bold + emphasis color), optional highlight,
+   * and the per-word scale beat. Scale is absolute in ASS rather than nested
+   * like a CSS transform, so the word's scale is composed with the entrance's
+   * here and reset to the entrance's own value afterwards.
+   */
+  const renderWord = (
+    w: WordTiming,
+    highlighted: boolean,
+    elapsed: number,
+    scaled: boolean
+  ): string => {
     let open = "";
     let close = "";
     if (w.emphasis && !styleBold) {
@@ -146,14 +204,28 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       open += `{\\1c${assColorTag(color)}}`;
       close = `{\\1c${primaryTag}}` + close;
     }
+    if (scaled) {
+      open += `{${scaleTags(elapsed, wordScale)}}`;
+      close = `{${scaleTags(elapsed, 1)}}` + close;
+    }
     return open + displayText(w.word) + close;
+  };
+
+  /** Leading override block: entrance scale + fade for the whole event. */
+  const openTags = (elapsed: number): string => {
+    const tags = scaleTags(elapsed, 1) + alphaTags(elapsed);
+    return tags ? `{${tags}}` : "";
   };
 
   for (const cap of sorted) {
     const words = cap.words;
     const hasEmphasis = words?.some((w) => w.emphasis) ?? false;
+    // Per-word events are needed for the karaoke recolor AND for the per-word
+    // scale beat, since either one changes what's drawn between words.
+    const perWord =
+      Boolean(words && words.length > 0) && (style.highlightColor !== null || wordScale > 1);
 
-    if (style.highlightColor && words && words.length > 0) {
+    if (perWord && words) {
       // One dialogue event per spoken word: the active word is recolored.
       // Frame boundaries are word end-times so the caption never blinks off.
       for (let k = 0; k < words.length; k++) {
@@ -161,14 +233,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         const end = k === words.length - 1 ? cap.endTime : Math.min(cap.endTime, words[k].endTime);
         if (end <= start) continue;
 
-        const text = words.map((w, j) => renderWord(w, j === k)).join(" ");
-        events.push(dialogue(start, end, "Caption", text));
+        const elapsed = start - cap.startTime;
+        const text = words
+          .map((w, j) => renderWord(w, j === k && style.highlightColor !== null, elapsed, wordScale > 1 && j === k))
+          .join(" ");
+        events.push(dialogue(start, end, "Caption", openTags(elapsed) + text));
       }
     } else if (hasEmphasis && words && words.length > 0) {
-      const text = words.map((w) => renderWord(w, false)).join(" ");
-      events.push(dialogue(cap.startTime, cap.endTime, "Caption", text));
+      const text = words.map((w) => renderWord(w, false, 0, false)).join(" ");
+      events.push(dialogue(cap.startTime, cap.endTime, "Caption", openTags(0) + text));
     } else {
-      events.push(dialogue(cap.startTime, cap.endTime, "Caption", displayText(cap.text)));
+      events.push(
+        dialogue(cap.startTime, cap.endTime, "Caption", openTags(0) + displayText(cap.text))
+      );
     }
   }
 

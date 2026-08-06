@@ -7,6 +7,7 @@ import { runFfmpeg } from "@/lib/server/ffmpeg";
 import { resolveMediaInput } from "@/lib/server/media";
 import { writeFileAtomic } from "@/lib/server/atomicFile";
 import { clipSpeed, totalDuration } from "@/lib/video/timeline";
+import { transitionCuts } from "@/lib/timeline/transitions";
 import { buildAss } from "./ass";
 import { getExportPreset } from "./presets";
 import type { ExportRequest, FreezePayload, ShakePayload, VignettePayload, ZoomPayload } from "./request";
@@ -526,6 +527,35 @@ async function runExport(jobId: string, req: ExportRequest): Promise<void> {
       );
       videoLabel = `flb${i}`;
     });
+
+    /* ---------------- clip transitions (veil peaking on the cut) ----------------
+       Applied after the concat, exactly like the flash pops above, so the main
+       track keeps its one flat linear chain. See lib/timeline/transitions.ts
+       for why a cross dissolve can't live here. transitionVeilAt() mirrors this
+       ramp in the preview. */
+    transitionCuts(req.clips)
+      .filter((cut) => cut.time > 0.01 && cut.time < outDuration)
+      .slice(0, 40)
+      .forEach((cut, i) => {
+        const half = cut.duration / 2;
+        const st = Math.max(0, cut.time - half);
+        // Keep the peak on the cut even when it lands near the start.
+        const rise = Math.max(0.02, cut.time - st);
+        const fall = Math.max(0.02, Math.min(half, outDuration - cut.time));
+        const dur = rise + fall;
+        filters.push(
+          `color=c=${cut.color === "#FFFFFF" ? "white" : "black"}:s=${CW}x${CH}:r=${preset.fps}:` +
+            `d=${dur.toFixed(3)},format=yuva420p,` +
+            `colorchannelmixer=aa=${cut.peak.toFixed(3)},` +
+            `fade=t=in:st=0:d=${rise.toFixed(3)}:alpha=1,` +
+            `fade=t=out:st=${rise.toFixed(3)}:d=${fall.toFixed(3)}:alpha=1,` +
+            `setpts=PTS+${st.toFixed(3)}/TB[tr${i}]`
+        );
+        filters.push(
+          `[${videoLabel}][tr${i}]overlay=enable='between(t,${st.toFixed(3)},${(st + dur).toFixed(3)})':eof_action=pass[trb${i}]`
+        );
+        videoLabel = `trb${i}`;
+      });
 
     /* ---------------- captions + text graphics (libass) ---------------- */
     const textOverlays = req.textOverlays ?? [];
